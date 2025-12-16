@@ -1,0 +1,8 @@
+[package]
+name = "studio_physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy.workspace = true
+rapier3d.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "studio_scripting"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy.workspace = true
+bevy_mod_imgui.workspace = true
+mlua.workspace = true
+notify = "6"
+studio_physics = { path = "../studio_physics" }
+rand = "0.8"

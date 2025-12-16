@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/studio_core",
+    "crates/studio_physics",
+    "crates/studio_scripting",
+]
+
+[workspace.dependencies]
+bevy = "0.17"
+bevy_mod_imgui = { version = "0.8", features = ["docking"] }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+rapier3d = { version = "0.23", features = ["debug-render"] }
+
+[package]
+name = "creature_3d_studio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy.workspace = true
+studio_core = { path = "crates/studio_core" }
+studio_physics = { path = "crates/studio_physics" }
+studio_scripting = { path = "crates/studio_scripting" }
