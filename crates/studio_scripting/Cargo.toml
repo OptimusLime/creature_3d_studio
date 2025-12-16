@@ -7,5 +7,6 @@ edition = "2021"
 bevy.workspace = true
 bevy_mod_imgui.workspace = true
 mlua.workspace = true
+notify = "6"
 studio_physics = { path = "../studio_physics" }
 rand = "0.8"

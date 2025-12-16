@@ -180,6 +180,83 @@ cargo run
 
 ---
 
+## Phase 9: Naming Things & Documentation Cleanup
+
+**Goal:** Apply principles from "Naming Things" to drive clarity through concise, intention-revealing names and comprehensive documentation.
+
+### Key Principles from "Naming Things"
+
+1. **Intention-Revealing Names** - Names should answer why something exists, what it does, and how it's used
+2. **Avoid Disinformation** - Don't use names that imply something different from reality
+3. **Make Meaningful Distinctions** - If names must differ, they should differ meaningfully
+4. **Use Pronounceable Names** - Names should be speakable in conversation
+5. **Use Searchable Names** - Single-letter or short names are hard to locate
+6. **Avoid Encodings** - Don't prefix with type info (Hungarian notation)
+7. **Noun Classes, Verb Methods** - Classes are things, methods are actions
+8. **One Word Per Concept** - Consistent vocabulary (don't mix "fetch", "get", "retrieve")
+9. **Domain Language** - Use terms from the problem domain
+10. **Clarity Over Brevity** - A longer clear name beats a short cryptic one
+
+### Current Naming Issues to Address
+
+| Current | Problem | Proposed | Rationale |
+|---------|---------|----------|-----------|
+| `LuaVm` | Too generic, doesn't reveal purpose | `ScriptRuntime` | Reveals it runs scripts, abstracts Lua |
+| `UI_PTR` / `ACTIONS_PTR` | Screaming case, "PTR" is encoding | `CURRENT_UI` / `CURRENT_ACTIONS` | Clearer intent without type suffix |
+| `with_ui` / `with_actions` | Generic "with" pattern | `during_frame` or keep as-is | Acceptable - common Rust pattern |
+| `UiAction` | "Ui" prefix unclear - is it UI or user input? | `SceneCommand` | Better domain term - commands to scene |
+| `UiActions` | Same issue | `CommandQueue` | Clearly a queue of commands |
+| `imgui_ui` system | Redundant "ui" | `render_ui` | Clearer action |
+| `setup_lua` | Implementation detail in name | `init_scripting` | Abstracts the "how" |
+| `tools.spawn_cube` | Acceptable but `tools` is vague | Consider `scene.spawn_cube` | Domain-specific namespace |
+
+### Tasks
+
+**Documentation Structure:**
+
+- [ ] Create `crates/studio_core/README.md` with purpose, usage, design decisions
+- [ ] Create `crates/studio_physics/README.md` with purpose, usage, design decisions
+- [ ] Create `crates/studio_scripting/README.md` with purpose, usage, design decisions
+- [ ] Create `crates/studio_core/docs/DESIGN.md` with architecture, directory breakdown, pros/cons
+- [ ] Create `crates/studio_physics/docs/DESIGN.md` with architecture, directory breakdown, pros/cons
+- [ ] Create `crates/studio_scripting/docs/DESIGN.md` with architecture, directory breakdown, pros/cons
+
+**Code Documentation:**
+
+- [ ] Add module-level doc comments (`//!`) to each `lib.rs`
+- [ ] Add doc comments (`///`) to all public types and functions
+- [ ] Add inline comments for complex sections (thread-local pointer pattern, physics stepping)
+- [ ] Document Lua API in `assets/scripts/README.md`
+
+**Naming Refactors:**
+
+- [ ] Rename `UiAction` → `SceneCommand`
+- [ ] Rename `UiActions` → `CommandQueue`
+- [ ] Rename `UI_PTR` → `CURRENT_UI`
+- [ ] Rename `ACTIONS_PTR` → `CURRENT_COMMANDS`
+- [ ] Rename `imgui_ui` → `render_ui`
+- [ ] Rename `setup_lua` → `init_scripting`
+- [ ] Rename Lua namespace `tools` → `scene` (spawn_cube, clear are scene operations)
+- [ ] Update all references and Lua scripts
+
+**Verification:**
+```bash
+# Documentation exists and is readable
+ls crates/*/README.md crates/*/docs/DESIGN.md assets/scripts/README.md
+
+# Code compiles with new names
+cargo build --workspace
+
+# Clippy passes
+cargo clippy --workspace
+
+# Lua script works with renamed API
+cargo run
+# scene.spawn_cube() and scene.clear() work from Lua UI
+```
+
+---
+
 ## Completion Criteria
 
 All phases verified when:
@@ -188,4 +265,7 @@ All phases verified when:
 3. `cargo clippy --workspace` no warnings
 4. Rust UI and Lua UI both control physics scene
 5. Hot reload works as Phase 8 describes
-6. PR merged to main
+6. All crates have README.md and docs/DESIGN.md
+7. All public APIs have doc comments
+8. Naming follows "Naming Things" principles
+9. PR merged to main

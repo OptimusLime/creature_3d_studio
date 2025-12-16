@@ -1,9 +1,14 @@
 use bevy::prelude::*;
 use bevy_mod_imgui::prelude::{Condition, ImguiContext, Ui};
 use mlua::{Function, Lua, Result as LuaResult};
+use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use rand::Rng;
 use std::cell::Cell;
+use std::path::Path;
+use std::sync::mpsc::{channel, Receiver};
 use studio_physics::{PhysicsState, UiActions};
+
+const SCRIPT_PATH: &str = "assets/scripts/ui/main.lua";
 
 // Thread-local pointers, only valid during on_draw callback
 thread_local! {
@@ -48,8 +53,90 @@ pub struct ScriptingPlugin;
 impl Plugin for ScriptingPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_mod_imgui::ImguiPlugin::default())
-            .add_systems(Startup, setup_lua)
-            .add_systems(Update, imgui_ui);
+            .add_systems(Startup, (setup_lua, setup_file_watcher))
+            .add_systems(Update, (check_hot_reload, imgui_ui).chain());
+    }
+}
+
+/// Holds file watcher and change notification receiver
+struct ScriptWatcher {
+    _watcher: RecommendedWatcher,
+    receiver: Receiver<Result<Event, notify::Error>>,
+}
+
+fn setup_file_watcher(world: &mut World) {
+    let (tx, rx) = channel();
+
+    let mut watcher = match recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            error!("Failed to create file watcher: {:?}", e);
+            return;
+        }
+    };
+
+    // Watch the scripts directory
+    if let Err(e) = watcher.watch(Path::new("assets/scripts"), RecursiveMode::Recursive) {
+        error!("Failed to watch scripts directory: {:?}", e);
+        return;
+    }
+
+    info!("Hot reload enabled for {}", SCRIPT_PATH);
+
+    world.insert_non_send_resource(ScriptWatcher {
+        _watcher: watcher,
+        receiver: rx,
+    });
+}
+
+fn check_hot_reload(
+    watcher: Option<NonSend<ScriptWatcher>>,
+    mut vm: Option<NonSendMut<LuaVm>>,
+) {
+    let Some(watcher) = watcher else { return };
+    let Some(ref mut vm) = vm else { return };
+
+    // Check for file change events (non-blocking)
+    let mut should_reload = false;
+    while let Ok(event) = watcher.receiver.try_recv() {
+        if let Ok(event) = event {
+            // Check if any modified path is our script
+            for path in &event.paths {
+                if path.ends_with("main.lua") {
+                    should_reload = true;
+                }
+            }
+        }
+    }
+
+    if should_reload {
+        info!("Reloading Lua script...");
+        reload_lua_vm(vm);
+    }
+}
+
+fn reload_lua_vm(vm: &mut LuaVm) {
+    // Create fresh Lua VM
+    let lua = Lua::new();
+
+    if let Err(e) = register_lua_api(&lua) {
+        vm.last_error = Some(format!("Failed to register API: {:?}", e));
+        error!("Hot reload failed: {:?}", e);
+        return;
+    }
+
+    vm.lua = lua;
+    vm.draw_fn = None;
+
+    // Reload the script
+    if let Err(e) = load_ui_script(vm, SCRIPT_PATH) {
+        vm.last_error = Some(format!("{:?}", e));
+        error!("Hot reload failed: {:?}", e);
+    } else {
+        vm.last_error = None;
+        info!("Hot reload successful");
     }
 }
 
@@ -75,7 +162,7 @@ fn setup_lua(world: &mut World) {
     };
 
     // Load the main UI script
-    if let Err(e) = load_ui_script(&mut vm, "assets/scripts/ui/main.lua") {
+    if let Err(e) = load_ui_script(&mut vm, SCRIPT_PATH) {
         vm.last_error = Some(format!("{:?}", e));
         error!("Failed to load Lua script: {:?}", e);
     }
