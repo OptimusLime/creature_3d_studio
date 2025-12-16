@@ -1,0 +1,19 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local dependency clones (for exploration)
+/bevy_mod_imgui/
+/bevy_mod_scripting/
+/avian/
+/rapier/
+/bevy_mod_physx/
+/bevy/
+/bonsai/
