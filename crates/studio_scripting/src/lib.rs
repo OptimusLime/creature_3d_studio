@@ -3,11 +3,12 @@ use bevy_mod_imgui::prelude::{Condition, ImguiContext, Ui};
 use mlua::{Function, Lua, Result as LuaResult};
 use rand::Rng;
 use std::cell::Cell;
-use studio_physics::{ClearBodiesEvent, PhysicsState, SpawnCubeEvent};
+use studio_physics::{PhysicsState, UiActions};
 
-// Thread-local pointer to the current imgui::Ui, only valid during on_draw callback
+// Thread-local pointers, only valid during on_draw callback
 thread_local! {
     static UI_PTR: Cell<*const Ui> = const { Cell::new(std::ptr::null()) };
+    static ACTIONS_PTR: Cell<*mut UiActions> = const { Cell::new(std::ptr::null_mut()) };
 }
 
 /// Execute a closure with access to the current imgui::Ui.
@@ -24,6 +25,21 @@ fn with_ui<R>(f: impl FnOnce(&Ui) -> R) -> LuaResult<R> {
         // and cleared immediately after. The Ui reference is valid for
         // the duration of that callback.
         Ok(f(unsafe { &*ptr }))
+    })
+}
+
+/// Execute a closure with mutable access to UiActions.
+/// Returns an error if called outside of a UI frame.
+fn with_actions<R>(f: impl FnOnce(&mut UiActions) -> R) -> LuaResult<R> {
+    ACTIONS_PTR.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            return Err(mlua::Error::RuntimeError(
+                "tools.* called outside UI frame".into(),
+            ));
+        }
+        // SAFETY: Same as UI_PTR - only valid during on_draw callback
+        Ok(f(unsafe { &mut *ptr }))
     })
 }
 
@@ -79,6 +95,25 @@ fn register_lua_api(lua: &Lua) -> LuaResult<()> {
             Ok(())
         })?,
     )?;
+
+    // tools.spawn_cube(x, y, z) - queue a cube spawn at position
+    tools.set(
+        "spawn_cube",
+        lua.create_function(|_, (x, y, z): (f32, f32, f32)| {
+            with_actions(|actions| actions.spawn_cube(Vec3::new(x, y, z)))?;
+            Ok(())
+        })?,
+    )?;
+
+    // tools.clear() - queue clearing all dynamic bodies
+    tools.set(
+        "clear",
+        lua.create_function(|_, ()| {
+            with_actions(|actions| actions.clear())?;
+            Ok(())
+        })?,
+    )?;
+
     globals.set("tools", tools)?;
 
     // Create imgui table with UI functions
@@ -162,8 +197,7 @@ fn load_ui_script(vm: &mut LuaVm, path: &str) -> LuaResult<()> {
 fn imgui_ui(
     mut context: NonSendMut<ImguiContext>,
     physics: Res<PhysicsState>,
-    mut spawn_events: MessageWriter<SpawnCubeEvent>,
-    mut clear_events: MessageWriter<ClearBodiesEvent>,
+    mut actions: ResMut<UiActions>,
     mut vm: Option<NonSendMut<LuaVm>>,
 ) {
     let ui = context.ui();
@@ -184,21 +218,22 @@ fn imgui_ui(
                 let x = rng.gen_range(-3.0..3.0);
                 let z = rng.gen_range(-3.0..3.0);
                 let y = rng.gen_range(3.0..8.0);
-                spawn_events.write(SpawnCubeEvent(Vec3::new(x, y, z)));
+                actions.spawn_cube(Vec3::new(x, y, z));
             }
 
             ui.same_line();
 
             if ui.button("Clear All") {
-                clear_events.write(ClearBodiesEvent);
+                actions.clear();
             }
         });
 
-    // Call Lua on_draw with UI pointer set
+    // Call Lua on_draw with UI and Actions pointers set
     if let Some(ref mut vm) = vm {
         if let Some(ref key) = vm.draw_fn {
-            // Set the UI pointer for the duration of the Lua callback
+            // Set pointers for the duration of the Lua callback
             UI_PTR.with(|cell| cell.set(ui as *const Ui));
+            ACTIONS_PTR.with(|cell| cell.set(actions.as_mut() as *mut UiActions));
 
             let result: LuaResult<()> = (|| {
                 let draw_fn: Function = vm.lua.registry_value(key)?;
@@ -206,8 +241,9 @@ fn imgui_ui(
                 Ok(())
             })();
 
-            // Clear the UI pointer immediately after
+            // Clear pointers immediately after
             UI_PTR.with(|cell| cell.set(std::ptr::null()));
+            ACTIONS_PTR.with(|cell| cell.set(std::ptr::null_mut()));
 
             if let Err(e) = result {
                 vm.last_error = Some(format!("{:?}", e));

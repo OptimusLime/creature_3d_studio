@@ -1,24 +1,25 @@
 -- Main UI script
 tools.print("main.lua loaded")
 
-local click_count = 0
-
 function on_draw()
     imgui.window("Lua UI", function()
-        imgui.text("Hello from Lua!")
+        imgui.text("Physics Controls (from Lua)")
         imgui.separator()
-        imgui.text("Click count: " .. click_count)
-        
-        if imgui.button("Click me!") then
-            click_count = click_count + 1
-            tools.print("Button clicked! Count: " .. click_count)
+
+        if imgui.button("Spawn Cube") then
+            -- Spawn at random position above ground
+            local x = math.random() * 6 - 3  -- -3 to 3
+            local z = math.random() * 6 - 3  -- -3 to 3
+            local y = math.random() * 5 + 3  -- 3 to 8
+            tools.spawn_cube(x, y, z)
+            tools.print(string.format("Spawned cube at (%.1f, %.1f, %.1f)", x, y, z))
         end
-        
+
         imgui.same_line()
-        
-        if imgui.button("Reset") then
-            click_count = 0
-            tools.print("Counter reset")
+
+        if imgui.button("Clear All") then
+            tools.clear()
+            tools.print("Cleared all cubes")
         end
     end)
 end

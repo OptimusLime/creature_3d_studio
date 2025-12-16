@@ -2,15 +2,44 @@ use bevy::prelude::*;
 use rapier3d::prelude as rapier;
 use rapier::nalgebra::Vector3;
 
+/// Actions that can be queued from UI (Lua or Rust) and applied to physics
+#[derive(Debug, Clone)]
+pub enum UiAction {
+    SpawnCube(Vec3),
+    ClearBodies,
+}
+
+/// Queue of UI actions to be processed - allows Lua to request physics changes
+#[derive(Resource, Default)]
+pub struct UiActions {
+    pub queue: Vec<UiAction>,
+}
+
+impl UiActions {
+    pub fn spawn_cube(&mut self, pos: Vec3) {
+        self.queue.push(UiAction::SpawnCube(pos));
+    }
+
+    pub fn clear(&mut self) {
+        self.queue.push(UiAction::ClearBodies);
+    }
+
+    pub fn drain(&mut self) -> Vec<UiAction> {
+        std::mem::take(&mut self.queue)
+    }
+}
+
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PhysicsState::new())
+            .insert_resource(UiActions::default())
             .add_message::<SpawnCubeEvent>()
             .add_message::<ClearBodiesEvent>()
             .add_systems(Startup, setup_physics_scene)
             .add_systems(Update, (
+                apply_ui_actions,
                 handle_spawn_cube,
                 handle_clear_bodies,
                 step_physics,
@@ -131,6 +160,24 @@ fn setup_physics_scene(
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, 0.5, 0.0)),
     ));
+}
+
+/// Drains the UI action queue and emits corresponding messages
+fn apply_ui_actions(
+    mut actions: ResMut<UiActions>,
+    mut spawn_events: MessageWriter<SpawnCubeEvent>,
+    mut clear_events: MessageWriter<ClearBodiesEvent>,
+) {
+    for action in actions.drain() {
+        match action {
+            UiAction::SpawnCube(pos) => {
+                spawn_events.write(SpawnCubeEvent(pos));
+            }
+            UiAction::ClearBodies => {
+                clear_events.write(ClearBodiesEvent);
+            }
+        }
+    }
 }
 
 fn handle_spawn_cube(
