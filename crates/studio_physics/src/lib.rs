@@ -290,3 +290,98 @@ fn sync_transforms(physics: Res<PhysicsState>, mut query: Query<(&RigidBodyLink,
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_queue_spawn_cube() {
+        let mut queue = CommandQueue::default();
+        let pos = Vec3::new(1.0, 2.0, 3.0);
+        
+        queue.spawn_cube(pos);
+        
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 1);
+        match &commands[0] {
+            SceneCommand::SpawnCube(p) => assert_eq!(*p, pos),
+            _ => panic!("Expected SpawnCube command"),
+        }
+    }
+
+    #[test]
+    fn command_queue_clear() {
+        let mut queue = CommandQueue::default();
+        
+        queue.clear();
+        
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 1);
+        assert!(matches!(commands[0], SceneCommand::ClearBodies));
+    }
+
+    #[test]
+    fn command_queue_multiple_commands() {
+        let mut queue = CommandQueue::default();
+        
+        queue.spawn_cube(Vec3::new(0.0, 5.0, 0.0));
+        queue.spawn_cube(Vec3::new(1.0, 5.0, 0.0));
+        queue.clear();
+        queue.spawn_cube(Vec3::new(2.0, 5.0, 0.0));
+        
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 4);
+        assert!(matches!(commands[0], SceneCommand::SpawnCube(_)));
+        assert!(matches!(commands[1], SceneCommand::SpawnCube(_)));
+        assert!(matches!(commands[2], SceneCommand::ClearBodies));
+        assert!(matches!(commands[3], SceneCommand::SpawnCube(_)));
+    }
+
+    #[test]
+    fn command_queue_drain_empties_queue() {
+        let mut queue = CommandQueue::default();
+        queue.spawn_cube(Vec3::ZERO);
+        
+        let _ = queue.drain();
+        let commands = queue.drain();
+        
+        assert!(commands.is_empty());
+    }
+
+    #[test]
+    fn physics_state_default() {
+        let state = PhysicsState::default();
+        
+        assert_eq!(state.dynamic_body_count(), 0);
+        assert_eq!(state.gravity.y, -9.81);
+    }
+
+    #[test]
+    fn physics_state_dynamic_body_count() {
+        let mut state = PhysicsState::new();
+        
+        // Add a dynamic body
+        let body = rapier::RigidBodyBuilder::dynamic();
+        state.rigid_body_set.insert(body);
+        
+        assert_eq!(state.dynamic_body_count(), 1);
+        
+        // Add a fixed body (should not count)
+        let fixed = rapier::RigidBodyBuilder::fixed();
+        state.rigid_body_set.insert(fixed);
+        
+        assert_eq!(state.dynamic_body_count(), 1);
+    }
+
+    #[test]
+    fn scene_command_debug() {
+        let cmd = SceneCommand::SpawnCube(Vec3::new(1.0, 2.0, 3.0));
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("SpawnCube"));
+        
+        let cmd = SceneCommand::ClearBodies;
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("ClearBodies"));
+    }
+}
