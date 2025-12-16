@@ -9,6 +9,7 @@ members = [
 [workspace.dependencies]
 bevy = "0.17"
 bevy_mod_imgui = { version = "0.8", features = ["docking"] }
+rapier3d = { version = "0.23", features = ["debug-render"] }
 
 [package]
 name = "creature_3d_studio"
