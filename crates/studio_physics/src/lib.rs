@@ -7,10 +7,29 @@ pub struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PhysicsState::new())
+            .add_message::<SpawnCubeEvent>()
+            .add_message::<ClearBodiesEvent>()
             .add_systems(Startup, setup_physics_scene)
-            .add_systems(Update, (step_physics, sync_transforms).chain());
+            .add_systems(Update, (
+                handle_spawn_cube,
+                handle_clear_bodies,
+                step_physics,
+                sync_transforms,
+            ).chain());
     }
 }
+
+/// Message to spawn a cube at a position
+#[derive(Message, Debug)]
+pub struct SpawnCubeEvent(pub Vec3);
+
+/// Message to clear all dynamic bodies
+#[derive(Message, Debug)]
+pub struct ClearBodiesEvent;
+
+/// Marker for dynamic bodies (can be cleared)
+#[derive(Component)]
+pub struct DynamicBody;
 
 #[derive(Resource)]
 pub struct PhysicsState {
@@ -43,6 +62,14 @@ impl PhysicsState {
             ccd_solver: rapier::CCDSolver::new(),
         }
     }
+
+    /// Count of dynamic bodies
+    pub fn dynamic_body_count(&self) -> usize {
+        self.rigid_body_set
+            .iter()
+            .filter(|(_, b)| b.is_dynamic())
+            .count()
+    }
 }
 
 impl Default for PhysicsState {
@@ -55,12 +82,27 @@ impl Default for PhysicsState {
 #[derive(Component)]
 pub struct RigidBodyLink(pub rapier::RigidBodyHandle);
 
+// Shared mesh/material handles for cubes
+#[derive(Resource)]
+struct CubeMeshMaterial {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
 fn setup_physics_scene(
     mut commands: Commands,
     mut physics: ResMut<PhysicsState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // Store shared cube mesh/material
+    let cube_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let cube_material = materials.add(Color::srgb(0.8, 0.2, 0.2));
+    commands.insert_resource(CubeMeshMaterial {
+        mesh: cube_mesh,
+        material: cube_material,
+    });
+
     let p = physics.as_mut();
 
     // Ground plane (fixed body)
@@ -80,24 +122,6 @@ fn setup_physics_scene(
         Transform::from_xyz(0.0, -0.5, 0.0),
     ));
 
-    // Falling cube (dynamic body)
-    let cube_body = rapier::RigidBodyBuilder::dynamic().translation(Vector3::new(0.0, 5.0, 0.0));
-    let cube_handle = p.rigid_body_set.insert(cube_body);
-    let cube_collider = rapier::ColliderBuilder::cuboid(0.5, 0.5, 0.5);
-    p.collider_set.insert_with_parent(
-        cube_collider,
-        cube_handle,
-        &mut p.rigid_body_set,
-    );
-
-    // Spawn cube visual with link to physics body
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.2, 0.2))),
-        Transform::from_xyz(0.0, 5.0, 0.0),
-        RigidBodyLink(cube_handle),
-    ));
-
     // Add light
     commands.spawn((
         DirectionalLight {
@@ -107,6 +131,59 @@ fn setup_physics_scene(
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -0.5, 0.5, 0.0)),
     ));
+}
+
+fn handle_spawn_cube(
+    mut commands: Commands,
+    mut physics: ResMut<PhysicsState>,
+    mut events: MessageReader<SpawnCubeEvent>,
+    cube_assets: Option<Res<CubeMeshMaterial>>,
+) {
+    let Some(assets) = cube_assets else { return };
+
+    for SpawnCubeEvent(pos) in events.read() {
+        let p = physics.as_mut();
+
+        // Create physics body
+        let body = rapier::RigidBodyBuilder::dynamic()
+            .translation(Vector3::new(pos.x, pos.y, pos.z));
+        let handle = p.rigid_body_set.insert(body);
+        let collider = rapier::ColliderBuilder::cuboid(0.5, 0.5, 0.5);
+        p.collider_set.insert_with_parent(collider, handle, &mut p.rigid_body_set);
+
+        // Spawn visual entity
+        commands.spawn((
+            Mesh3d(assets.mesh.clone()),
+            MeshMaterial3d(assets.material.clone()),
+            Transform::from_translation(*pos),
+            RigidBodyLink(handle),
+            DynamicBody,
+        ));
+    }
+}
+
+fn handle_clear_bodies(
+    mut commands: Commands,
+    mut physics: ResMut<PhysicsState>,
+    mut events: MessageReader<ClearBodiesEvent>,
+    query: Query<(Entity, &RigidBodyLink), With<DynamicBody>>,
+) {
+    for _ in events.read() {
+        let p = physics.as_mut();
+
+        // Remove all dynamic body entities and their physics bodies
+        for (entity, link) in query.iter() {
+            p.rigid_body_set.remove(
+                link.0,
+                &mut p.island_manager,
+                &mut p.collider_set,
+                &mut p.impulse_joint_set,
+                &mut p.multibody_joint_set,
+                true,
+            );
+            commands.entity(entity).despawn();
+        }
+    }
 }
 
 fn step_physics(mut physics: ResMut<PhysicsState>) {

@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 bevy.workspace = true
 bevy_mod_imgui.workspace = true
+studio_physics = { path = "../studio_physics" }
+rand = "0.8"
