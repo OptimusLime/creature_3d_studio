@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/studio_core",
+    "crates/studio_physics",
+    "crates/studio_scripting",
+]
+
+[workspace.dependencies]
+bevy = "0.15"
+
+[package]
+name = "creature_3d_studio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy.workspace = true
+studio_core = { path = "crates/studio_core" }
+studio_physics = { path = "crates/studio_physics" }
+studio_scripting = { path = "crates/studio_scripting" }
