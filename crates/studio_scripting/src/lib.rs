@@ -1,3 +1,24 @@
+//! Lua scripting and ImGui integration for Creature 3D Studio.
+//!
+//! This crate provides:
+//! - Lua VM management with hot reload support
+//! - ImGui facade exposed to Lua (`imgui.*` functions)
+//! - Scene command interface for Lua (`scene.*` functions)
+//! - File watching for live script updates
+//!
+//! # Thread-Local Pointer Pattern
+//!
+//! `imgui::Ui` has a frame-scoped lifetime that can't be stored. We use thread-local
+//! pointers (`CURRENT_UI`, `CURRENT_COMMANDS`) that are set only during the Lua
+//! `on_draw()` callback and cleared immediately after. This allows Lua functions
+//! to access frame-specific resources safely.
+//!
+//! # Safety Invariant
+//!
+//! The thread-local pointers are only non-null during `on_draw()` execution.
+//! All `with_ui()` and `with_commands()` calls check for null and return errors
+//! if called outside the valid window.
+
 use bevy::prelude::*;
 use bevy_mod_imgui::prelude::{Condition, ImguiContext, Ui};
 use mlua::{Function, Lua, Result as LuaResult};
@@ -6,44 +27,44 @@ use rand::Rng;
 use std::cell::Cell;
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
-use studio_physics::{PhysicsState, UiActions};
+use studio_physics::{CommandQueue, PhysicsState};
 
 const SCRIPT_PATH: &str = "assets/scripts/ui/main.lua";
 
-// Thread-local pointers, only valid during on_draw callback
+// Thread-local pointers to frame-scoped resources.
+// Only valid during on_draw callback execution.
 thread_local! {
-    static UI_PTR: Cell<*const Ui> = const { Cell::new(std::ptr::null()) };
-    static ACTIONS_PTR: Cell<*mut UiActions> = const { Cell::new(std::ptr::null_mut()) };
+    static CURRENT_UI: Cell<*const Ui> = const { Cell::new(std::ptr::null()) };
+    static CURRENT_COMMANDS: Cell<*mut CommandQueue> = const { Cell::new(std::ptr::null_mut()) };
 }
 
 /// Execute a closure with access to the current imgui::Ui.
 /// Returns an error if called outside of a UI frame (i.e., not during on_draw).
 fn with_ui<R>(f: impl FnOnce(&Ui) -> R) -> LuaResult<R> {
-    UI_PTR.with(|cell| {
+    CURRENT_UI.with(|cell| {
         let ptr = cell.get();
         if ptr.is_null() {
             return Err(mlua::Error::RuntimeError(
                 "imgui.* called outside UI frame".into(),
             ));
         }
-        // SAFETY: The pointer is only set during the on_draw callback,
-        // and cleared immediately after. The Ui reference is valid for
-        // the duration of that callback.
+        // SAFETY: Pointer is only non-null during on_draw callback.
+        // Cleared immediately after callback returns.
         Ok(f(unsafe { &*ptr }))
     })
 }
 
-/// Execute a closure with mutable access to UiActions.
+/// Execute a closure with mutable access to the command queue.
 /// Returns an error if called outside of a UI frame.
-fn with_actions<R>(f: impl FnOnce(&mut UiActions) -> R) -> LuaResult<R> {
-    ACTIONS_PTR.with(|cell| {
+fn with_commands<R>(f: impl FnOnce(&mut CommandQueue) -> R) -> LuaResult<R> {
+    CURRENT_COMMANDS.with(|cell| {
         let ptr = cell.get();
         if ptr.is_null() {
             return Err(mlua::Error::RuntimeError(
-                "tools.* called outside UI frame".into(),
+                "scene.* called outside UI frame".into(),
             ));
         }
-        // SAFETY: Same as UI_PTR - only valid during on_draw callback
+        // SAFETY: Same invariant as CURRENT_UI.
         Ok(f(unsafe { &mut *ptr }))
     })
 }
@@ -53,8 +74,8 @@ pub struct ScriptingPlugin;
 impl Plugin for ScriptingPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(bevy_mod_imgui::ImguiPlugin::default())
-            .add_systems(Startup, (setup_lua, setup_file_watcher))
-            .add_systems(Update, (check_hot_reload, imgui_ui).chain());
+            .add_systems(Startup, (init_scripting, setup_file_watcher))
+            .add_systems(Update, (check_hot_reload, render_ui).chain());
     }
 }
 
@@ -147,7 +168,7 @@ struct LuaVm {
     last_error: Option<String>,
 }
 
-fn setup_lua(world: &mut World) {
+fn init_scripting(world: &mut World) {
     let lua = Lua::new();
 
     // Register tools.print
@@ -173,9 +194,11 @@ fn setup_lua(world: &mut World) {
 fn register_lua_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
 
-    // Create tools table
-    let tools = lua.create_table()?;
-    tools.set(
+    // Create scene namespace for scene manipulation
+    let scene = lua.create_table()?;
+
+    // scene.print(msg) - log message to console
+    scene.set(
         "print",
         lua.create_function(|_, msg: String| {
             info!("[lua] {}", msg);
@@ -183,25 +206,25 @@ fn register_lua_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
-    // tools.spawn_cube(x, y, z) - queue a cube spawn at position
-    tools.set(
+    // scene.spawn_cube(x, y, z) - spawn physics cube at position
+    scene.set(
         "spawn_cube",
         lua.create_function(|_, (x, y, z): (f32, f32, f32)| {
-            with_actions(|actions| actions.spawn_cube(Vec3::new(x, y, z)))?;
+            with_commands(|cmds| cmds.spawn_cube(Vec3::new(x, y, z)))?;
             Ok(())
         })?,
     )?;
 
-    // tools.clear() - queue clearing all dynamic bodies
-    tools.set(
+    // scene.clear() - remove all dynamic bodies
+    scene.set(
         "clear",
         lua.create_function(|_, ()| {
-            with_actions(|actions| actions.clear())?;
+            with_commands(|cmds| cmds.clear())?;
             Ok(())
         })?,
     )?;
 
-    globals.set("tools", tools)?;
+    globals.set("scene", scene)?;
 
     // Create imgui table with UI functions
     let imgui_table = lua.create_table()?;
@@ -281,10 +304,11 @@ fn load_ui_script(vm: &mut LuaVm, path: &str) -> LuaResult<()> {
     Ok(())
 }
 
-fn imgui_ui(
+/// Main UI rendering system. Renders Rust UI and invokes Lua on_draw callback.
+fn render_ui(
     mut context: NonSendMut<ImguiContext>,
     physics: Res<PhysicsState>,
-    mut actions: ResMut<UiActions>,
+    mut commands: ResMut<CommandQueue>,
     mut vm: Option<NonSendMut<LuaVm>>,
 ) {
     let ui = context.ui();
@@ -305,22 +329,22 @@ fn imgui_ui(
                 let x = rng.gen_range(-3.0..3.0);
                 let z = rng.gen_range(-3.0..3.0);
                 let y = rng.gen_range(3.0..8.0);
-                actions.spawn_cube(Vec3::new(x, y, z));
+                commands.spawn_cube(Vec3::new(x, y, z));
             }
 
             ui.same_line();
 
             if ui.button("Clear All") {
-                actions.clear();
+                commands.clear();
             }
         });
 
-    // Call Lua on_draw with UI and Actions pointers set
+    // Call Lua on_draw with frame-scoped pointers set
     if let Some(ref mut vm) = vm {
         if let Some(ref key) = vm.draw_fn {
             // Set pointers for the duration of the Lua callback
-            UI_PTR.with(|cell| cell.set(ui as *const Ui));
-            ACTIONS_PTR.with(|cell| cell.set(actions.as_mut() as *mut UiActions));
+            CURRENT_UI.with(|cell| cell.set(ui as *const Ui));
+            CURRENT_COMMANDS.with(|cell| cell.set(commands.as_mut() as *mut CommandQueue));
 
             let result: LuaResult<()> = (|| {
                 let draw_fn: Function = vm.lua.registry_value(key)?;
@@ -328,9 +352,9 @@ fn imgui_ui(
                 Ok(())
             })();
 
-            // Clear pointers immediately after
-            UI_PTR.with(|cell| cell.set(std::ptr::null()));
-            ACTIONS_PTR.with(|cell| cell.set(std::ptr::null_mut()));
+            // Clear pointers immediately after callback returns
+            CURRENT_UI.with(|cell| cell.set(std::ptr::null()));
+            CURRENT_COMMANDS.with(|cell| cell.set(std::ptr::null_mut()));
 
             if let Err(e) = result {
                 vm.last_error = Some(format!("{:?}", e));

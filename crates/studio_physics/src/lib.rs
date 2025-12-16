@@ -1,45 +1,69 @@
+//! Physics simulation for Creature 3D Studio.
+//!
+//! This crate provides Rapier3D physics integration with Bevy, including:
+//! - Physics world management (`PhysicsState`)
+//! - Scene command queue (`CommandQueue`) for UI-driven physics operations
+//! - Automatic transform synchronization between Rapier bodies and Bevy entities
+//!
+//! # Architecture
+//!
+//! Commands flow: UI -> `CommandQueue` -> `apply_scene_commands` -> Messages -> Handlers -> `PhysicsState`
+//!
+//! This decouples UI (including Lua scripts) from direct physics manipulation.
+
 use bevy::prelude::*;
 use rapier3d::prelude as rapier;
 use rapier::nalgebra::Vector3;
 
-/// Actions that can be queued from UI (Lua or Rust) and applied to physics
+/// Commands that can modify the physics scene.
+/// Queued by UI (Lua or Rust) and applied by the physics system.
 #[derive(Debug, Clone)]
-pub enum UiAction {
+pub enum SceneCommand {
     SpawnCube(Vec3),
     ClearBodies,
 }
 
-/// Queue of UI actions to be processed - allows Lua to request physics changes
+/// Queue of pending scene commands.
+/// Decouples UI requests from physics execution.
 #[derive(Resource, Default)]
-pub struct UiActions {
-    pub queue: Vec<UiAction>,
+pub struct CommandQueue {
+    pending: Vec<SceneCommand>,
 }
 
-impl UiActions {
+impl CommandQueue {
+    /// Queue a command to spawn a cube at the given position.
     pub fn spawn_cube(&mut self, pos: Vec3) {
-        self.queue.push(UiAction::SpawnCube(pos));
+        self.pending.push(SceneCommand::SpawnCube(pos));
     }
 
+    /// Queue a command to clear all dynamic bodies.
     pub fn clear(&mut self) {
-        self.queue.push(UiAction::ClearBodies);
+        self.pending.push(SceneCommand::ClearBodies);
     }
 
-    pub fn drain(&mut self) -> Vec<UiAction> {
-        std::mem::take(&mut self.queue)
+    /// Drain all pending commands for processing.
+    pub fn drain(&mut self) -> Vec<SceneCommand> {
+        std::mem::take(&mut self.pending)
     }
 }
 
+/// Bevy plugin that initializes physics simulation.
+///
+/// Registers:
+/// - `PhysicsState` resource (Rapier world)
+/// - `CommandQueue` resource (pending scene commands)
+/// - Physics stepping and transform sync systems
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PhysicsState::new())
-            .insert_resource(UiActions::default())
+            .insert_resource(CommandQueue::default())
             .add_message::<SpawnCubeEvent>()
             .add_message::<ClearBodiesEvent>()
             .add_systems(Startup, setup_physics_scene)
             .add_systems(Update, (
-                apply_ui_actions,
+                apply_scene_commands,
                 handle_spawn_cube,
                 handle_clear_bodies,
                 step_physics,
@@ -60,6 +84,10 @@ pub struct ClearBodiesEvent;
 #[derive(Component)]
 pub struct DynamicBody;
 
+/// Holds all Rapier physics world state.
+///
+/// Contains rigid bodies, colliders, and simulation parameters.
+/// Updated each frame by `step_physics` system.
 #[derive(Resource)]
 pub struct PhysicsState {
     pub gravity: Vector3<f32>,
@@ -162,18 +190,18 @@ fn setup_physics_scene(
     ));
 }
 
-/// Drains the UI action queue and emits corresponding messages
-fn apply_ui_actions(
-    mut actions: ResMut<UiActions>,
+/// Drains the command queue and emits corresponding messages.
+fn apply_scene_commands(
+    mut commands: ResMut<CommandQueue>,
     mut spawn_events: MessageWriter<SpawnCubeEvent>,
     mut clear_events: MessageWriter<ClearBodiesEvent>,
 ) {
-    for action in actions.drain() {
-        match action {
-            UiAction::SpawnCube(pos) => {
+    for cmd in commands.drain() {
+        match cmd {
+            SceneCommand::SpawnCube(pos) => {
                 spawn_events.write(SpawnCubeEvent(pos));
             }
-            UiAction::ClearBodies => {
+            SceneCommand::ClearBodies => {
                 clear_events.write(ClearBodiesEvent);
             }
         }
