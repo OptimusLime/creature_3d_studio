@@ -42,10 +42,10 @@ pub struct BloomConfig {
 impl Default for BloomConfig {
     fn default() -> Self {
         Self {
-            threshold: 0.7,      // Catch bright and emissive surfaces
-            intensity: 2.0,      // Strong bloom for 80s dark fantasy aesthetic
-            blend_factor: 0.7,   // Higher blend for more glow spread
-            exposure: 1.0,
+            threshold: 0.6,      // Lower threshold to catch colored emissive surfaces
+            intensity: 1.5,      // Moderate bloom - preserves color saturation
+            blend_factor: 0.6,   // Moderate blend for visible glow without washout
+            exposure: 1.2,       // Slightly higher exposure for darker scenes
         }
     }
 }

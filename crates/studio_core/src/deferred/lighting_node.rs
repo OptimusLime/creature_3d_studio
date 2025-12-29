@@ -294,15 +294,16 @@ pub fn init_lighting_pipeline(
     );
     
     // Create bind group layout for point lights (group 3)
+    // Using Storage buffer for higher light counts (256+)
     let point_lights_layout = render_device.create_bind_group_layout(
         "lighting_point_lights_layout",
         &[
-            // Point lights uniform buffer
+            // Point lights storage buffer (read-only)
             BindGroupLayoutEntry {
                 binding: 0,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
+                    ty: BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -373,5 +374,6 @@ pub fn init_lighting_pipeline(
         point_lights_layout,
     });
     
-    info!("LightingPipeline initialized with shadow mapping and point lights support");
+    info!("LightingPipeline initialized with shadow mapping and point lights support (storage buffer, max {})", 
+          super::point_light::MAX_POINT_LIGHTS);
 }

@@ -27,7 +27,8 @@ use bevy::render::{
 
 /// Maximum number of point lights supported by the shader.
 /// This must match MAX_POINT_LIGHTS in deferred_lighting.wgsl
-pub const MAX_POINT_LIGHTS: usize = 32;
+/// Using storage buffer allows much higher counts than uniform buffers.
+pub const MAX_POINT_LIGHTS: usize = 256;
 
 /// Point light component for deferred rendering.
 ///
@@ -105,22 +106,56 @@ impl Default for GpuPointLight {
     }
 }
 
-/// Uniform buffer containing all point lights for the lighting pass.
+/// Storage buffer header containing point light count.
+/// Stored separately for alignment and to allow dynamic light counts.
 #[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PointLightsUniform {
-    /// Number of active point lights
-    pub count: [u32; 4],  // Using vec4 for alignment, only x is used
-    /// Array of point lights (padded to MAX_POINT_LIGHTS)
-    pub lights: [GpuPointLight; MAX_POINT_LIGHTS],
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct PointLightsHeader {
+    /// Number of active point lights (x), padding (yzw)
+    pub count: [u32; 4],
 }
 
-impl Default for PointLightsUniform {
+/// Storage buffer containing all point lights for the lighting pass.
+/// Using storage buffer instead of uniform allows:
+/// - Much larger light counts (256+ vs ~32 for uniform)
+/// - Dynamic array access in shader
+/// - Better performance for sparse light culling
+#[repr(C)]
+#[derive(Clone)]
+pub struct PointLightsStorage {
+    /// Header with light count
+    pub header: PointLightsHeader,
+    /// Array of point lights (only count lights are valid)
+    pub lights: Vec<GpuPointLight>,
+}
+
+impl Default for PointLightsStorage {
     fn default() -> Self {
         Self {
-            count: [0; 4],
-            lights: [GpuPointLight::default(); MAX_POINT_LIGHTS],
+            header: PointLightsHeader { count: [0; 4] },
+            lights: Vec::new(),
         }
+    }
+}
+
+impl PointLightsStorage {
+    /// Convert to bytes for GPU upload.
+    /// Layout: [header (16 bytes)] [lights (48 bytes each)]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16 + self.lights.len() * std::mem::size_of::<GpuPointLight>());
+        bytes.extend_from_slice(bytemuck::bytes_of(&self.header));
+        for light in &self.lights {
+            bytes.extend_from_slice(bytemuck::bytes_of(light));
+        }
+        // Pad to at least 256 lights worth of space for consistent buffer size
+        // This prevents buffer recreation on every frame when light count changes
+        let min_lights = MAX_POINT_LIGHTS;
+        let current_lights = self.lights.len();
+        if current_lights < min_lights {
+            let padding = (min_lights - current_lights) * std::mem::size_of::<GpuPointLight>();
+            bytes.extend(std::iter::repeat(0u8).take(padding));
+        }
+        bytes
     }
 }
 
@@ -160,13 +195,13 @@ pub fn extract_point_lights(
     commands.insert_resource(extracted);
 }
 
-/// System to prepare point lights uniform buffer.
+/// System to prepare point lights storage buffer.
 pub fn prepare_point_lights(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     extracted_lights: Option<Res<ExtractedPointLights>>,
 ) {
-    let mut uniform = PointLightsUniform::default();
+    let mut storage = PointLightsStorage::default();
     let mut count = 0u32;
     
     if let Some(extracted) = extracted_lights {
@@ -177,28 +212,28 @@ pub fn prepare_point_lights(
                 break;
             }
             
-            uniform.lights[count as usize] = GpuPointLight {
+            storage.lights.push(GpuPointLight {
                 position: [light.position.x, light.position.y, light.position.z, 0.0],
                 color_intensity: [light.color.x, light.color.y, light.color.z, light.intensity],
                 radius_padding: [light.radius, 0.0, 0.0, 0.0],
-            };
+            });
             
             count += 1;
         }
     }
     
-    uniform.count[0] = count;
+    storage.header.count[0] = count;
     
-    // Create buffer
+    // Create storage buffer (read-only in shader)
     let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("point_lights_uniform"),
-        contents: bytemuck::bytes_of(&uniform),
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        label: Some("point_lights_storage"),
+        contents: &storage.to_bytes(),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
     });
     
     commands.insert_resource(PointLightsBuffer { buffer, count });
     
     if count > 0 {
-        debug!("Prepared {} point lights for lighting pass", count);
+        debug!("Prepared {} point lights for lighting pass (storage buffer)", count);
     }
 }

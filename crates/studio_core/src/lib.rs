@@ -25,7 +25,10 @@ pub use deferred::{
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
-pub use voxel::{Voxel, VoxelChunk, CHUNK_SIZE};
+pub use voxel::{
+    extract_clustered_emissive_lights, extract_emissive_lights, EmissiveLight, Voxel, VoxelChunk,
+    CHUNK_SIZE,
+};
 pub use voxel_mesh::{
     build_chunk_mesh, VoxelMaterial, VoxelMaterialPlugin, ATTRIBUTE_VOXEL_COLOR,
     ATTRIBUTE_VOXEL_EMISSION,

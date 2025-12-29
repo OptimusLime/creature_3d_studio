@@ -24,9 +24,9 @@ struct ShadowUniforms {
 }
 @group(2) @binding(0) var<uniform> shadow: ShadowUniforms;
 
-// Point lights (bind group 3)
+// Point lights (bind group 3) - Storage buffer for high volume lights
 // Must match MAX_POINT_LIGHTS in point_light.rs
-const MAX_POINT_LIGHTS: u32 = 32u;
+const MAX_POINT_LIGHTS: u32 = 256u;
 
 struct PointLight {
     position: vec4<f32>,        // xyz = position, w = unused
@@ -34,11 +34,16 @@ struct PointLight {
     radius_padding: vec4<f32>,  // x = radius, yzw = unused
 }
 
-struct PointLightsUniform {
+// Storage buffer layout: [header (16 bytes)] [lights array]
+// Using storage buffer instead of uniform allows:
+// - Much higher light counts (256+ vs ~32)
+// - Dynamic array sizing
+// - Better performance for sparse light iteration
+struct PointLightsStorage {
     count: vec4<u32>,  // x = count, yzw = unused
-    lights: array<PointLight, 32>,
+    lights: array<PointLight>,  // Runtime-sized array (storage buffer feature)
 }
-@group(3) @binding(0) var<uniform> point_lights: PointLightsUniform;
+@group(3) @binding(0) var<storage, read> point_lights: PointLightsStorage;
 
 // Fullscreen triangle vertices
 struct VertexOutput {
@@ -107,30 +112,40 @@ const DEBUG_MODE: i32 = 0;
 
 // Calculate point light contribution at a world position.
 // Uses smooth quadratic falloff to zero at the light's radius.
+// Optimized with early distance culling for high volume lights.
 fn calculate_point_light(
     light: PointLight,
     world_pos: vec3<f32>,
     world_normal: vec3<f32>,
 ) -> vec3<f32> {
     let light_pos = light.position.xyz;
-    let light_color = light.color_intensity.rgb;
-    let intensity = light.color_intensity.a;
     let radius = light.radius_padding.x;
     
     // Vector from surface to light
     let to_light = light_pos - world_pos;
-    let distance = length(to_light);
     
-    // Skip if outside radius
-    if distance > radius {
+    // Early distance culling using squared distance (faster than length())
+    // This is the key optimization for high volume lights
+    let dist_sq = dot(to_light, to_light);
+    let radius_sq = radius * radius;
+    if dist_sq > radius_sq {
         return vec3<f32>(0.0);
     }
+    
+    let distance = sqrt(dist_sq);
+    let light_color = light.color_intensity.rgb;
+    let intensity = light.color_intensity.a;
     
     // Normalize direction
     let light_dir = to_light / distance;
     
     // N dot L for diffuse lighting
     let n_dot_l = max(dot(world_normal, light_dir), 0.0);
+    
+    // Early out if surface facing away from light
+    if n_dot_l <= 0.0 {
+        return vec3<f32>(0.0);
+    }
     
     // Smooth quadratic attenuation: (1 - (d/r)^2)^2
     // This gives a nice smooth falloff that reaches exactly zero at radius
@@ -353,12 +368,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Apply lighting to albedo
     var final_color = albedo * total_light;
     
-    // Add emission - emission makes the surface glow beyond its lit color
-    // Higher emission = more of the albedo color added as self-illumination
-    // Scale emission contribution: emission is 0-1 normalized from 0-255 input
-    // We want high emission values (like 200) to produce HDR values > 1.0 for bloom
-    let emission_strength = emission * 5.0;  // Strong emission for visible bloom
-    final_color += albedo * emission_strength;
+    // Add emission - emissive surfaces glow with their own color
+    // With the hybrid tone mapping in bloom_composite, we can use simpler
+    // emission handling - just add albedo scaled by emission.
+    // The Reinhard luminance mapping preserves color saturation for bright areas.
+    if emission > 0.01 {
+        // Perceptual scaling - sqrt makes mid-emission values more visible
+        let emit_factor = sqrt(emission);
+        
+        // For emissive surfaces, replace lit color with self-illuminated albedo
+        // The albedo IS the emission color - we just need to make it bright
+        let emissive_color = albedo * (0.5 + emit_factor * 0.6);  // 0.5 to 1.1 brightness
+        
+        // Blend: high emission = mostly self-lit, low = mostly lit by external
+        final_color = mix(final_color, emissive_color, emit_factor);
+        
+        // Add HDR boost for bloom - moderate to preserve color through tone mapping
+        final_color += albedo * emit_factor * 0.5;
+    }
     
     // --- Fog (Bonsai-style) ---
     // Exponential fog for more natural falloff

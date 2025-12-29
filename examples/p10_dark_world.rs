@@ -24,8 +24,9 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use studio_core::{
-    build_chunk_mesh, load_creature_script, DeferredCamera, DeferredPointLight, DeferredRenderable,
-    DeferredRenderingPlugin, VoxelMaterial, VoxelMaterialPlugin,
+    build_chunk_mesh, extract_emissive_lights, load_creature_script, DeferredCamera,
+    DeferredPointLight, DeferredRenderable, DeferredRenderingPlugin, VoxelMaterial,
+    VoxelMaterialPlugin,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -87,6 +88,14 @@ fn setup(
         }
     };
 
+    // === PHASE 16: AUTO-GENERATE POINT LIGHTS FROM EMISSIVE VOXELS ===
+    // Extract emissive voxels and create point lights from them
+    // This ensures point light colors MATCH the emissive voxel colors
+    // Using non-clustered extraction - each emissive voxel becomes a light
+    // The voxel itself is visible (emissive surface) and the light illuminates surroundings
+    let emissive_lights = extract_emissive_lights(&chunk, 100);
+    println!("Found {} emissive voxels for point lights", emissive_lights.len());
+
     let mesh = build_chunk_mesh(&chunk);
 
     // Log mesh statistics
@@ -100,19 +109,23 @@ fn setup(
     let mesh_handle = meshes.add(mesh);
     let material = materials.add(VoxelMaterial::default());
 
+    // Scene offset - the scene is built at 0-31 but we center it
+    let scene_offset = Vec3::new(-16.0, 0.0, -16.0);
+
     // Spawn dark world - centered at origin
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material),
-        Transform::from_xyz(-16.0, 0.0, -16.0), // Center the 32x32 scene
+        Transform::from_translation(scene_offset),
         DeferredRenderable,
     ));
 
-    // Camera - closer to see point light details
+    // Camera - closer and rotated to see more details
+    // Position to see the altar, crystals, and show lighting effects clearly
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(10.0, 8.0, 14.0).looking_at(Vec3::new(0.0, 4.0, 0.0), Vec3::Y),
+        Transform::from_xyz(6.0, 6.0, 10.0).looking_at(Vec3::new(-2.0, 2.0, -2.0), Vec3::Y),
         DeferredCamera,
         MainCamera,
     ));
@@ -152,64 +165,37 @@ fn setup(
         )),
     ));
 
-    // === POINT LIGHTS ===
-    // These are positioned at the crystal/glowing voxel locations
-    // The scene is offset by (-16, 0, -16) so we need to adjust positions
-    // Higher intensity to make colors clearly visible
-    let scene_offset = Vec3::new(-16.0, 0.0, -16.0);
+    // === AUTO-GENERATED POINT LIGHTS FROM EMISSIVE VOXELS ===
+    // Each emissive voxel creates a point light with MATCHING color
+    // The emissive voxel itself glows (via emission in shader)
+    // The point light illuminates surrounding surfaces with colored light
+    let mut light_count = 0;
     
-    // Central altar orb (orange glow) - positioned at voxel (15.5, 6.5, 15.5)
-    commands.spawn((
-        DeferredPointLight {
-            color: Color::srgb(1.0, 0.5, 0.1),  // Warm orange
-            intensity: 8.0,
-            radius: 15.0,
-        },
-        Transform::from_translation(Vec3::new(15.5, 7.0, 15.5) + scene_offset),
-    ));
+    for light in &emissive_lights {
+        // Get world position (center of voxel + scene offset)
+        let world_pos = light.world_position([0.0, 0.0, 0.0]);
+        let pos = Vec3::new(world_pos[0], world_pos[1], world_pos[2]) + scene_offset;
+        
+        // Create point light with same color as emissive voxel
+        // Use moderate intensity so lights illuminate but don't overpower
+        // Radius determines how far the colored light spreads
+        let intensity = 3.0 * light.emission;  // Scale with emission
+        let radius = 6.0;  // Fixed moderate radius
+        
+        commands.spawn((
+            DeferredPointLight {
+                color: Color::srgb(light.color[0], light.color[1], light.color[2]),
+                intensity,
+                radius,
+            },
+            Transform::from_translation(pos),
+        ));
+        light_count += 1;
+    }
     
-    // Purple crystal cluster (left side) - at voxel (5, 2, 8)
-    commands.spawn((
-        DeferredPointLight {
-            color: Color::srgb(0.6, 0.1, 1.0),  // Deep purple
-            intensity: 6.0,
-            radius: 12.0,
-        },
-        Transform::from_translation(Vec3::new(5.0, 2.5, 8.0) + scene_offset),
-    ));
-    
-    // Cyan crystal (front right) - at voxel (26, 2.5, 5)
-    commands.spawn((
-        DeferredPointLight {
-            color: Color::srgb(0.1, 0.9, 1.0),  // Bright cyan
-            intensity: 6.0,
-            radius: 12.0,
-        },
-        Transform::from_translation(Vec3::new(26.0, 2.5, 5.0) + scene_offset),
-    ));
-    
-    // Magenta crystal (back) - at voxel (10, 2, 26)
-    commands.spawn((
-        DeferredPointLight {
-            color: Color::srgb(1.0, 0.1, 0.6),  // Hot magenta
-            intensity: 6.0,
-            radius: 12.0,
-        },
-        Transform::from_translation(Vec3::new(10.0, 2.5, 26.0) + scene_offset),
-    ));
-    
-    // Floating rock orange crystal - at voxel (21.5, 10, 9.5)
-    commands.spawn((
-        DeferredPointLight {
-            color: Color::srgb(1.0, 0.4, 0.05),  // Deep orange
-            intensity: 5.0,
-            radius: 10.0,
-        },
-        Transform::from_translation(Vec3::new(21.5, 10.5, 9.5) + scene_offset),
-    ));
-
+    // Print summary of lights by color
     println!("Dark world scene setup complete.");
-    println!("Point lights: 5 (altar, purple, cyan, magenta, floating rock)");
+    println!("Auto-generated {} point lights from emissive voxels", light_count);
 }
 
 fn rotate_camera(

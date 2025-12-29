@@ -13,7 +13,7 @@ print("[darkworld] Creating dark world test scene...")
 local OBSIDIAN = {20, 15, 25}         -- Dark purple-black rock
 local DARK_STONE = {35, 30, 40}       -- Slightly lighter purple stone
 local PURPLE_CRYSTAL = {180, 50, 220} -- Bright purple
-local ORANGE_CRYSTAL = {255, 140, 40} -- Bright orange
+local ORANGE_CRYSTAL = {255, 100, 20} -- Deep orange (less green to survive tone mapping)
 local CYAN_CRYSTAL = {50, 220, 255}   -- Cyan accent
 local MAGENTA_CRYSTAL = {255, 50, 180}-- Hot pink
 local DARK_METAL = {45, 40, 50}       -- For ruins

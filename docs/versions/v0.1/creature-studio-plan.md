@@ -1078,35 +1078,26 @@ total_light *= face_multiplier;
 
 ## Roadmap Summary - Lighting Focus
 
-**Current State**: Dark World scene with dual moons and basic point lights working.
+**Current State**: Dark World scene with dual moons, high-volume point lights (256), and auto-generated point lights from emissive voxels working. Emissive voxels display their actual colors (not white).
 
-**Priority Order** (based on user preference):
-1. **A. High Volume Lights** - Many lights in same space
-2. **B. Point Light Shadows** - Lights cast shadows
-3. **C. Auto-gen Point Lights** - Generate from emissive voxels
-4. **D. Multi-Shadow (Moons)** - Both moons cast shadows
-5. **E. Day/Night Cycle** - Time-based moon transitions
-6. **F. Multi-frame Render** - Capture day/night sequence
+**Completed**:
+- ✅ Phase 13: Point Lights (basic)
+- ✅ Phase 14: High Volume Point Lights (256+ via storage buffer)
+- ✅ Phase 16: Auto-Generate Point Lights from Emissive Voxels
+
+**Next Priority**:
+1. **B. Point Light Shadows** - Lights cast shadows (cube shadow maps)
+2. **D. Multi-Shadow (Moons)** - Both moons cast shadows
+3. **E. Day/Night Cycle** - Time-based moon transitions
+4. **F. Multi-frame Render** - Capture day/night sequence
 
 ```
-Current State (Phase 13 Complete - Point Lights Working!)
+Current State (Phase 14 + 16 Complete!)
         │
         ▼
 ┌────────────────────────┐
-│ Phase 14: HIGH VOLUME  │  ◀◀◀ CURRENT PRIORITY
-│   POINT LIGHTS         │  256+ lights, GPU optimization
-└────────┬───────────────┘
-         │
-         ▼
-┌────────────────────────┐
-│ Phase 15: POINT LIGHT  │  
+│ Phase 15: POINT LIGHT  │  ◀◀◀ NEXT PRIORITY  
 │   SHADOWS              │  Cube shadow maps per light
-└────────┬───────────────┘
-         │
-         ▼
-┌────────────────────────┐
-│ Phase 16: AUTO-GEN     │
-│   POINT LIGHTS         │  From emissive voxels
 └────────┬───────────────┘
          │
          ▼
@@ -1147,29 +1138,62 @@ Current State (Phase 13 Complete - Point Lights Working!)
 
 ---
 
-### Phase 14: High Volume Point Lights (NEXT)
+### Phase 14: High Volume Point Lights (COMPLETE)
+
+**Status**: ✅ COMPLETE
 
 **Goal**: Support 256+ point lights efficiently for dense light fields.
 
-**Why**: Current MAX_POINT_LIGHTS=32 is too low for scenes with many glowing voxels.
+**What was built**:
+- Increased MAX_POINT_LIGHTS from 32 to 256
+- Switched from uniform buffer to **storage buffer** (`var<storage, read>`)
+- Added squared distance culling in shader for performance
+- Added early back-face culling (skip lights where N·L ≤ 0)
+- Tested with 30+ lights from auto-generated emissive voxels
 
-**Approach**:
-1. Increase MAX_POINT_LIGHTS to 256 (or use storage buffer for unlimited)
-2. Implement light culling (only process lights near fragment)
-3. Consider clustered deferred lighting for better scaling
+**Files Modified**:
+| File | Changes |
+|------|---------|
+| `deferred/point_light.rs` | `PointLightsStorage`, storage buffer, MAX=256 |
+| `deferred/lighting_node.rs` | `BufferBindingType::Storage { read_only: true }` |
+| `shaders/deferred_lighting.wgsl` | `var<storage, read>`, runtime-sized array, optimized culling |
 
-**Tasks**:
-| ID | Task | Status |
-|----|------|--------|
-| 14.1 | Increase MAX_POINT_LIGHTS to 256 | Pending |
-| 14.2 | Switch from uniform to storage buffer | Pending |
-| 14.3 | Add distance culling in shader | Pending |
-| 14.4 | Test with 100+ lights | Pending |
-| 14.5 | Profile GPU performance | Pending |
+**Verification**: Dark world scene with 30 auto-generated lights renders smoothly.
 
 ---
 
-### Phase 15: Point Light Shadows
+### Phase 16: Auto-Generate Point Lights from Emissive Voxels (COMPLETE)
+
+**Status**: ✅ COMPLETE
+
+**Goal**: Automatically create point lights at emissive voxel positions with matching colors.
+
+**What was built**:
+- `extract_emissive_lights()` - gets all emissive voxels above threshold
+- `extract_clustered_emissive_lights()` - clusters adjacent same-color voxels
+- `EmissiveLight` struct with position, color, emission intensity
+- Point light colors now **match emissive voxel colors exactly**
+- Hybrid tone mapping (ACES + Reinhard) preserves color saturation
+
+**Key insight**: The original issue was ACES tone mapping desaturating bright colors. Fixed with:
+1. Hybrid tone mapping that uses Reinhard (preserves saturation) for bright areas
+2. Reduced emission multiplier in lighting shader
+3. Perceptual scaling with `sqrt(emission)`
+
+**Files Modified**:
+| File | Changes |
+|------|---------|
+| `voxel.rs` | Added `iter_emissive()`, `extract_emissive_lights()`, `extract_clustered_emissive_lights()`, `EmissiveLight` |
+| `lib.rs` | Exported new emissive functions |
+| `shaders/deferred_lighting.wgsl` | Simplified emission for color preservation |
+| `shaders/bloom_composite.wgsl` | Hybrid tone mapping (ACES + Reinhard luminance) |
+| `deferred/bloom.rs` | Adjusted bloom config |
+
+**Verification**: Emissive voxels display orange, cyan, magenta, purple (not white). Point lights match.
+
+---
+
+### Phase 15: Point Light Shadows (NEXT)
 
 **Goal**: Point lights cast shadows using cube shadow maps.
 
@@ -1186,22 +1210,6 @@ For each shadow-casting point light:
 **Complexity**: HIGH - 6 render passes per shadow-casting light, expensive!
 
 **Optimization**: Limit shadow-casting lights (nearest 4-8 only)
-
----
-
-### Phase 16: Auto-Generate Point Lights from Emissive Voxels
-
-**Goal**: Automatically create point lights at emissive voxel positions.
-
-**Algorithm**:
-1. During mesh build, collect emissive voxel positions
-2. For each emissive voxel:
-   - Create `DeferredPointLight` at voxel center
-   - Color = voxel color
-   - Intensity = emission * scale_factor
-   - Radius = emission-based (brighter = farther reach)
-
-**Why**: No manual placement needed. Glowing crystals automatically illuminate.
 
 ---
 

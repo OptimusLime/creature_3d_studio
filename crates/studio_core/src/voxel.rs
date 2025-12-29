@@ -4,7 +4,9 @@
 //! VoxelChunk stores a 16³ dense array of optional voxels.
 
 /// Size of a voxel chunk in each dimension.
-pub const CHUNK_SIZE: usize = 16;
+/// 32 allows for reasonably sized test scenes.
+/// For larger scenes, multiple chunks would be needed.
+pub const CHUNK_SIZE: usize = 32;
 
 /// A single voxel with color and emission.
 ///
@@ -151,6 +153,155 @@ impl VoxelChunk {
     pub fn is_neighbor_solid(&self, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
         self.is_solid(x as i32 + dx, y as i32 + dy, z as i32 + dz)
     }
+
+    /// Iterate over emissive voxels (voxels with emission > threshold).
+    /// Returns (x, y, z, voxel) for each emissive voxel.
+    pub fn iter_emissive(&self, min_emission: u8) -> impl Iterator<Item = (usize, usize, usize, Voxel)> + '_ {
+        self.iter().filter(move |(_, _, _, v)| v.emission >= min_emission)
+    }
+}
+
+/// Data for an emissive voxel that can become a point light.
+#[derive(Debug, Clone)]
+pub struct EmissiveLight {
+    /// Position of the emissive voxel (in chunk coordinates)
+    pub position: (usize, usize, usize),
+    /// RGB color (0.0-1.0)
+    pub color: [f32; 3],
+    /// Emission intensity (0.0-1.0)
+    pub emission: f32,
+}
+
+impl EmissiveLight {
+    /// Get world position given chunk offset.
+    /// The position is at the center of the voxel (+0.5 offset).
+    pub fn world_position(&self, chunk_offset: [f32; 3]) -> [f32; 3] {
+        [
+            self.position.0 as f32 + 0.5 + chunk_offset[0],
+            self.position.1 as f32 + 0.5 + chunk_offset[1],
+            self.position.2 as f32 + 0.5 + chunk_offset[2],
+        ]
+    }
+}
+
+/// Extract emissive voxels from a chunk as potential point light sources.
+/// 
+/// This function finds all voxels with emission above the threshold and
+/// groups adjacent emissive voxels into single lights (to avoid many
+/// overlapping lights from a cluster of emissive voxels).
+/// 
+/// # Arguments
+/// * `chunk` - The voxel chunk to scan
+/// * `min_emission` - Minimum emission value to consider (0-255, typically 100+)
+/// 
+/// # Returns
+/// A list of emissive light sources with position, color, and intensity.
+pub fn extract_emissive_lights(chunk: &VoxelChunk, min_emission: u8) -> Vec<EmissiveLight> {
+    // Simple approach: collect all emissive voxels
+    // A more advanced approach could cluster adjacent voxels
+    chunk
+        .iter_emissive(min_emission)
+        .map(|(x, y, z, voxel)| EmissiveLight {
+            position: (x, y, z),
+            color: voxel.color_f32(),
+            emission: voxel.emission_f32(),
+        })
+        .collect()
+}
+
+/// Extract emissive lights and cluster adjacent voxels into single lights.
+/// 
+/// This reduces the number of point lights by merging adjacent emissive voxels
+/// of the same color into a single light at their centroid.
+/// 
+/// # Arguments
+/// * `chunk` - The voxel chunk to scan
+/// * `min_emission` - Minimum emission value (0-255)
+/// * `color_tolerance` - How similar colors must be to cluster (0.0-1.0, typically 0.1)
+/// 
+/// # Returns
+/// Clustered emissive lights.
+pub fn extract_clustered_emissive_lights(
+    chunk: &VoxelChunk,
+    min_emission: u8,
+    color_tolerance: f32,
+) -> Vec<EmissiveLight> {
+    let emissive: Vec<_> = chunk.iter_emissive(min_emission).collect();
+    
+    if emissive.is_empty() {
+        return Vec::new();
+    }
+    
+    // Track which voxels have been assigned to a cluster
+    let mut assigned = vec![false; emissive.len()];
+    let mut clusters: Vec<EmissiveLight> = Vec::new();
+    
+    for i in 0..emissive.len() {
+        if assigned[i] {
+            continue;
+        }
+        
+        let (x, y, z, base_voxel) = emissive[i];
+        let base_color = base_voxel.color_f32();
+        
+        // Start a new cluster
+        let mut cluster_positions: Vec<(usize, usize, usize)> = vec![(x, y, z)];
+        let mut cluster_emission = base_voxel.emission_f32();
+        assigned[i] = true;
+        
+        // Find adjacent voxels with similar color
+        for j in (i + 1)..emissive.len() {
+            if assigned[j] {
+                continue;
+            }
+            
+            let (ox, oy, oz, other_voxel) = emissive[j];
+            let other_color = other_voxel.color_f32();
+            
+            // Check if colors are similar
+            let color_diff = (base_color[0] - other_color[0]).abs()
+                + (base_color[1] - other_color[1]).abs()
+                + (base_color[2] - other_color[2]).abs();
+            
+            if color_diff > color_tolerance * 3.0 {
+                continue;
+            }
+            
+            // Check if adjacent to any voxel in the cluster
+            let mut is_adjacent = false;
+            for &(cx, cy, cz) in &cluster_positions {
+                let dx = (ox as i32 - cx as i32).abs();
+                let dy = (oy as i32 - cy as i32).abs();
+                let dz = (oz as i32 - cz as i32).abs();
+                
+                // Consider adjacent if Manhattan distance <= 2
+                if dx + dy + dz <= 2 {
+                    is_adjacent = true;
+                    break;
+                }
+            }
+            
+            if is_adjacent {
+                cluster_positions.push((ox, oy, oz));
+                cluster_emission = cluster_emission.max(other_voxel.emission_f32());
+                assigned[j] = true;
+            }
+        }
+        
+        // Calculate centroid of cluster
+        let count = cluster_positions.len() as f32;
+        let centroid_x = cluster_positions.iter().map(|p| p.0).sum::<usize>() as f32 / count;
+        let centroid_y = cluster_positions.iter().map(|p| p.1).sum::<usize>() as f32 / count;
+        let centroid_z = cluster_positions.iter().map(|p| p.2).sum::<usize>() as f32 / count;
+        
+        clusters.push(EmissiveLight {
+            position: (centroid_x as usize, centroid_y as usize, centroid_z as usize),
+            color: base_color,
+            emission: cluster_emission,
+        });
+    }
+    
+    clusters
 }
 
 #[cfg(test)]

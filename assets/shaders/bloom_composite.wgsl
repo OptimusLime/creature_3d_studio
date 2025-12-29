@@ -46,6 +46,29 @@ fn reinhard_tonemap(color: vec3<f32>) -> vec3<f32> {
     return color / (color + vec3<f32>(1.0));
 }
 
+// Reinhard with luminance preservation - better for saturated colors
+// This version compresses brightness while preserving color ratios
+fn reinhard_luminance_tonemap(color: vec3<f32>) -> vec3<f32> {
+    let luminance = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let new_luminance = luminance / (1.0 + luminance);
+    return color * (new_luminance / max(luminance, 0.0001));
+}
+
+// Hybrid tone mapping - uses ACES for dark areas, Reinhard for bright
+// This preserves color saturation in emissive/bright areas
+fn hybrid_tonemap(color: vec3<f32>) -> vec3<f32> {
+    let brightness = max(max(color.r, color.g), color.b);
+    
+    // Use Reinhard for bright colors (preserves saturation)
+    // Use ACES for dark colors (better contrast)
+    let aces_result = aces_tonemap(color);
+    let reinhard_result = reinhard_luminance_tonemap(color);
+    
+    // Blend based on brightness - more Reinhard as brightness increases
+    let blend = smoothstep(0.5, 2.0, brightness);
+    return mix(aces_result, reinhard_result, blend);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample original scene
@@ -60,8 +83,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Apply exposure
     hdr_color *= pc.exposure;
     
-    // Tone map to LDR
-    let ldr_color = aces_tonemap(hdr_color);
+    // Tone map to LDR using hybrid approach
+    // This preserves color saturation in emissive areas
+    let ldr_color = hybrid_tonemap(hdr_color);
     
     // Gamma correction (if not handled by sRGB framebuffer)
     // let gamma_color = pow(ldr_color, vec3<f32>(1.0 / 2.2));
