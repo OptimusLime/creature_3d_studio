@@ -32,19 +32,20 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
-// Lighting constants - improved for better contrast
-const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.15, 0.1, 0.2);  // Slightly purple ambient
-const AMBIENT_INTENSITY: f32 = 0.15;  // Lower ambient for more contrast
+// Lighting constants - tuned for clear face differentiation in voxel scenes
+const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.2, 0.15, 0.25);  // Slightly purple ambient
+const AMBIENT_INTENSITY: f32 = 0.2;  // Base illumination
 
-// Sun coming from upper-right-front for good face differentiation
-const SUN_DIRECTION: vec3<f32> = vec3<f32>(-0.577, -0.577, -0.577); // normalized (-1, -1, -1)
+// Sun coming from upper-left-front - biased toward Y for clear top/side difference
+// Direction the light is GOING (toward origin), so -Y means light comes from above
+const SUN_DIRECTION: vec3<f32> = vec3<f32>(0.3, -0.9, -0.3); // mostly from above, slightly from back-right
 const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.9);  // Warm white
-const SUN_INTENSITY: f32 = 1.2;  // Brighter sun for more contrast
+const SUN_INTENSITY: f32 = 1.0;
 
-// Fill light from opposite side (dimmer)
-const FILL_DIRECTION: vec3<f32> = vec3<f32>(0.707, 0.0, 0.707); // from left-back
-const FILL_COLOR: vec3<f32> = vec3<f32>(0.4, 0.5, 0.7);  // Cool blue
-const FILL_INTENSITY: f32 = 0.3;
+// Fill light from lower-front-left - illuminates shadowed faces
+const FILL_DIRECTION: vec3<f32> = vec3<f32>(-0.5, 0.3, 0.8); // from front-left-below
+const FILL_COLOR: vec3<f32> = vec3<f32>(0.5, 0.6, 0.8);  // Cool blue
+const FILL_INTENSITY: f32 = 0.4;
 
 const FOG_COLOR: vec3<f32> = vec3<f32>(0.102, 0.039, 0.180); // #1a0a2e - deep purple
 const FOG_START: f32 = 15.0;
@@ -94,18 +95,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // --- Lighting Calculation ---
     
-    // Ambient - base illumination
+    // Ambient - base illumination for all surfaces
     var total_light = AMBIENT_COLOR * AMBIENT_INTENSITY;
     
-    // Main directional light (sun) - from upper-right-front
-    let sun_dir = normalize(-SUN_DIRECTION);
+    // Main directional light (sun) - standard N dot L
+    let sun_dir = normalize(-SUN_DIRECTION);  // Direction TO the light
     let n_dot_sun = max(dot(world_normal, sun_dir), 0.0);
-    // Add slight wraparound for softer shadows
-    let sun_wrap = n_dot_sun * 0.8 + 0.2 * max(dot(world_normal, sun_dir) + 0.5, 0.0);
-    total_light += SUN_COLOR * SUN_INTENSITY * sun_wrap;
+    total_light += SUN_COLOR * SUN_INTENSITY * n_dot_sun;
     
     // Fill light from opposite side - prevents pure black shadows
-    let fill_dir = normalize(-FILL_DIRECTION);
+    let fill_dir = normalize(-FILL_DIRECTION);  // Direction TO the light
     let n_dot_fill = max(dot(world_normal, fill_dir), 0.0);
     total_light += FILL_COLOR * FILL_INTENSITY * n_dot_fill;
     

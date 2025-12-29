@@ -405,8 +405,9 @@ pub fn init_gbuffer_geometry_pipeline(
     info!("GBufferGeometryPipeline initialized with test cube");
 }
 
-/// System to update G-buffer uniforms each frame.
-pub fn update_gbuffer_uniforms(
+/// System to update mesh bind group for fallback test cube.
+/// View uniforms are now handled per-camera in prepare_gbuffer_view_uniforms.
+pub fn update_gbuffer_mesh_bind_group(
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     pipeline: Option<ResMut<GBufferGeometryPipeline>>,
@@ -414,34 +415,8 @@ pub fn update_gbuffer_uniforms(
     let Some(mut pipeline) = pipeline else {
         return;
     };
-    // Create view uniform with simple camera looking at origin
-    let eye = Vec3::new(0.0, 5.0, 10.0);
-    let center = Vec3::ZERO;
-    let up = Vec3::Y;
-    
-    let view = Mat4::look_at_rh(eye, center, up);
-    let projection = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 800.0 / 600.0, 0.1, 1000.0);
-    let view_proj = projection * view;
-    
-    let view_uniform = GBufferViewUniform {
-        view_proj: view_proj.to_cols_array_2d(),
-        inverse_view_proj: view_proj.inverse().to_cols_array_2d(),
-        view: view.to_cols_array_2d(),
-        inverse_view: view.inverse().to_cols_array_2d(),
-        projection: projection.to_cols_array_2d(),
-        inverse_projection: projection.inverse().to_cols_array_2d(),
-        world_position: eye.to_array(),
-        _padding: 0.0,
-        viewport: [0.0, 0.0, 800.0, 600.0],
-    };
-    
-    render_queue.write_buffer(
-        &pipeline.view_uniform_buffer,
-        0,
-        bytemuck::bytes_of(&view_uniform),
-    );
 
-    // Create mesh uniform (identity transform for now)
+    // Create mesh uniform (identity transform for fallback test cube)
     let mesh_uniform = GBufferMeshUniform {
         world_from_local: Mat4::IDENTITY.to_cols_array_2d(),
         local_from_world: Mat4::IDENTITY.to_cols_array_2d(),
@@ -453,25 +428,16 @@ pub fn update_gbuffer_uniforms(
         bytemuck::bytes_of(&mesh_uniform),
     );
 
-    // Create bind groups
-    let view_bind_group = render_device.create_bind_group(
-        "gbuffer_view_bind_group",
-        &pipeline.view_layout,
-        &[BindGroupEntry {
-            binding: 0,
-            resource: pipeline.view_uniform_buffer.as_entire_binding(),
-        }],
-    );
-
-    let mesh_bind_group = render_device.create_bind_group(
-        "gbuffer_mesh_bind_group",
-        &pipeline.mesh_layout,
-        &[BindGroupEntry {
-            binding: 0,
-            resource: pipeline.mesh_uniform_buffer.as_entire_binding(),
-        }],
-    );
-
-    pipeline.view_bind_group = Some(view_bind_group);
-    pipeline.mesh_bind_group = Some(mesh_bind_group);
+    // Only create mesh bind group if not already created
+    if pipeline.mesh_bind_group.is_none() {
+        let mesh_bind_group = render_device.create_bind_group(
+            "gbuffer_mesh_bind_group",
+            &pipeline.mesh_layout,
+            &[BindGroupEntry {
+                binding: 0,
+                resource: pipeline.mesh_uniform_buffer.as_entire_binding(),
+            }],
+        );
+        pipeline.mesh_bind_group = Some(mesh_bind_group);
+    }
 }

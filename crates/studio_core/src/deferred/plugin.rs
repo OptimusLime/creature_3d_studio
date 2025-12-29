@@ -12,12 +12,12 @@ use bevy::render::{
 
 use super::extract::{extract_deferred_meshes, prepare_deferred_meshes, DeferredRenderable};
 use super::gbuffer::DeferredCamera;
-use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_uniforms};
+use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_mesh_bind_group};
 use super::gbuffer_node::GBufferPassNode;
 use super::labels::DeferredLabel;
 use super::lighting::DeferredLightingConfig;
 use super::lighting_node::{init_lighting_pipeline, LightingPassNode};
-use super::prepare::prepare_gbuffer_textures;
+use super::prepare::{prepare_gbuffer_textures, prepare_gbuffer_view_uniforms};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -59,18 +59,24 @@ impl Plugin for DeferredRenderingPlugin {
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources
         // - prepare_gbuffer_textures creates the G-buffer textures
+        // - prepare_gbuffer_view_uniforms extracts camera transforms to view uniforms
         // - prepare_deferred_meshes collects extracted meshes for rendering
-        // - update_gbuffer_uniforms fills uniform buffers each frame
+        // - update_gbuffer_mesh_bind_group creates mesh bind group for fallback test cube
         render_app.add_systems(
             Render,
             (
                 init_gbuffer_geometry_pipeline.in_set(RenderSystems::Prepare),
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
+                prepare_gbuffer_view_uniforms
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_gbuffer_geometry_pipeline),
                 prepare_deferred_meshes
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_gbuffer_geometry_pipeline),
-                update_gbuffer_uniforms.in_set(RenderSystems::PrepareResources),
+                update_gbuffer_mesh_bind_group
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_gbuffer_geometry_pipeline),
             ),
         );
 

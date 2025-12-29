@@ -24,6 +24,7 @@ use bevy::render::{
 
 use super::gbuffer::ViewGBufferTextures;
 use super::gbuffer_geometry::GBufferGeometryPipeline;
+use super::prepare::ViewGBufferUniforms;
 
 /// Render graph node that renders geometry to G-buffer textures.
 ///
@@ -39,13 +40,14 @@ impl ViewNode for GBufferPassNode {
         &'static ExtractedCamera,
         &'static ViewTarget,
         &'static ViewGBufferTextures,
+        &'static ViewGBufferUniforms,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, _target, gbuffer): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, _target, gbuffer, view_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         // Get the geometry pipeline
@@ -57,10 +59,10 @@ impl ViewNode for GBufferPassNode {
             return Ok(());
         };
 
-        // Need bind groups
-        let Some(view_bind_group) = &geometry_pipeline.view_bind_group else {
-            return Ok(());
-        };
+        // Use per-view bind group from the camera entity (extracted from actual camera transform)
+        let view_bind_group = &view_uniforms.bind_group;
+        
+        // Mesh bind group for fallback test cube
         let Some(mesh_bind_group) = &geometry_pipeline.mesh_bind_group else {
             return Ok(());
         };
