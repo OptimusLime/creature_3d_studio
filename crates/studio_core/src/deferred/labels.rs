@@ -9,4 +9,6 @@ pub enum DeferredLabel {
     GBufferPass,
     /// Lighting pass: fullscreen quad that computes lighting from G-buffer
     LightingPass,
+    /// Bloom pass: post-process bloom effect on HDR output
+    BloomPass,
 }

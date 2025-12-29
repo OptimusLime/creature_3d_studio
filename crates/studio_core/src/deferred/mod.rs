@@ -53,6 +53,7 @@ mod plugin;
 mod prepare;
 
 pub use bloom::*;
+pub use bloom_node::*;
 pub use extract::*;
 pub use gbuffer::*;
 pub use gbuffer_geometry::*;

@@ -10,6 +10,8 @@ use bevy::render::{
     ExtractSchedule, Render, RenderApp, RenderSystems,
 };
 
+use super::bloom::{init_bloom_pipeline, prepare_bloom_textures, BloomConfig};
+// use super::bloom_node::BloomNode;  // TODO: Fix read-write hazard in upsample pass
 use super::extract::{extract_deferred_meshes, prepare_deferred_meshes, DeferredRenderable};
 use super::gbuffer::DeferredCamera;
 use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_mesh_bind_group};
@@ -42,6 +44,7 @@ impl Plugin for DeferredRenderingPlugin {
     fn build(&self, app: &mut App) {
         // Main app resources
         app.init_resource::<DeferredLightingConfig>();
+        app.init_resource::<BloomConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -62,11 +65,13 @@ impl Plugin for DeferredRenderingPlugin {
         // - prepare_gbuffer_view_uniforms extracts camera transforms to view uniforms
         // - prepare_deferred_meshes collects extracted meshes for rendering
         // - update_gbuffer_mesh_bind_group creates mesh bind group for fallback test cube
+        // - prepare_bloom_textures creates bloom mip chain textures
         render_app.add_systems(
             Render,
             (
                 init_gbuffer_geometry_pipeline.in_set(RenderSystems::Prepare),
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
+                init_bloom_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
                 prepare_gbuffer_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
@@ -77,6 +82,9 @@ impl Plugin for DeferredRenderingPlugin {
                 update_gbuffer_mesh_bind_group
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_gbuffer_geometry_pipeline),
+                prepare_bloom_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_bloom_pipeline),
             ),
         );
 
@@ -92,10 +100,14 @@ impl Plugin for DeferredRenderingPlugin {
                 Core3d,
                 DeferredLabel::LightingPass,
             );
+            // TODO: Bloom pass disabled - fix read-write hazard in upsample pass
+            // .add_render_graph_node::<ViewNodeRunner<BloomNode>>(
+            //     Core3d,
+            //     DeferredLabel::BloomPass,
+            // );
 
         // Define render graph edges (execution order)
-        // For now: Run AFTER main opaque so we can composite/see our output
-        // Later we'll move to before and render geometry ourselves
+        // G-Buffer runs first
         render_app.add_render_graph_edges(
             Core3d,
             (
@@ -104,7 +116,8 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // Lighting pass runs after everything, writes final output
+        // Lighting pass runs after opaque, then transparent
+        // TODO: Add bloom between lighting and transparent when fixed
         render_app.add_render_graph_edges(
             Core3d,
             (

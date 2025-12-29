@@ -108,6 +108,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n_dot_fill = max(dot(world_normal, fill_dir), 0.0);
     total_light += FILL_COLOR * FILL_INTENSITY * n_dot_fill;
     
+    // --- Minecraft-style Face Shading ---
+    // Apply fixed brightness multipliers per face direction.
+    // This makes blocks distinguishable even on flat surfaces where all faces
+    // point the same direction and would otherwise have identical lighting.
+    // Values tuned to match Minecraft's classic look.
+    var face_multiplier = 1.0;
+    if abs(world_normal.y) > 0.9 {
+        // Top (+Y) or Bottom (-Y) faces
+        if world_normal.y > 0.0 {
+            face_multiplier = 1.0;  // Top faces: full brightness
+        } else {
+            face_multiplier = 0.5;  // Bottom faces: half brightness
+        }
+    } else if abs(world_normal.z) > 0.9 {
+        // Front (+Z) or Back (-Z) faces
+        face_multiplier = 0.8;
+    } else {
+        // Left (-X) or Right (+X) faces
+        face_multiplier = 0.6;
+    }
+    
+    // Apply face multiplier to total light
+    total_light *= face_multiplier;
+    
     // Apply lighting to albedo
     var final_color = albedo * total_light;
     
