@@ -42,24 +42,44 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
-// Lighting constants - tuned for clear face differentiation in voxel scenes
+// === LIGHTING CONSTANTS ===
+// Dark World mode: Two colored moons instead of sun
+// Set to 1 for dual moon mode, 0 for classic sun mode
+const DARK_WORLD_MODE: i32 = 1;
+
+// --- Classic Sun Mode (DARK_WORLD_MODE = 0) ---
 const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.2, 0.15, 0.25);  // Slightly purple ambient
 const AMBIENT_INTENSITY: f32 = 0.2;  // Base illumination
 
 // Sun coming from upper-left-front - biased toward Y for clear top/side difference
-// Direction the light is GOING (toward origin), so -Y means light comes from above
-const SUN_DIRECTION: vec3<f32> = vec3<f32>(0.3, -0.9, -0.3); // mostly from above, slightly from back-right
+const SUN_DIRECTION: vec3<f32> = vec3<f32>(0.3, -0.9, -0.3);
 const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.9);  // Warm white
 const SUN_INTENSITY: f32 = 1.0;
 
 // Fill light from lower-front-left - illuminates shadowed faces
-const FILL_DIRECTION: vec3<f32> = vec3<f32>(-0.5, 0.3, 0.8); // from front-left-below
+const FILL_DIRECTION: vec3<f32> = vec3<f32>(-0.5, 0.3, 0.8);
 const FILL_COLOR: vec3<f32> = vec3<f32>(0.5, 0.6, 0.8);  // Cool blue
 const FILL_INTENSITY: f32 = 0.4;
 
-const FOG_COLOR: vec3<f32> = vec3<f32>(0.102, 0.039, 0.180); // #1a0a2e - deep purple
-const FOG_START: f32 = 15.0;
-const FOG_END: f32 = 80.0;
+// --- Dark World Mode (DARK_WORLD_MODE = 1) ---
+// Purple Moon - from back-left, moderate height
+const MOON1_DIRECTION: vec3<f32> = vec3<f32>(0.6, -0.6, 0.55);  // Back-left
+const MOON1_COLOR: vec3<f32> = vec3<f32>(0.55, 0.2, 0.85);  // Purple
+const MOON1_INTENSITY: f32 = 0.85;
+
+// Orange Moon - from front-right, similar height (lights opposite faces)
+const MOON2_DIRECTION: vec3<f32> = vec3<f32>(-0.6, -0.6, -0.55);  // Front-right
+const MOON2_COLOR: vec3<f32> = vec3<f32>(1.0, 0.5, 0.15);  // Orange
+const MOON2_INTENSITY: f32 = 0.85;
+
+// Dark world ambient - very dim purple (cold void)
+const DARK_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.04);
+const DARK_AMBIENT_INTENSITY: f32 = 0.1;
+
+// --- Fog Settings ---
+const FOG_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.03);  // Near black for dark world
+const FOG_START: f32 = 30.0;
+const FOG_END: f32 = 100.0;
 
 // Shadow map constants
 const SHADOW_MAP_SIZE: f32 = 2048.0;
@@ -100,8 +120,14 @@ fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
     
     // Calculate slope-scaled bias based on surface angle to light
     // Surfaces perpendicular to light need less bias, grazing angles need more
-    let sun_dir = normalize(-SUN_DIRECTION);
-    let n_dot_l = max(dot(world_normal, sun_dir), 0.0);
+    // Use the primary shadow-casting light direction
+    var primary_light_dir: vec3<f32>;
+    if DARK_WORLD_MODE == 1 {
+        primary_light_dir = normalize(-MOON1_DIRECTION);  // Purple moon casts shadows
+    } else {
+        primary_light_dir = normalize(-SUN_DIRECTION);
+    }
+    let n_dot_l = max(dot(world_normal, primary_light_dir), 0.0);
     let bias = max(SHADOW_BIAS_MAX * (1.0 - n_dot_l), SHADOW_BIAS_MIN);
     
     // PCF 3x3 sampling for soft shadow edges
@@ -180,19 +206,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     // --- Lighting Calculation ---
+    var total_light = vec3<f32>(0.0);
     
-    // Ambient - base illumination for all surfaces (not affected by shadow)
-    var total_light = AMBIENT_COLOR * AMBIENT_INTENSITY;
-    
-    // Main directional light (sun) - standard N dot L, modulated by shadow
-    let sun_dir = normalize(-SUN_DIRECTION);  // Direction TO the light
-    let n_dot_sun = max(dot(world_normal, sun_dir), 0.0);
-    total_light += SUN_COLOR * SUN_INTENSITY * n_dot_sun * shadow_factor;
-    
-    // Fill light from opposite side - prevents pure black shadows
-    let fill_dir = normalize(-FILL_DIRECTION);  // Direction TO the light
-    let n_dot_fill = max(dot(world_normal, fill_dir), 0.0);
-    total_light += FILL_COLOR * FILL_INTENSITY * n_dot_fill;
+    if DARK_WORLD_MODE == 1 {
+        // === DARK WORLD MODE: Dual colored moons ===
+        
+        // Very dim ambient
+        total_light = DARK_AMBIENT_COLOR * DARK_AMBIENT_INTENSITY;
+        
+        // Purple Moon (primary light, uses shadow map)
+        let moon1_dir = normalize(-MOON1_DIRECTION);
+        let n_dot_moon1 = max(dot(world_normal, moon1_dir), 0.0);
+        total_light += MOON1_COLOR * MOON1_INTENSITY * n_dot_moon1 * shadow_factor;
+        
+        // Orange Moon (secondary light, no shadow map yet - TODO: multi-shadow)
+        // Orange moon lights faces that purple moon doesn't hit well
+        let moon2_dir = normalize(-MOON2_DIRECTION);
+        let n_dot_moon2 = max(dot(world_normal, moon2_dir), 0.0);
+        // No shadow for orange moon yet - it provides fill lighting
+        total_light += MOON2_COLOR * MOON2_INTENSITY * n_dot_moon2;
+        
+    } else {
+        // === CLASSIC SUN MODE ===
+        
+        // Ambient - base illumination for all surfaces (not affected by shadow)
+        total_light = AMBIENT_COLOR * AMBIENT_INTENSITY;
+        
+        // Main directional light (sun) - standard N dot L, modulated by shadow
+        let sun_dir = normalize(-SUN_DIRECTION);  // Direction TO the light
+        let n_dot_sun = max(dot(world_normal, sun_dir), 0.0);
+        total_light += SUN_COLOR * SUN_INTENSITY * n_dot_sun * shadow_factor;
+        
+        // Fill light from opposite side - prevents pure black shadows
+        let fill_dir = normalize(-FILL_DIRECTION);  // Direction TO the light
+        let n_dot_fill = max(dot(world_normal, fill_dir), 0.0);
+        total_light += FILL_COLOR * FILL_INTENSITY * n_dot_fill;
+    }
     
     // --- Minecraft-style Face Shading ---
     // Apply fixed brightness multipliers per face direction.

@@ -56,6 +56,13 @@ pub struct ShadowConfig {
 
 impl Default for ShadowConfig {
     fn default() -> Self {
+        Self::dark_world()  // Default to dark world mode
+    }
+}
+
+impl ShadowConfig {
+    /// Classic sun configuration (bright day scene).
+    pub fn sun() -> Self {
         Self {
             // Match the sun direction from deferred_lighting.wgsl
             sun_direction: Vec3::new(0.3, -0.9, -0.3).normalize(),
@@ -67,9 +74,24 @@ impl Default for ShadowConfig {
             pcf_kernel_size: 3,        // 3x3 PCF for soft shadows
         }
     }
+    
+    /// Dark world purple moon configuration.
+    /// Matches MOON1_DIRECTION in deferred_lighting.wgsl.
+    pub fn dark_world() -> Self {
+        Self {
+            // Purple moon direction: back-left, moderate height
+            sun_direction: Vec3::new(0.6, -0.6, 0.55).normalize(),
+            shadow_size: 50.0,
+            near: 0.1,
+            far: 200.0,
+            depth_bias_constant: 0.0,
+            depth_bias_slope: 0.0,
+            pcf_kernel_size: 3,
+        }
+    }
 }
 
-impl ShadowConfig {
+impl ShadowConfig {    
     /// Calculate the light-space view matrix.
     /// 
     /// The camera is positioned along the light direction, looking at the scene center.
