@@ -341,8 +341,15 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 | 7 | Distance fog | `test_p7_fog` | `p7_fog.png` (depth fade) | ✅ Done |
 | 8 | Forward render final | `p8_gbuffer` | Forward rendering complete | ✅ Done |
 | 8b | Deferred pipeline proof | `p8_gbuffer` | Test cube through deferred | ✅ Done |
-| **9** | **Voxel mesh integration** | `p8_gbuffer` | Lua voxels through deferred | **Current** |
-| 10 | Deferred + bloom | TBD | Full deferred with bloom | Planned |
+| 9 | Voxel mesh integration | `p9_island` | Lua voxels through deferred | ✅ Done |
+| 9.5 | Test scene - Island | `p9_island` | Floating island with crystals | ✅ Done |
+| 10 | Bloom post-process | `p9_island` | Ping-pong bloom working | ✅ Done |
+| 10.8 | Face shading multipliers | `p9_island` | Minecraft-style face shading | ✅ Done |
+| **11** | **Shadow Mapping** | `p9_island` | Directional shadows | **CURRENT** |
+| 12 | Per-Vertex AO | TBD | Corner darkening | Planned |
+| 13 | Face Culling | TBD | 16x geometry reduction | Planned |
+| 14 | Greedy Meshing | TBD | Merged faces | Planned |
+| 15 | Multi-Chunk World | TBD | Larger scenes | Planned |
 
 ---
 
@@ -635,7 +642,233 @@ Lighting Pass Output (HDR)
 
 ---
 
-## Phase 11: Face Culling
+## Phase 11: Shadow Mapping (CURRENT PRIORITY)
+
+**Goal**: Add directional shadow mapping for the sun light, creating proper cast shadows.
+
+**Why**: Shadows are critical for visual quality and depth perception. Without shadows, objects appear to float and the scene lacks grounding. This is the #1 visual improvement after bloom.
+
+**Reference**: Bonsai `DepthRTT.*` and `Lighting.fragmentshader:241-299`
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SHADOW MAPPING PIPELINE                       │
+└─────────────────────────────────────────────────────────────────┘
+
+                    SHADOW PASS (runs first)
+                           │
+    ┌──────────────────────┴──────────────────────┐
+    │                                              │
+    │  Light-Space MVP                             │
+    │  (Orthographic from sun direction)          │
+    │           │                                  │
+    │           ▼                                  │
+    │  ┌─────────────────┐                        │
+    │  │ Shadow Depth    │  Render scene from     │
+    │  │ Texture         │  light's POV           │
+    │  │ (2048x2048)     │  Store linear depth    │
+    │  └─────────────────┘                        │
+    │                                              │
+    └──────────────────────────────────────────────┘
+                           │
+                           ▼
+                    LIGHTING PASS
+                           │
+    ┌──────────────────────┴──────────────────────┐
+    │                                              │
+    │  For each fragment:                          │
+    │  1. Transform to light space (ShadowMVP)    │
+    │  2. Sample shadow map at light-space XY     │
+    │  3. Compare fragment depth vs shadow depth  │
+    │  4. If fragment deeper → in shadow          │
+    │  5. Apply shadow factor to sun lighting     │
+    │                                              │
+    └──────────────────────────────────────────────┘
+```
+
+### Shadow Map Projection
+
+For directional lights (sun), use **orthographic projection**:
+- Fits the visible scene bounds
+- Shadow map covers the area the camera can see
+- No perspective distortion
+
+```
+Sun Direction: (0.3, -0.9, -0.3) (from above-right)
+
+Light View Matrix:
+  lookAt(lightPos, lightPos + sunDir, up)
+  
+Light Projection Matrix:
+  ortho(-size, size, -size, size, near, far)
+  size = scene bounds (e.g., 50 units)
+```
+
+### Shadow Quality Techniques
+
+1. **Depth Bias** - Prevent shadow acne (self-shadowing artifacts)
+   ```wgsl
+   let bias = 0.005 * (1.0 - dot(normal, light_dir));
+   ```
+
+2. **PCF (Percentage Closer Filtering)** - Soft shadow edges
+   ```wgsl
+   // Sample 3x3 grid and average
+   for dx in -1..2 {
+     for dy in -1..2 {
+       shadow += compare(depth, shadow_map[uv + offset]);
+     }
+   }
+   shadow /= 9.0;
+   ```
+
+3. **Cascaded Shadow Maps (CSM)** - Future: multiple shadow maps at different distances
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 11.1 | Create `shadow_depth.wgsl` vertex/fragment shader | Renders depth from light POV | Pending |
+| 11.2 | Create `ShadowPipeline` with orthographic projection | Pipeline compiles | Pending |
+| 11.3 | Create `ViewShadowTextures` component (2048x2048 Depth32Float) | Texture allocated per camera | Pending |
+| 11.4 | Create `ShadowPassNode` render graph node | Node runs before GBuffer | Pending |
+| 11.5 | Calculate light-space MVP from sun direction | Correct projection | Pending |
+| 11.6 | Render all meshes to shadow depth texture | Depth texture populated | Pending |
+| 11.7 | Add shadow map sampler to lighting shader | Shadow uniform bound | Pending |
+| 11.8 | Implement shadow sampling in `deferred_lighting.wgsl` | Basic hard shadows | Pending |
+| 11.9 | Add depth bias to fix shadow acne | No self-shadowing artifacts | Pending |
+| 11.10 | Implement PCF for soft shadows | Smooth shadow edges | Pending |
+| 11.11 | Verify: Island scene shows tree shadow on grass | Screenshot review | Pending |
+
+### Key Files to Create
+
+| File | Purpose |
+|------|---------|
+| `deferred/shadow.rs` | ShadowPipeline, ViewShadowTextures, shadow config |
+| `deferred/shadow_node.rs` | ShadowPassNode ViewNode implementation |
+| `shaders/shadow_depth.wgsl` | Shadow pass vertex/fragment shaders |
+| Updated `deferred_lighting.wgsl` | Shadow sampling in lighting |
+
+### Shader Snippets
+
+**shadow_depth.wgsl** (vertex shader):
+```wgsl
+struct ShadowUniforms {
+    light_view_proj: mat4x4<f32>,
+    model: mat4x4<f32>,
+}
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    let world_pos = uniforms.model * vec4(position, 1.0);
+    return uniforms.light_view_proj * world_pos;
+}
+
+@fragment
+fn fs_main() {
+    // Depth written automatically to depth attachment
+    // No color output needed
+}
+```
+
+**deferred_lighting.wgsl** (shadow sampling):
+```wgsl
+@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_sampler: sampler_comparison;
+
+fn calculate_shadow(world_pos: vec3<f32>, normal: vec3<f32>) -> f32 {
+    // Transform to light space
+    let light_space_pos = shadow_mvp * vec4(world_pos, 1.0);
+    let proj_coords = light_space_pos.xyz / light_space_pos.w;
+    
+    // Map from [-1,1] to [0,1] for texture sampling
+    let shadow_uv = proj_coords.xy * 0.5 + 0.5;
+    let current_depth = proj_coords.z;
+    
+    // Depth bias based on surface angle
+    let bias = max(0.005 * (1.0 - dot(normal, sun_direction)), 0.001);
+    
+    // PCF 3x3 sampling
+    var shadow = 0.0;
+    let texel_size = 1.0 / 2048.0;
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow += textureSampleCompare(
+                shadow_map, shadow_sampler,
+                shadow_uv + offset, current_depth - bias
+            );
+        }
+    }
+    return shadow / 9.0;
+}
+```
+
+### Verification
+
+**Test**: `cargo run --example p9_island`
+
+**Pass Criteria**:
+1. Tree casts shadow on grass below
+2. Island casts shadow on lower parts
+3. No shadow acne (flickering on lit surfaces)
+4. Shadow edges are soft (not hard pixelated)
+5. Shadows align with sun direction
+6. Performance acceptable (<16ms frame time)
+
+### Reference: Bonsai Shadow Implementation
+
+From `Lighting.fragmentshader:241-299`:
+```glsl
+if (UseShadowMapping) {
+    f32 LinearDepth = Linearize(Depth, 5000.f, 0.1f);
+    float acneBias = 0.045f * LinearDepth; // Fix acne - scales with distance
+
+    v4 FragPShadowSpace = ShadowMVP * vec4(FragWorldP, 1.f);
+    f32 FragDepth = FragPShadowSpace.z - acneBias;
+
+    float ShadowSampleDepth = texture(shadowMap, FragPShadowSpace.xy).x;
+    if (FragDepth > ShadowSampleDepth) { 
+        ShadowVisibility -= vec3(1.f); 
+    }
+}
+```
+
+Key insights from Bonsai:
+- Uses linear depth for shadow comparison
+- Bias scales with fragment distance (prevents distant acne)
+- Simple single-sample shadow (we'll improve with PCF)
+- Shadow affects only key light (sun), not ambient/back light
+
+---
+
+## Phase 12: Per-Vertex Ambient Occlusion
+
+**Goal**: Darken corners and edges where blocks meet for depth and block separation.
+
+**Why**: AO is the primary technique Minecraft uses to make individual blocks distinguishable on flat surfaces. Corners get darker, giving visual "weight" to each block.
+
+**Status**: After Shadows
+
+### Algorithm
+
+During mesh generation in `build_chunk_mesh()`:
+1. For each vertex, check the 3 corner-adjacent voxels
+2. Count how many are solid (0-3)
+3. Store AO value as vertex attribute (or bake into color)
+4. Interpolate across face for smooth corner darkening
+
+### Reference
+
+- [0fps: Ambient Occlusion for Minecraft-like Worlds](https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/)
+
+**Estimate**: 2-4 hours
+
+---
+
+## Phase 13: Face Culling
 
 **Goal**: Only generate mesh faces that are visible (not occluded by adjacent voxels).
 
@@ -687,7 +920,7 @@ for (x, y, z, voxel) in chunk.iter() {
 
 ---
 
-## Phase 12: Greedy Meshing
+## Phase 14: Greedy Meshing
 
 **Goal**: Merge adjacent same-material faces into larger quads.
 
@@ -709,11 +942,11 @@ For each face direction (e.g., +Y top faces):
 
 | ID | Task | Done When | Status |
 |----|------|-----------|--------|
-| 12.1 | Research greedy meshing algorithms | Document chosen approach | Pending |
-| 12.2 | Implement per-face-direction greedy merge | Fewer quads for flat surfaces | Pending |
-| 12.3 | Handle material boundaries correctly | Different colors don't merge | Pending |
-| 12.4 | Benchmark improvement | Significant reduction in faces | Pending |
-| 12.5 | Verify visual correctness | No artifacts at merged edges | Pending |
+| 14.1 | Research greedy meshing algorithms | Document chosen approach | Pending |
+| 14.2 | Implement per-face-direction greedy merge | Fewer quads for flat surfaces | Pending |
+| 14.3 | Handle material boundaries correctly | Different colors don't merge | Pending |
+| 14.4 | Benchmark improvement | Significant reduction in faces | Pending |
+| 14.5 | Verify visual correctness | No artifacts at merged edges | Pending |
 
 ### Reference
 
@@ -722,7 +955,7 @@ For each face direction (e.g., +Y top faces):
 
 ---
 
-## Phase 13: Multiple Chunks
+## Phase 15: Multiple Chunks
 
 **Goal**: Support a world with multiple chunk positions.
 
@@ -730,31 +963,26 @@ For each face direction (e.g., +Y top faces):
 
 | ID | Task | Done When | Status |
 |----|------|-----------|--------|
-| 13.1 | Create `VoxelWorld` with HashMap<ChunkPos, VoxelChunk> | World struct exists | Pending |
-| 13.2 | Spawn multiple mesh entities for chunks | Each chunk is separate entity | Pending |
-| 13.3 | Position chunks at correct world coordinates | Chunks tile correctly | Pending |
-| 13.4 | Create multi-chunk test scene | 3x3 chunk world | Pending |
-| 13.5 | Verify chunk boundaries render correctly | No seams between chunks | Pending |
+| 15.1 | Create `VoxelWorld` with HashMap<ChunkPos, VoxelChunk> | World struct exists | Pending |
+| 15.2 | Spawn multiple mesh entities for chunks | Each chunk is separate entity | Pending |
+| 15.3 | Position chunks at correct world coordinates | Chunks tile correctly | Pending |
+| 15.4 | Create multi-chunk test scene | 3x3 chunk world | Pending |
+| 15.5 | Verify chunk boundaries render correctly | No seams between chunks | Pending |
 
 ---
 
-## Phase 10.8: Minecraft-Style Face Shading (QUICK WIN)
+## Phase 10.8: Minecraft-Style Face Shading (COMPLETE)
 
 **Goal**: Add fixed brightness multipliers per face direction so blocks are distinguishable even on flat surfaces.
 
-**Why**: Currently all faces pointing the same direction have identical shading. In Minecraft, faces have different base multipliers (top=1.0, bottom=0.5, sides=0.6-0.8) making blocks distinguishable.
+**Status**: ✅ COMPLETE
 
-**Status**: Pending
-
-### Implementation
-
-In `deferred_lighting.wgsl`, after N·L calculation:
+Implementation in `deferred_lighting.wgsl`:
 ```wgsl
-// Minecraft-style face shading multipliers
 var face_multiplier = 1.0;
-if (abs(world_normal.y) > 0.9) {
+if abs(world_normal.y) > 0.9 {
     face_multiplier = select(0.5, 1.0, world_normal.y > 0.0); // top=1.0, bottom=0.5
-} else if (abs(world_normal.z) > 0.9) {
+} else if abs(world_normal.z) > 0.9 {
     face_multiplier = 0.8; // north/south
 } else {
     face_multiplier = 0.6; // east/west
@@ -762,85 +990,45 @@ if (abs(world_normal.y) > 0.9) {
 total_light *= face_multiplier;
 ```
 
-### Tasks
-
-| ID | Task | Done When | Status |
-|----|------|-----------|--------|
-| 10.8.1 | Add face multiplier logic to lighting shader | Compile succeeds | Pending |
-| 10.8.2 | Test: different faces have different brightness | Screenshot shows variation | Pending |
-| 10.8.3 | Tune multiplier values for best visual result | Manual review approval | Pending |
-
-**Estimate**: 15 minutes
-
----
-
-## Phase 10.9: Per-Vertex Ambient Occlusion
-
-**Goal**: Darken corners and edges where blocks meet for depth and block separation.
-
-**Why**: AO is the primary technique Minecraft uses to make individual blocks distinguishable on flat surfaces. Corners get darker, giving visual "weight" to each block.
-
-**Status**: Future
-
-### Algorithm
-
-During mesh generation in `build_chunk_mesh()`:
-1. For each vertex, check the 3 corner-adjacent voxels
-2. Count how many are solid (0-3)
-3. Store AO value as vertex attribute (or bake into color)
-4. Interpolate across face for smooth corner darkening
-
-### Reference
-
-- [0fps: Ambient Occlusion for Minecraft-like Worlds](https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/)
-
-**Estimate**: 2-4 hours
-
 ---
 
 ## Roadmap Summary
 
 ```
-Current State (Phase 9.5 Complete - Island renders)
+Current State (Phase 10 Complete - Bloom working!)
         │
         ▼
 ┌────────────────────────┐
-│ Phase 10: Bloom        │  Fix BloomNode borrow issue
-│   (In Progress)        │  Glow on crystals
+│ Phase 11: SHADOWS      │  ◀◀◀ CURRENT PRIORITY
+│   (Critical Visual)    │  Directional shadow mapping
 └────────┬───────────────┘
          │
          ▼
 ┌────────────────────────┐
-│ Phase 10.8: Face       │  QUICK WIN - 15 min
-│   Shading Multipliers  │  Block differentiation
-└────────┬───────────────┘
-         │
-         ▼
-┌────────────────────────┐
-│ Phase 10.9: Vertex AO  │  Corner/edge darkening
-│   (Optional)           │  Full Minecraft-style look
+│ Phase 12: Vertex AO    │  Corner/edge darkening
+│   (Visual Polish)      │  Full Minecraft-style look
 └────────┬───────────────┘
          │
          ▼
 ┌───────────────────┐
-│ Phase 11: Face    │  Performance
+│ Phase 13: Face    │  Performance
 │   Culling         │  16x geometry reduction
 └────────┬──────────┘
          │
          ▼
 ┌───────────────────┐
-│ Phase 12: Greedy  │  More performance
+│ Phase 14: Greedy  │  More performance
 │   Meshing         │  Merge adjacent faces
 └────────┬──────────┘
          │
          ▼
 ┌───────────────────┐
-│ Phase 13: Multi   │  Voxel world
+│ Phase 15: Multi   │  Voxel world
 │   Chunk World     │  Larger scenes
 └────────┬──────────┘
          │
          ▼
-    Future: Shadow Mapping, SSAO, OIT, Creatures...
+    Future: SSAO, OIT, Creatures...
 ```
 
 ---
