@@ -11,7 +11,7 @@ use bevy::render::{
 };
 
 use super::bloom::{init_bloom_pipeline, prepare_bloom_textures, BloomConfig};
-// use super::bloom_node::BloomNode;  // TODO: Fix read-write hazard in upsample pass
+use super::bloom_node::BloomNode;
 use super::extract::{extract_deferred_meshes, prepare_deferred_meshes, DeferredRenderable};
 use super::gbuffer::DeferredCamera;
 use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_mesh_bind_group};
@@ -99,12 +99,12 @@ impl Plugin for DeferredRenderingPlugin {
             .add_render_graph_node::<ViewNodeRunner<LightingPassNode>>(
                 Core3d,
                 DeferredLabel::LightingPass,
+            )
+            // Bloom pass node
+            .add_render_graph_node::<ViewNodeRunner<BloomNode>>(
+                Core3d,
+                DeferredLabel::BloomPass,
             );
-            // TODO: Bloom pass disabled - fix read-write hazard in upsample pass
-            // .add_render_graph_node::<ViewNodeRunner<BloomNode>>(
-            //     Core3d,
-            //     DeferredLabel::BloomPass,
-            // );
 
         // Define render graph edges (execution order)
         // G-Buffer runs first
@@ -116,13 +116,13 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // Lighting pass runs after opaque, then transparent
-        // TODO: Add bloom between lighting and transparent when fixed
+        // Lighting pass runs after opaque, bloom after lighting, then transparent
         render_app.add_render_graph_edges(
             Core3d,
             (
                 Node3d::MainOpaquePass,
                 DeferredLabel::LightingPass,
+                DeferredLabel::BloomPass,
                 Node3d::MainTransparentPass,
             ),
         );

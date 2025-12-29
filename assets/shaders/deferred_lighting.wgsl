@@ -137,8 +137,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Add emission - emission makes the surface glow beyond its lit color
     // Higher emission = more of the albedo color added as self-illumination
-    // Scale emission contribution (emission is 0-1, we want visible glow)
-    let emission_strength = emission * 2.0;  // Boost emission visibility
+    // Scale emission contribution: emission is 0-1 normalized from 0-255 input
+    // We want high emission values (like 200) to produce HDR values > 1.0 for bloom
+    let emission_strength = emission * 5.0;  // Strong emission for visible bloom
     final_color += albedo * emission_strength;
     
     // --- Fog (Bonsai-style) ---

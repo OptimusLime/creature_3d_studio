@@ -66,6 +66,7 @@ impl ViewNode for BloomNode {
         // then release that borrow before starting render passes (which need mutable borrow).
 
         // Collect downsample bind groups and push constants
+        // Downsample writes to mips_a
         let mut downsample_data: Vec<(BindGroup, [u32; 4])> = Vec::with_capacity(BLOOM_MIP_LEVELS);
         {
             let device = render_context.render_device();
@@ -74,7 +75,7 @@ impl ViewNode for BloomNode {
                 let input_view = if i == 0 {
                     source_texture
                 } else {
-                    &bloom_textures.mips[i - 1].default_view
+                    &bloom_textures.mips_a[i - 1].default_view
                 };
 
                 // Calculate texel size for input texture
@@ -84,7 +85,7 @@ impl ViewNode for BloomNode {
                         bloom_textures.size.height as f32,
                     )
                 } else {
-                    let mip_size = bloom_textures.mips[i - 1].texture.size();
+                    let mip_size = bloom_textures.mips_a[i - 1].texture.size();
                     (mip_size.width as f32, mip_size.height as f32)
                 };
 
@@ -120,14 +121,27 @@ impl ViewNode for BloomNode {
         }
 
         // Collect upsample bind groups and push constants
+        // Upsample reads from mips_a (downsample result) and writes to mips_b (to avoid read-write hazard)
+        // For first upsample pass: read mips_a[LAST], blend with mips_a[LAST-1], write to mips_b[LAST-1]
+        // For subsequent passes: read mips_b[i+1] (previous upsample result), blend with mips_a[i], write to mips_b[i]
         let mut upsample_data: Vec<(BindGroup, [u32; 4])> = Vec::with_capacity(BLOOM_MIP_LEVELS - 1);
         {
             let device = render_context.render_device();
             
-            for i in (0..BLOOM_MIP_LEVELS - 1).rev() {
-                let input_view = &bloom_textures.mips[i + 1].default_view; // Smaller mip
-                let blend_view = &bloom_textures.mips[i].default_view; // Current mip (to blend with)
-                let output_size = bloom_textures.mips[i].texture.size();
+            for (pass_idx, i) in (0..BLOOM_MIP_LEVELS - 1).rev().enumerate() {
+                // Input: For first pass, read from mips_a (smallest mip from downsample)
+                //        For subsequent passes, read from mips_b (previous upsample output)
+                let input_view = if pass_idx == 0 {
+                    &bloom_textures.mips_a[i + 1].default_view // Smallest mip from downsample
+                } else {
+                    &bloom_textures.mips_b[i + 1].default_view // Previous upsample result
+                };
+                
+                // Blend with the original downsampled mip at this level
+                let blend_view = &bloom_textures.mips_a[i].default_view;
+                
+                // Output goes to mips_b
+                let output_size = bloom_textures.mips_b[i].texture.size();
 
                 let bind_group = device.create_bind_group(
                     Some("bloom_upsample_bind_group"),
@@ -161,8 +175,9 @@ impl ViewNode for BloomNode {
         }
 
         // Create composite bind group
+        // Final bloom result is in mips_b[0] (the largest mip after upsampling)
         let post_process_write = view_target.post_process_write();
-        let bloom_result = &bloom_textures.mips[0].default_view;
+        let bloom_result = &bloom_textures.mips_b[0].default_view;
         
         let composite_bind_group;
         let composite_push_constants;
@@ -198,8 +213,9 @@ impl ViewNode for BloomNode {
         }
 
         // === DOWNSAMPLE PASSES ===
+        // Downsample writes to mips_a
         for (i, (bind_group, push_constants)) in downsample_data.iter().enumerate() {
-            let output_view = &bloom_textures.mips[i].default_view;
+            let output_view = &bloom_textures.mips_a[i].default_view;
 
             let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("bloom_downsample"),
@@ -228,10 +244,11 @@ impl ViewNode for BloomNode {
         }
 
         // === UPSAMPLE PASSES ===
+        // Upsample writes to mips_b (to avoid read-write hazard with mips_a)
         for (idx, (bind_group, push_constants)) in upsample_data.iter().enumerate() {
             // upsample_data is in reverse order (BLOOM_MIP_LEVELS-2 down to 0)
             let i = BLOOM_MIP_LEVELS - 2 - idx;
-            let output_view = &bloom_textures.mips[i].default_view;
+            let output_view = &bloom_textures.mips_b[i].default_view;
 
             let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("bloom_upsample"),
@@ -239,7 +256,7 @@ impl ViewNode for BloomNode {
                     view: output_view,
                     resolve_target: None,
                     ops: Operations {
-                        load: LoadOp::Load, // Keep existing content for blending
+                        load: LoadOp::Clear(wgpu::Color::BLACK), // Clear - shader does the blending
                         store: StoreOp::Store,
                     },
                     depth_slice: None,

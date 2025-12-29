@@ -42,42 +42,55 @@ pub struct BloomConfig {
 impl Default for BloomConfig {
     fn default() -> Self {
         Self {
-            threshold: 0.8,
-            intensity: 1.0,
-            blend_factor: 0.6,
+            threshold: 0.7,      // Catch bright and emissive surfaces
+            intensity: 2.0,      // Strong bloom for 80s dark fantasy aesthetic
+            blend_factor: 0.7,   // Higher blend for more glow spread
             exposure: 1.0,
         }
     }
 }
 
 /// Bloom textures for a camera view.
+/// Uses ping-pong textures to avoid read-write hazards during upsampling.
 #[derive(Component)]
 pub struct ViewBloomTextures {
-    /// Mip chain for downsampling/upsampling
-    pub mips: Vec<CachedTexture>,
+    /// Primary mip chain - used for downsample output and upsample input
+    pub mips_a: Vec<CachedTexture>,
+    /// Secondary mip chain - used for upsample output to avoid read-write hazard
+    pub mips_b: Vec<CachedTexture>,
     /// Size of the full-resolution bloom texture
     pub size: Extent3d,
 }
 
 impl ViewBloomTextures {
     /// Create bloom textures for a given viewport size.
+    /// Creates two sets of mip textures (A and B) for ping-pong rendering.
     pub fn new(
         render_device: &RenderDevice,
         texture_cache: &mut TextureCache,
         size: Extent3d,
     ) -> Self {
-        let mut mips = Vec::with_capacity(BLOOM_MIP_LEVELS);
+        let mut mips_a = Vec::with_capacity(BLOOM_MIP_LEVELS);
+        let mut mips_b = Vec::with_capacity(BLOOM_MIP_LEVELS);
         let mut width = size.width;
         let mut height = size.height;
 
         // Static labels for mip textures
-        const MIP_LABELS: [&str; BLOOM_MIP_LEVELS] = [
-            "bloom_mip_0",
-            "bloom_mip_1",
-            "bloom_mip_2",
-            "bloom_mip_3",
-            "bloom_mip_4",
-            "bloom_mip_5",
+        const MIP_LABELS_A: [&str; BLOOM_MIP_LEVELS] = [
+            "bloom_mip_a_0",
+            "bloom_mip_a_1",
+            "bloom_mip_a_2",
+            "bloom_mip_a_3",
+            "bloom_mip_a_4",
+            "bloom_mip_a_5",
+        ];
+        const MIP_LABELS_B: [&str; BLOOM_MIP_LEVELS] = [
+            "bloom_mip_b_0",
+            "bloom_mip_b_1",
+            "bloom_mip_b_2",
+            "bloom_mip_b_3",
+            "bloom_mip_b_4",
+            "bloom_mip_b_5",
         ];
 
         for i in 0..BLOOM_MIP_LEVELS {
@@ -91,10 +104,11 @@ impl ViewBloomTextures {
                 depth_or_array_layers: 1,
             };
 
-            let texture = texture_cache.get(
+            // Create texture A (primary - for downsample and upsample input)
+            let texture_a = texture_cache.get(
                 render_device,
                 TextureDescriptor {
-                    label: Some(MIP_LABELS[i]),
+                    label: Some(MIP_LABELS_A[i]),
                     size: mip_size,
                     mip_level_count: 1,
                     sample_count: 1,
@@ -105,10 +119,26 @@ impl ViewBloomTextures {
                 },
             );
 
-            mips.push(texture);
+            // Create texture B (secondary - for upsample output)
+            let texture_b = texture_cache.get(
+                render_device,
+                TextureDescriptor {
+                    label: Some(MIP_LABELS_B[i]),
+                    size: mip_size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: TextureDimension::D2,
+                    format: TextureFormat::Rgba16Float,
+                    usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                },
+            );
+
+            mips_a.push(texture_a);
+            mips_b.push(texture_b);
         }
 
-        Self { mips, size }
+        Self { mips_a, mips_b, size }
     }
 }
 
