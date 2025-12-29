@@ -24,7 +24,7 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use studio_core::{
-    build_chunk_mesh, load_creature_script, DeferredCamera, DeferredRenderable,
+    build_chunk_mesh, load_creature_script, DeferredCamera, DeferredPointLight, DeferredRenderable,
     DeferredRenderingPlugin, VoxelMaterial, VoxelMaterialPlugin,
 };
 
@@ -153,9 +153,63 @@ fn setup(
         )),
     ));
 
+    // === POINT LIGHTS ===
+    // These are positioned at the crystal/glowing voxel locations
+    // The scene is offset by (-16, 0, -16) so we need to adjust positions
+    let scene_offset = Vec3::new(-16.0, 0.0, -16.0);
+    
+    // Central altar orb (orange glow) - positioned at voxel (15.5, 6.5, 15.5)
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(1.0, 0.6, 0.2),  // Orange
+            intensity: 3.0,
+            radius: 12.0,
+        },
+        Transform::from_translation(Vec3::new(15.5, 7.0, 15.5) + scene_offset),
+    ));
+    
+    // Purple crystal cluster (left side) - at voxel (5, 2, 8)
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(0.7, 0.2, 1.0),  // Purple
+            intensity: 2.5,
+            radius: 10.0,
+        },
+        Transform::from_translation(Vec3::new(5.0, 2.5, 8.0) + scene_offset),
+    ));
+    
+    // Cyan crystal (front right) - at voxel (26, 2.5, 5)
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(0.2, 0.9, 1.0),  // Cyan
+            intensity: 2.5,
+            radius: 10.0,
+        },
+        Transform::from_translation(Vec3::new(26.0, 2.5, 5.0) + scene_offset),
+    ));
+    
+    // Magenta crystal (back) - at voxel (10, 2, 26)
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(1.0, 0.2, 0.7),  // Magenta
+            intensity: 2.5,
+            radius: 10.0,
+        },
+        Transform::from_translation(Vec3::new(10.0, 2.5, 26.0) + scene_offset),
+    ));
+    
+    // Floating rock orange crystal - at voxel (21.5, 10, 9.5)
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(1.0, 0.6, 0.2),  // Orange
+            intensity: 2.0,
+            radius: 8.0,
+        },
+        Transform::from_translation(Vec3::new(21.5, 10.5, 9.5) + scene_offset),
+    ));
+
     println!("Dark world scene setup complete.");
-    println!("Note: Moon lighting is currently hardcoded in deferred_lighting.wgsl");
-    println!("TODO: Add dual moon support with shadow mapping for each");
+    println!("Point lights: 5 (altar, purple, cyan, magenta, floating rock)");
 }
 
 fn rotate_camera(

@@ -19,6 +19,7 @@ use super::gbuffer_node::GBufferPassNode;
 use super::labels::DeferredLabel;
 use super::lighting::DeferredLightingConfig;
 use super::lighting_node::{init_lighting_pipeline, LightingPassNode};
+use super::point_light::{extract_point_lights, prepare_point_lights};
 use super::prepare::{prepare_gbuffer_textures, prepare_gbuffer_view_uniforms};
 use super::shadow::{init_shadow_pipeline, prepare_shadow_textures, ShadowConfig};
 use super::shadow_node::{prepare_shadow_mesh_bind_groups, prepare_shadow_view_uniforms, ShadowPassNode};
@@ -63,8 +64,8 @@ impl Plugin for DeferredRenderingPlugin {
         // (Can't easily extract resources, so we create it directly)
         render_app.init_resource::<ShadowConfig>();
 
-        // Add extraction system for deferred meshes
-        render_app.add_systems(ExtractSchedule, extract_deferred_meshes);
+        // Add extraction systems for deferred meshes and point lights
+        render_app.add_systems(ExtractSchedule, (extract_deferred_meshes, extract_point_lights));
 
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources
@@ -105,6 +106,8 @@ impl Plugin for DeferredRenderingPlugin {
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_shadow_pipeline)
                     .after(prepare_deferred_meshes),
+                prepare_point_lights
+                    .in_set(RenderSystems::PrepareResources),
             ),
         );
 

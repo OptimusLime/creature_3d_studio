@@ -25,6 +25,7 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
+use super::point_light::PointLightsBuffer;
 use super::shadow::ViewShadowTextures;
 use super::shadow_node::ViewShadowUniforms;
 
@@ -113,6 +114,20 @@ impl ViewNode for LightingPassNode {
                 resource: shadow_uniforms.buffer.as_entire_binding(),
             }],
         );
+        
+        // Create bind group for point lights (group 3)
+        let point_lights_bind_group = if let Some(point_lights_buffer) = world.get_resource::<PointLightsBuffer>() {
+            Some(render_context.render_device().create_bind_group(
+                "lighting_point_lights_bind_group",
+                &lighting_pipeline.point_lights_layout,
+                &[BindGroupEntry {
+                    binding: 0,
+                    resource: point_lights_buffer.buffer.as_entire_binding(),
+                }],
+            ))
+        } else {
+            None
+        };
 
         // Begin render pass writing to view target
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -146,6 +161,9 @@ impl ViewNode for LightingPassNode {
         render_pass.set_bind_group(0, &gbuffer_bind_group, &[]);
         render_pass.set_bind_group(1, &shadow_map_bind_group, &[]);
         render_pass.set_bind_group(2, &shadow_uniforms_bind_group, &[]);
+        if let Some(ref point_lights_bg) = point_lights_bind_group {
+            render_pass.set_bind_group(3, point_lights_bg, &[]);
+        }
         
         render_pass.draw(0..3, 0..1);
 
@@ -167,6 +185,8 @@ pub struct LightingPipeline {
     pub shadow_sampler: Sampler,
     /// Shadow uniforms layout (group 2)
     pub shadow_uniforms_layout: BindGroupLayout,
+    /// Point lights uniform layout (group 3)
+    pub point_lights_layout: BindGroupLayout,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -272,6 +292,24 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
+    
+    // Create bind group layout for point lights (group 3)
+    let point_lights_layout = render_device.create_bind_group_layout(
+        "lighting_point_lights_layout",
+        &[
+            // Point lights uniform buffer
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    );
 
     // Create G-buffer sampler (point sampling)
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
@@ -300,6 +338,7 @@ pub fn init_lighting_pipeline(
             gbuffer_layout.clone(),
             shadow_map_layout.clone(),
             shadow_uniforms_layout.clone(),
+            point_lights_layout.clone(),
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {
@@ -331,7 +370,8 @@ pub fn init_lighting_pipeline(
         shadow_map_layout,
         shadow_sampler,
         shadow_uniforms_layout,
+        point_lights_layout,
     });
     
-    info!("LightingPipeline initialized with shadow mapping support");
+    info!("LightingPipeline initialized with shadow mapping and point lights support");
 }

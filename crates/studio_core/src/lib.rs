@@ -20,7 +20,7 @@ pub mod voxel_mesh;
 
 pub use creature_script::{execute_creature_script, load_creature_script};
 pub use deferred::{
-    DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredRenderable,
+    DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredPointLight, DeferredRenderable,
     DeferredRenderingPlugin,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};

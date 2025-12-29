@@ -24,6 +24,22 @@ struct ShadowUniforms {
 }
 @group(2) @binding(0) var<uniform> shadow: ShadowUniforms;
 
+// Point lights (bind group 3)
+// Must match MAX_POINT_LIGHTS in point_light.rs
+const MAX_POINT_LIGHTS: u32 = 32u;
+
+struct PointLight {
+    position: vec4<f32>,        // xyz = position, w = unused
+    color_intensity: vec4<f32>, // rgb = color, a = intensity
+    radius_padding: vec4<f32>,  // x = radius, yzw = unused
+}
+
+struct PointLightsUniform {
+    count: vec4<u32>,  // x = count, yzw = unused
+    lights: array<PointLight, 32>,
+}
+@group(3) @binding(0) var<uniform> point_lights: PointLightsUniform;
+
 // Fullscreen triangle vertices
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -86,8 +102,55 @@ const SHADOW_MAP_SIZE: f32 = 2048.0;
 const SHADOW_BIAS_MIN: f32 = 0.001;  // Minimum bias to prevent shadow acne
 const SHADOW_BIAS_MAX: f32 = 0.01;   // Maximum bias for grazing angles
 
-// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only, 4 = shadow only, 5 = AO only
+// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only, 4 = shadow only, 5 = AO only, 6 = point lights only
 const DEBUG_MODE: i32 = 0;
+
+// Calculate point light contribution at a world position.
+// Uses smooth quadratic falloff to zero at the light's radius.
+fn calculate_point_light(
+    light: PointLight,
+    world_pos: vec3<f32>,
+    world_normal: vec3<f32>,
+) -> vec3<f32> {
+    let light_pos = light.position.xyz;
+    let light_color = light.color_intensity.rgb;
+    let intensity = light.color_intensity.a;
+    let radius = light.radius_padding.x;
+    
+    // Vector from surface to light
+    let to_light = light_pos - world_pos;
+    let distance = length(to_light);
+    
+    // Skip if outside radius
+    if distance > radius {
+        return vec3<f32>(0.0);
+    }
+    
+    // Normalize direction
+    let light_dir = to_light / distance;
+    
+    // N dot L for diffuse lighting
+    let n_dot_l = max(dot(world_normal, light_dir), 0.0);
+    
+    // Smooth quadratic attenuation: (1 - (d/r)^2)^2
+    // This gives a nice smooth falloff that reaches exactly zero at radius
+    let distance_ratio = distance / radius;
+    let attenuation = pow(1.0 - distance_ratio * distance_ratio, 2.0);
+    
+    return light_color * intensity * n_dot_l * attenuation;
+}
+
+// Calculate total contribution from all point lights
+fn calculate_all_point_lights(world_pos: vec3<f32>, world_normal: vec3<f32>) -> vec3<f32> {
+    var total = vec3<f32>(0.0);
+    let light_count = point_lights.count.x;
+    
+    for (var i = 0u; i < light_count && i < MAX_POINT_LIGHTS; i++) {
+        total += calculate_point_light(point_lights.lights[i], world_pos, world_normal);
+    }
+    
+    return total;
+}
 
 // Calculate shadow factor using PCF (Percentage Closer Filtering).
 // Returns 0.0 for fully in shadow, 1.0 for fully lit.
@@ -205,6 +268,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(vec3<f32>(ao), 1.0);
     }
     
+    // --- Point Light Calculation ---
+    let point_light_contribution = calculate_all_point_lights(world_pos, world_normal);
+    
+    // Debug: Show point lights only
+    if DEBUG_MODE == 6 {
+        return vec4<f32>(point_light_contribution, 1.0);
+    }
+    
     // --- Lighting Calculation ---
     var total_light = vec3<f32>(0.0);
     
@@ -266,6 +337,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Apply face multiplier to total light
     total_light *= face_multiplier;
+    
+    // --- Point Lights ---
+    // Add contribution from point lights (colored local illumination)
+    // Point lights are NOT affected by face shading (they're local, not directional)
+    // but ARE affected by AO
+    total_light += point_light_contribution;
     
     // --- Per-Vertex Ambient Occlusion ---
     // AO darkens corners and edges where blocks meet.
