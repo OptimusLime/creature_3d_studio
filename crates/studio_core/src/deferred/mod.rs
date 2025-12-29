@@ -39,6 +39,8 @@
 //!
 //! Reference: bonsai/shaders/gBuffer.fragmentshader, Lighting.fragmentshader
 
+mod bloom;
+// mod bloom_node;  // TODO: Fix borrow checker issues
 mod extract;
 mod gbuffer;
 mod gbuffer_geometry;
@@ -50,6 +52,7 @@ mod lighting_node;
 mod plugin;
 mod prepare;
 
+pub use bloom::*;
 pub use extract::*;
 pub use gbuffer::*;
 pub use gbuffer_geometry::*;

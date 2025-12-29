@@ -4,8 +4,8 @@
 // Based on Bonsai's Lighting.fragmentshader
 //
 // G-Buffer inputs:
-// - gColor: RGB = albedo, A = emission intensity
-// - gNormal: RGB = world-space normal (encoded as 0-1)
+// - gColor: RGB = albedo, A = emission intensity (0-1)
+// - gNormal: RGB = world-space normal (raw -1 to +1, NOT encoded)
 // - gPosition: XYZ = world position, W = linear depth
 
 // G-buffer textures
@@ -32,19 +32,25 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
-// Lighting constants
-const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.1, 0.05, 0.15);
-const AMBIENT_INTENSITY: f32 = 0.2;
+// Lighting constants - improved for better contrast
+const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.15, 0.1, 0.2);  // Slightly purple ambient
+const AMBIENT_INTENSITY: f32 = 0.15;  // Lower ambient for more contrast
 
-const SUN_DIRECTION: vec3<f32> = vec3<f32>(0.408, -0.816, 0.408); // normalized (0.5, -1, 0.5)
-const SUN_COLOR: vec3<f32> = vec3<f32>(0.8, 0.85, 1.0);
-const SUN_INTENSITY: f32 = 0.8;
+// Sun coming from upper-right-front for good face differentiation
+const SUN_DIRECTION: vec3<f32> = vec3<f32>(-0.577, -0.577, -0.577); // normalized (-1, -1, -1)
+const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.95, 0.9);  // Warm white
+const SUN_INTENSITY: f32 = 1.2;  // Brighter sun for more contrast
 
-const FOG_COLOR: vec3<f32> = vec3<f32>(0.102, 0.039, 0.180); // #1a0a2e
-const FOG_START: f32 = 10.0;
-const FOG_END: f32 = 100.0;
+// Fill light from opposite side (dimmer)
+const FILL_DIRECTION: vec3<f32> = vec3<f32>(0.707, 0.0, 0.707); // from left-back
+const FILL_COLOR: vec3<f32> = vec3<f32>(0.4, 0.5, 0.7);  // Cool blue
+const FILL_INTENSITY: f32 = 0.3;
 
-// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = bright red test
+const FOG_COLOR: vec3<f32> = vec3<f32>(0.102, 0.039, 0.180); // #1a0a2e - deep purple
+const FOG_START: f32 = 15.0;
+const FOG_END: f32 = 80.0;
+
+// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only
 const DEBUG_MODE: i32 = 0;
 
 @fragment
@@ -55,29 +61,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let position_sample = textureSample(gPosition, gbuffer_sampler, in.uv);
     
     let albedo = color_sample.rgb;
-    let emission = color_sample.a;
+    let emission = color_sample.a;  // 0-1 normalized emission
     
-    // Normal is stored as 0.5 + N*0.5 in gbuffer, decode back
-    // For now, gbuffer clears to (0.5, 0.5, 1.0) which is up vector
-    let world_normal = normalize(normal_sample.rgb * 2.0 - 1.0);
+    // Normal is stored directly as world-space normal (-1 to +1)
+    // NO encoding/decoding needed - just normalize to handle interpolation
+    let world_normal = normalize(normal_sample.rgb);
     
     let world_pos = position_sample.xyz;
     let depth = position_sample.w;
     
-    // Debug: Show g-buffer normal directly
+    // Debug: Show g-buffer normal as color (remap -1,1 to 0,1 for visualization)
     if DEBUG_MODE == 1 {
-        return vec4<f32>(normal_sample.rgb, 1.0);
+        return vec4<f32>(world_normal * 0.5 + 0.5, 1.0);
     }
     
     // Debug: Show depth
     if DEBUG_MODE == 2 {
-        let d = clamp(depth / 100.0, 0.0, 1.0);
+        let d = clamp(depth / 50.0, 0.0, 1.0);
         return vec4<f32>(d, d, d, 1.0);
     }
     
-    // Debug: Bright red test - should fill entire screen
+    // Debug: Show albedo only (no lighting)
     if DEBUG_MODE == 3 {
-        return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+        return vec4<f32>(albedo, 1.0);
     }
     
     // Skip pixels with no geometry (far depth = 1000)
@@ -88,23 +94,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // --- Lighting Calculation ---
     
-    // Ambient
+    // Ambient - base illumination
     var total_light = AMBIENT_COLOR * AMBIENT_INTENSITY;
     
-    // Directional light (sun)
+    // Main directional light (sun) - from upper-right-front
     let sun_dir = normalize(-SUN_DIRECTION);
-    let n_dot_l = max(dot(world_normal, sun_dir), 0.0);
-    total_light += SUN_COLOR * SUN_INTENSITY * n_dot_l;
+    let n_dot_sun = max(dot(world_normal, sun_dir), 0.0);
+    // Add slight wraparound for softer shadows
+    let sun_wrap = n_dot_sun * 0.8 + 0.2 * max(dot(world_normal, sun_dir) + 0.5, 0.0);
+    total_light += SUN_COLOR * SUN_INTENSITY * sun_wrap;
+    
+    // Fill light from opposite side - prevents pure black shadows
+    let fill_dir = normalize(-FILL_DIRECTION);
+    let n_dot_fill = max(dot(world_normal, fill_dir), 0.0);
+    total_light += FILL_COLOR * FILL_INTENSITY * n_dot_fill;
     
     // Apply lighting to albedo
     var final_color = albedo * total_light;
     
-    // Add emission (emission intensity stored in alpha)
-    final_color += albedo * emission;
+    // Add emission - emission makes the surface glow beyond its lit color
+    // Higher emission = more of the albedo color added as self-illumination
+    // Scale emission contribution (emission is 0-1, we want visible glow)
+    let emission_strength = emission * 2.0;  // Boost emission visibility
+    final_color += albedo * emission_strength;
     
     // --- Fog (Bonsai-style) ---
+    // Exponential fog for more natural falloff
     let fog_factor = smoothstep(FOG_START, FOG_END, depth);
     final_color = mix(final_color, FOG_COLOR, fog_factor);
     
+    // HDR output - values can exceed 1.0 for bloom
     return vec4<f32>(final_color, 1.0);
 }
