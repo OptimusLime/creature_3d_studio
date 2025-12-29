@@ -5,12 +5,14 @@
 //! - Orbit camera controller
 //! - Voxel data structures for creature modeling
 //! - Deferred rendering pipeline (Bonsai-style)
+//! - Chunk streaming for infinite worlds
 //! - Common types used across crates
 //! - Configuration management
 //! - Shared utilities
 
 use bevy::prelude::*;
 
+pub mod chunk_streaming;
 pub mod creature_script;
 pub mod deferred;
 pub mod orbit_camera;
@@ -33,6 +35,10 @@ pub use voxel_mesh::{
     build_chunk_mesh, build_chunk_mesh_greedy, build_single_chunk_mesh, build_world_meshes,
     build_world_meshes_with_options, ChunkMesh, VoxelMaterial, VoxelMaterialPlugin,
     ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
+};
+pub use chunk_streaming::{
+    chunk_streaming_system, load_all_chunks_in_radius, world_pos_to_chunk, ChunkEntity,
+    ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
 };
 
 /// Core plugin for shared functionality.

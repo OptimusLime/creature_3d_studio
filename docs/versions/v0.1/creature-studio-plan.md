@@ -350,9 +350,9 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 | 13 | Face Culling | `p14_face_culling` | 87-94% vertex reduction | ✅ Done |
 | 14/15 | Greedy Meshing | `p15_greedy_mesh` | 98%+ for uniform surfaces | ✅ Done |
 | 15b | Point Light Shadows | `p13_point_light_shadow` | Cube shadow maps | ✅ Done |
-| **16** | **Multi-Chunk World** | TBD | VoxelWorld + HashMap | **NEXT** |
-| 17 | Chunk Streaming | TBD | Distance-based load/unload | Planned |
-| 18 | Cross-Chunk Culling | TBD | Border buffers | Planned |
+| 16 | Multi-Chunk World | `p16_multi_chunk` | VoxelWorld + HashMap | ✅ Done |
+| 17 | Chunk Streaming | `p17_chunk_streaming` | Distance-based load/unload | ✅ Done |
+| **18** | **Cross-Chunk Culling** | TBD | Border buffers | **NEXT** |
 
 ---
 
