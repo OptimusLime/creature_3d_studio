@@ -329,17 +329,20 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 
 ## Phase Summary
 
-| Phase | Goal | Verification Test | Key Output |
-|-------|------|-------------------|------------|
-| 0 | Screenshot infrastructure | `test_screenshot_capture` | `p0_test.png` (magenta) |
-| 1 | Black void + camera | `test_p1_black_void` | `p1_black_void.png` (black) |
-| 2 | Single lit cube | `test_p2_single_cube` | `p2_single_cube.png` |
-| 3 | Lua voxel placement | `test_p3_lua_voxels` | `p3_lua_voxels.png` (5 cubes) |
-| 4 | Custom mesh + vertex format | `test_p4_custom_mesh` | `p4_custom_mesh.png` |
-| 5 | Emission brightness | `test_p5_emission` | `p5_emission.png` (gradient) |
-| 6 | Bloom post-process | `test_p6_bloom` | `p6_bloom.png` (glow halo) |
-| 7 | Distance fog | `test_p7_fog` | `p7_fog.png` (depth fade) |
-| 8 | Tone mapping + final | `test_p8_final_aesthetic` | `p8_final_aesthetic.png` |
+| Phase | Goal | Verification Test | Key Output | Status |
+|-------|------|-------------------|------------|--------|
+| 0 | Screenshot infrastructure | `test_screenshot_capture` | `p0_test.png` (magenta) | ✅ Done |
+| 1 | Black void + camera | `test_p1_black_void` | `p1_black_void.png` (black) | ✅ Done |
+| 2 | Single lit cube | `test_p2_single_cube` | `p2_single_cube.png` | ✅ Done |
+| 3 | Lua voxel placement | `test_p3_lua_voxels` | `p3_lua_voxels.png` (5 cubes) | ✅ Done |
+| 4 | Custom mesh + vertex format | `test_p4_custom_mesh` | `p4_custom_mesh.png` | ✅ Done |
+| 5 | Emission brightness | `test_p5_emission` | `p5_emission.png` (gradient) | ✅ Done |
+| 6 | Bloom post-process | `test_p6_bloom` | `p6_bloom.png` (glow halo) | ✅ Done |
+| 7 | Distance fog | `test_p7_fog` | `p7_fog.png` (depth fade) | ✅ Done |
+| 8 | Forward render final | `p8_gbuffer` | Forward rendering complete | ✅ Done |
+| 8b | Deferred pipeline proof | `p8_gbuffer` | Test cube through deferred | ✅ Done |
+| **9** | **Voxel mesh integration** | `p8_gbuffer` | Lua voxels through deferred | **Current** |
+| 10 | Deferred + bloom | TBD | Full deferred with bloom | Planned |
 
 ---
 
@@ -409,69 +412,381 @@ Phase 8: Tone Mapping + Final
 
 ---
 
-## Phase 8b: Full Custom Deferred Rendering (CURRENT)
+## Phase 8b: Full Custom Deferred Rendering
 
-**Goal**: Complete the deferred rendering pipeline - render actual geometry to G-buffer, not just clear it.
+**Goal**: Complete the deferred rendering pipeline - render actual geometry to G-buffer.
 
-**Status**: LightingPassNode working. GBufferPassNode clears only. Need to render geometry.
+**Status**: ✅ MILESTONE ACHIEVED - Test cube renders through full deferred pipeline!
 
 ### Architecture
 
 ```
-GBufferPassNode (MRT)          LightingPassNode (fullscreen)
-     │                                  │
-     ├─→ gColor (Rgba16Float)  ────────┼─→ Sample & compute lighting
-     ├─→ gNormal (Rgba16Float) ────────┤
-     └─→ gPosition (Rgba32Float) ──────┘
-                                        │
-                                        └─→ ViewTarget (final output)
+GBufferPassNode (MRT)              LightingPassNode (fullscreen)
+     │                                      │
+     ├─→ gColor (Rgba16Float)  ────────────┼─→ Sample & compute lighting
+     ├─→ gNormal (Rgba16Float) ────────────┤   - Sun directional light
+     ├─→ gPosition (Rgba32Float) ──────────┤   - Distance fog
+     └─→ gDepth (Depth32Float) ────────────┘   - Emission support
+                                                │
+                                                └─→ ViewTarget (final output)
 ```
 
-### Implementation Approach
+### Completed Tasks
 
-We need a custom material that outputs to 3 render targets (MRT). Bevy's `Material` trait doesn't support MRT directly. Options:
+| ID | Task | Status |
+|----|------|--------|
+| 8b.1 | Create `GBufferMaterial` struct with pipeline layout | ✅ Done |
+| 8b.2 | Implement `GBufferGeometryPipeline` for MRT output | ✅ Done |
+| 8b.3 | Create `gbuffer.wgsl` shader with MRT fragment output | ✅ Done |
+| 8b.4 | Create `GBufferVertex` format (pos, normal, color, emission) | ✅ Done |
+| 8b.5 | Create view/mesh uniform buffers and bind groups | ✅ Done |
+| 8b.6 | Render test cube in GBufferPassNode | ✅ Done |
+| 8b.7 | Verify: cube visible with proper lighting/fog | ✅ Done |
 
-1. **SpecializedRenderPipeline** - Create custom draw commands for voxel meshes
-2. **Custom RenderCommand** - Hook into Bevy's draw system with MRT output
-3. **Completely custom geometry pass** - Own vertex buffers, own pipeline
+### Files Created
 
-**Chosen approach**: Option 1 - SpecializedRenderPipeline with custom RenderCommand.
+| File | Purpose |
+|------|---------|
+| `deferred/gbuffer_geometry.rs` | GBufferVertex, uniforms, test cube, pipeline |
+| `deferred/gbuffer_material.rs` | SpecializedMeshPipeline (for future mesh integration) |
+| `shaders/gbuffer.wgsl` | Vertex/fragment shader for MRT output |
+| `shaders/gbuffer_test.wgsl` | Fullscreen test shader (proved MRT works) |
+
+### What Works
+
+- ✅ MRT rendering to 3 color targets + depth
+- ✅ Custom vertex format with emission
+- ✅ View/projection matrices
+- ✅ Deferred lighting with sun direction
+- ✅ Distance fog from linear depth
+- ✅ Emission stored in albedo alpha
+
+---
+
+## Phase 9: Render Actual Voxel Meshes (CURRENT)
+
+**Goal**: Replace test cube with actual voxel meshes from Bevy entities.
+
+**Status**: In Progress
+
+### Problem
+
+Currently we render a hardcoded test cube. We need to:
+1. Find entities with `Mesh3d` + `MeshMaterial3d<VoxelMaterial>` + camera visibility
+2. Get their mesh GPU buffers from Bevy's mesh allocator
+3. Get their transforms
+4. Render them with our G-buffer pipeline
+
+### Approach Options
+
+**Option A: Extract from Bevy's RenderMeshInstances**
+- Bevy already extracts mesh instances to render world
+- Query `RenderMeshInstances` and `RenderAssets<RenderMesh>`
+- Use existing GPU buffers, just different pipeline
+
+**Option B: Custom Extraction**
+- Add marker component `GBufferMesh` to entities
+- Extract our own mesh data each frame
+- More control, more code
+
+**Option C: Hybrid - Use Bevy extraction, custom marker**
+- Mark entities with `DeferredRenderable`
+- In render world, query visible entities with this marker
+- Get mesh handles from `RenderMeshInstances`
+- Look up GPU buffers from `RenderAssets<RenderMesh>`
+
+**Chosen**: Option C - Hybrid approach
 
 ### Tasks
 
 | ID | Task | Done When | Status |
 |----|------|-----------|--------|
-| 8b.1 | Create `GBufferMaterial` struct with albedo, emission properties | Struct exists | Pending |
-| 8b.2 | Implement `SpecializedRenderPipeline` for G-buffer MRT output | Pipeline queued with 3 color targets | Pending |
-| 8b.3 | Create `gbuffer.wgsl` shader with MRT fragment output | Shader outputs to @location(0,1,2) | Pending |
-| 8b.4 | Implement `RenderCommand` for voxel meshes | Draw commands issued | Pending |
-| 8b.5 | Extract voxel mesh data to render world | Meshes available in GBufferPassNode | Pending |
-| 8b.6 | Render geometry in GBufferPassNode using specialized pipeline | G-buffer contains actual geometry | Pending |
-| 8b.7 | Verify: cubes visible through deferred pipeline | Screenshot shows lit geometry | Pending |
+| 9.1 | Add `DeferredRenderable` marker component | Component exists, extracted to render world | Pending |
+| 9.2 | Query `RenderMeshInstances` for entities with marker | Can iterate deferred mesh instances | Pending |
+| 9.3 | Look up `RenderMesh` GPU buffers | Have vertex/index buffer references | Pending |
+| 9.4 | Look up entity transforms | Have world transform matrices | Pending |
+| 9.5 | Update `GBufferPassNode` to iterate and draw each mesh | Multiple meshes rendered | Pending |
+| 9.6 | Update uniform buffer to support per-mesh transforms | Each mesh at correct position | Pending |
+| 9.7 | Verify: voxel meshes render through deferred pipeline | Screenshot shows Lua-defined voxels | Pending |
 
-### Key Files to Create/Modify
+### Key References
 
-- `crates/studio_core/src/deferred/gbuffer_material.rs` - GBufferMaterial + pipeline
-- `crates/studio_core/src/deferred/draw.rs` - RenderCommand implementation  
-- `assets/shaders/gbuffer.wgsl` - MRT fragment shader
-- `crates/studio_core/src/deferred/gbuffer_node.rs` - Add geometry rendering
+- `bevy_pbr/src/render/mesh.rs` - `RenderMeshInstances`, `extract_meshes`
+- `bevy_render/src/mesh/mod.rs` - `RenderMesh`, `RenderMeshBufferInfo`
+- `bevy_render/src/mesh/allocator.rs` - `MeshAllocator` for GPU buffer lookup
 
-### Reference
+### Verification
 
-- Bevy `bevy_pbr/src/render/mesh.rs` - How Bevy renders meshes
-- Bevy `bevy_pbr/src/deferred/mod.rs` - Bevy's deferred approach
-- Bonsai `shaders/GBuffer.fragmentshader` - G-buffer output format
+**Test**: `cargo run --example p8_gbuffer`
+
+**Pass Criteria**:
+1. Voxels from Lua script visible (not test cube)
+2. Different colored faces (from voxel colors)
+3. Proper lighting and fog
+4. Multiple voxels at correct positions
 
 ---
 
-## Out of Scope
+## Phase 9: Render Actual Voxel Meshes
 
-Documented separately in `creature-systems-plan.md` (to be created after Phase 8):
+**Status**: COMPLETE
 
-- Creature entity structure
-- Lua behavior scripts
-- Animation system
-- Physics integration
-- Face culling / greedy meshing optimization
-- OIT transparency
-- SSAO
+**What was built**:
+- `DeferredRenderable` marker component for entities
+- `ExtractedDeferredMesh` in render world with transforms
+- Integration with `MeshAllocator` for GPU buffer access
+- Per-mesh bind groups with transform uniforms
+- `GBufferPassNode` iterates and renders all extracted meshes
+
+**Verification**: 4 white voxels with emission gradient render correctly through deferred pipeline.
+
+---
+
+## Phase 9.5: Test Scene - "Mini World" (NEXT)
+
+**Goal**: Create a meaningful test scene to validate the pipeline before optimization.
+
+**Why**: We need visual feedback beyond 4 test boxes. A small voxel scene will:
+- Reveal rendering issues (Z-fighting, culling bugs, etc.)
+- Test performance with more geometry
+- Provide a better demo for the deferred pipeline
+- Give us something to compare before/after face culling
+
+### Scene Concept: "Floating Island"
+
+A small 16x16x16 chunk with:
+- Grassy top layer (green, no emission)
+- Dirt middle layer (brown)
+- Stone base (gray)
+- Glowing crystals (cyan/magenta, high emission)
+- A small tree (brown trunk, green leaves)
+- Sky void (purple fog)
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 9.5.1 | Create `test_island.lua` with procedural terrain | Script creates 200+ voxels | Pending |
+| 9.5.2 | Add voxel colors: grass, dirt, stone, crystal | At least 5 distinct colors used | Pending |
+| 9.5.3 | Add emission: crystals glow with 0.8+ emission | Visible emission on crystals | Pending |
+| 9.5.4 | Create `p9_island.rs` example | Example runs, screenshot generated | Pending |
+| 9.5.5 | Verify: Scene looks correct with fog + lighting | Manual review of screenshot | Pending |
+
+### Verification
+
+**Test**: `cargo run --example p9_island`
+
+**Pass Criteria**:
+1. Island visible with multiple colors
+2. Fog fades distant parts to purple
+3. Crystals glow brighter than terrain
+4. No obvious rendering artifacts
+
+---
+
+## Phase 10: Bloom Post-Processing
+
+**Goal**: Add bloom to the deferred pipeline for that signature Bonsai glow.
+
+**Status**: Pending
+
+### Architecture
+
+```
+Lighting Pass Output (HDR)
+         │
+         ▼
+┌─────────────────┐
+│ Bloom Threshold │  Extract pixels > threshold
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Downsample x6  │  13-tap filter, halve each pass
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Upsample x6   │  Tent filter, add to previous mip
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   Composite     │  Add bloom to original, tone map
+└─────────────────┘
+```
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 10.1 | Create bloom threshold extraction shader | Bright pixels extracted to texture | Pending |
+| 10.2 | Implement 6-level mip chain generation | Mip textures created in prepare | Pending |
+| 10.3 | Create `bloom_downsample.wgsl` | Shader compiles, 13-tap filter | Pending |
+| 10.4 | Create `bloom_upsample.wgsl` | Shader compiles, tent filter | Pending |
+| 10.5 | Add BloomNode to render graph | Node runs after LightingPass | Pending |
+| 10.6 | Composite bloom onto final output | Bloom visible on bright areas | Pending |
+| 10.7 | Verify: Crystals have bloom halo | Screenshot shows glow | Pending |
+
+### Reference
+
+- Bonsai: `bloom_downsample.fragmentshader`, `bloom_upsample.fragmentshader`
+- Technique: Dual Kawase blur (fast approximation)
+
+---
+
+## Phase 11: Face Culling
+
+**Goal**: Only generate mesh faces that are visible (not occluded by adjacent voxels).
+
+**Why**: A solid 16x16x16 chunk has 4096 voxels = 24576 faces. With face culling, a cube surface has ~1536 faces (6x16x16). **16x reduction** in geometry!
+
+### Current State
+
+```rust
+// voxel_mesh.rs - generates ALL 6 faces per voxel
+for (x, y, z, voxel) in chunk.iter() {
+    add_cube_faces(...);  // Always adds 6 faces
+}
+```
+
+### New Algorithm
+
+```rust
+for (x, y, z, voxel) in chunk.iter() {
+    // Only add face if neighbor is empty
+    if chunk.get(x+1, y, z).is_none() { add_face(+X); }
+    if chunk.get(x-1, y, z).is_none() { add_face(-X); }
+    if chunk.get(x, y+1, z).is_none() { add_face(+Y); }
+    if chunk.get(x, y-1, z).is_none() { add_face(-Y); }
+    if chunk.get(x, y, z+1).is_none() { add_face(+Z); }
+    if chunk.get(x, y, z-1).is_none() { add_face(-Z); }
+}
+```
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 11.1 | Add `VoxelChunk::get_neighbor()` method | Can query adjacent voxels safely | Pending |
+| 11.2 | Modify `build_chunk_mesh()` to cull occluded faces | Only visible faces generated | Pending |
+| 11.3 | Add vertex/face count logging | Log shows reduced counts | Pending |
+| 11.4 | Compare before/after screenshots | Visually identical | Pending |
+| 11.5 | Benchmark: measure frame time improvement | Faster with culling | Pending |
+
+### Verification
+
+**Before** (Phase 9.5 island):
+- Log: "Generated 24000 vertices, 36000 indices"
+- Frame time: X ms
+
+**After**:
+- Log: "Generated 3000 vertices, 4500 indices" (example)
+- Frame time: <X ms
+- Screenshot: Identical to before
+
+---
+
+## Phase 12: Greedy Meshing
+
+**Goal**: Merge adjacent same-material faces into larger quads.
+
+**Why**: Face culling reduces hidden faces, but visible surfaces still have many small quads. Greedy meshing merges them.
+
+Example: A 16x16 flat grass surface:
+- Without greedy: 256 quads (16x16)
+- With greedy: 1 quad (if all same material)
+
+### Algorithm (Simplified)
+
+For each face direction (e.g., +Y top faces):
+1. Create 2D slice of exposed faces with materials
+2. Sweep rows, grouping adjacent same-material faces
+3. Extend groups vertically while material matches
+4. Emit one quad per group
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 12.1 | Research greedy meshing algorithms | Document chosen approach | Pending |
+| 12.2 | Implement per-face-direction greedy merge | Fewer quads for flat surfaces | Pending |
+| 12.3 | Handle material boundaries correctly | Different colors don't merge | Pending |
+| 12.4 | Benchmark improvement | Significant reduction in faces | Pending |
+| 12.5 | Verify visual correctness | No artifacts at merged edges | Pending |
+
+### Reference
+
+- "Greedy Meshing Voxels" by Mikola Lysenko
+- Bonsai's implementation in mesh generation code
+
+---
+
+## Phase 13: Multiple Chunks
+
+**Goal**: Support a world with multiple chunk positions.
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 13.1 | Create `VoxelWorld` with HashMap<ChunkPos, VoxelChunk> | World struct exists | Pending |
+| 13.2 | Spawn multiple mesh entities for chunks | Each chunk is separate entity | Pending |
+| 13.3 | Position chunks at correct world coordinates | Chunks tile correctly | Pending |
+| 13.4 | Create multi-chunk test scene | 3x3 chunk world | Pending |
+| 13.5 | Verify chunk boundaries render correctly | No seams between chunks | Pending |
+
+---
+
+## Roadmap Summary
+
+```
+Current State (Phase 9 Complete)
+        │
+        ▼
+┌───────────────────┐
+│ Phase 9.5: Island │  Visual test scene
+│   Test Scene      │  ~200 voxels, colors
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│ Phase 10: Bloom   │  Glow effect
+│                   │  Bonsai signature look
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│ Phase 11: Face    │  Performance
+│   Culling         │  16x geometry reduction
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│ Phase 12: Greedy  │  More performance
+│   Meshing         │  Merge adjacent faces
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│ Phase 13: Multi   │  Voxel world
+│   Chunk World     │  Larger scenes
+└────────┬──────────┘
+         │
+         ▼
+    Future: SSAO, Shadows, OIT, Creatures...
+```
+
+---
+
+## Out of Scope (v0.1)
+
+Deferred to future versions:
+
+- **Creature entity system**: Behavior, animation, AI
+- **Physics integration**: Collision, movement
+- **SSAO**: Ambient occlusion for depth
+- **Shadows**: Shadow mapping
+- **OIT Transparency**: Order-independent transparency
+- **Level of Detail**: Distant chunk simplification
+- **Chunk streaming**: Load/unload based on camera

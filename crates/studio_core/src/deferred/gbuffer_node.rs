@@ -9,6 +9,9 @@
 use bevy::prelude::*;
 use bevy::render::{
     camera::ExtractedCamera,
+    mesh::allocator::MeshAllocator,
+    mesh::RenderMesh,
+    render_asset::RenderAssets,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
         IndexFormat, LoadOp, Operations, PipelineCache,
@@ -130,13 +133,78 @@ impl ViewNode for GBufferPassNode {
             render_pass.set_camera_viewport(viewport);
         }
 
-        // Draw geometry
+        // Set pipeline and view bind group (same for all meshes)
         render_pass.set_render_pipeline(pipeline);
         render_pass.set_bind_group(0, view_bind_group, &[]);
-        render_pass.set_bind_group(1, mesh_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, geometry_pipeline.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(geometry_pipeline.index_buffer.slice(..), 0, IndexFormat::Uint32);
-        render_pass.draw_indexed(0..geometry_pipeline.index_count, 0, 0..1);
+
+        // Get mesh allocator and render meshes for accessing GPU buffers
+        let mesh_allocator = world.resource::<MeshAllocator>();
+        let render_meshes = world.resource::<RenderAssets<RenderMesh>>();
+
+        // Render extracted meshes if we have any
+        if !geometry_pipeline.meshes_to_render.is_empty() {
+            for mesh_data in &geometry_pipeline.meshes_to_render {
+                // Get the pre-built bind group for this mesh's transform
+                let Some(mesh_bind_group) = &mesh_data.bind_group else {
+                    continue;
+                };
+
+                // Look up the mesh's GPU data
+                let Some(gpu_mesh) = render_meshes.get(mesh_data.mesh_asset_id) else {
+                    warn!("G-buffer: mesh not found in render assets");
+                    continue;
+                };
+
+                // Get vertex buffer from allocator
+                let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_data.mesh_asset_id)
+                else {
+                    warn!("G-buffer: vertex buffer not found in allocator");
+                    continue;
+                };
+
+                // Set mesh-specific bind group and vertex buffer
+                render_pass.set_bind_group(1, mesh_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, vertex_slice.buffer.slice(..));
+
+                // Draw based on indexed vs non-indexed mesh
+                match &gpu_mesh.buffer_info {
+                    bevy::render::mesh::RenderMeshBufferInfo::Indexed { count, index_format } => {
+                        let Some(index_slice) =
+                            mesh_allocator.mesh_index_slice(&mesh_data.mesh_asset_id)
+                        else {
+                            warn!("G-buffer: index buffer not found in allocator");
+                            continue;
+                        };
+
+                        render_pass.set_index_buffer(
+                            index_slice.buffer.slice(..),
+                            0,
+                            *index_format,
+                        );
+
+                        // Draw with element ranges from the slab allocator
+                        render_pass.draw_indexed(
+                            index_slice.range.start..(index_slice.range.start + count),
+                            vertex_slice.range.start as i32,
+                            0..1,
+                        );
+                    }
+                    bevy::render::mesh::RenderMeshBufferInfo::NonIndexed => {
+                        render_pass.draw(vertex_slice.range.clone(), 0..1);
+                    }
+                }
+            }
+        } else {
+            // Fallback: render test cube if no extracted meshes
+            render_pass.set_bind_group(1, mesh_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, geometry_pipeline.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                geometry_pipeline.index_buffer.slice(..),
+                0,
+                IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..geometry_pipeline.index_count, 0, 0..1);
+        }
 
         Ok(())
     }

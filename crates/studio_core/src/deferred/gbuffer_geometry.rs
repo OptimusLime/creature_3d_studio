@@ -2,6 +2,18 @@
 //!
 //! This module provides the infrastructure to render mesh geometry to the G-buffer.
 //! It extracts mesh data from the main world and renders it using our custom MRT pipeline.
+//!
+//! ## Vertex Layout
+//!
+//! The G-buffer pipeline expects meshes with these attributes in this order:
+//! - Position (Float32x3) at offset 0
+//! - Normal (Float32x3) at offset 12
+//! - VoxelColor (Float32x3) at offset 24
+//! - VoxelEmission (Float32) at offset 36
+//!
+//! Total stride: 40 bytes
+//!
+//! This matches Bevy's mesh storage order when using our custom attributes.
 
 use bevy::prelude::*;
 use bevy::render::{
@@ -17,6 +29,7 @@ use bevy::render::{
 };
 use bytemuck::{Pod, Zeroable};
 use bevy_mesh::{VertexBufferLayout, VertexFormat};
+use wgpu::{VertexAttribute, VertexStepMode};
 
 use super::gbuffer::{GBUFFER_COLOR_FORMAT, GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT};
 
@@ -31,16 +44,70 @@ pub struct GBufferVertex {
 }
 
 impl GBufferVertex {
+    /// Vertex buffer layout for the test cube (matches our GBufferVertex struct).
     pub fn vertex_buffer_layout() -> VertexBufferLayout {
-        VertexBufferLayout::from_vertex_formats(
-            wgpu::VertexStepMode::Vertex,
-            [
-                VertexFormat::Float32x3, // Position
-                VertexFormat::Float32x3, // Normal
-                VertexFormat::Float32x3, // Color
-                VertexFormat::Float32,   // Emission
+        VertexBufferLayout {
+            array_stride: 40, // 12 + 12 + 12 + 4 = 40 bytes
+            step_mode: VertexStepMode::Vertex,
+            attributes: vec![
+                VertexAttribute {
+                    format: VertexFormat::Float32x3.into(),
+                    offset: 0,
+                    shader_location: 0, // position
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32x3.into(),
+                    offset: 12,
+                    shader_location: 1, // normal
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32x3.into(),
+                    offset: 24,
+                    shader_location: 2, // voxel_color
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32.into(),
+                    offset: 36,
+                    shader_location: 3, // voxel_emission
+                },
             ],
-        )
+        }
+    }
+}
+
+/// Vertex buffer layout for Bevy meshes with our custom voxel attributes.
+///
+/// This matches Bevy's mesh attribute order by ID:
+/// - Position (ID=0) at offset 0
+/// - Normal (ID=1) at offset 12
+/// - VoxelColor (ID=988540917) at offset 24
+/// - VoxelEmission (ID=988540918) at offset 36
+pub fn voxel_mesh_vertex_buffer_layout() -> VertexBufferLayout {
+    VertexBufferLayout {
+        array_stride: 40, // 12 + 12 + 12 + 4 = 40 bytes
+        step_mode: VertexStepMode::Vertex,
+        attributes: vec![
+            VertexAttribute {
+                format: VertexFormat::Float32x3.into(),
+                offset: 0,
+                shader_location: 0, // @location(0) position
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32x3.into(),
+                offset: 12,
+                shader_location: 1, // @location(1) normal
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32x3.into(),
+                offset: 24,
+                shader_location: 2, // @location(2) voxel_color
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32.into(),
+                offset: 36,
+                shader_location: 3, // @location(3) voxel_emission
+            },
+        ],
     }
 }
 
@@ -67,19 +134,36 @@ pub struct GBufferMeshUniform {
     pub local_from_world: [[f32; 4]; 4],
 }
 
+/// Data for rendering a single mesh in the G-buffer pass.
+pub struct GBufferMeshDrawData {
+    /// Mesh asset ID for looking up GPU buffers
+    pub mesh_asset_id: AssetId<Mesh>,
+    /// World transform matrix
+    pub transform: Mat4,
+    /// Inverse transpose for normal transformation
+    pub inverse_transpose: Mat4,
+    /// Pre-built bind group with this mesh's transform
+    pub bind_group: Option<BindGroup>,
+}
+
 /// Resource containing G-buffer geometry pipeline and buffers.
 #[derive(Resource)]
 pub struct GBufferGeometryPipeline {
     pub pipeline_id: CachedRenderPipelineId,
     pub view_layout: BindGroupLayout,
     pub mesh_layout: BindGroupLayout,
+    /// Test cube vertex buffer (fallback when no extracted meshes)
     pub vertex_buffer: Buffer,
+    /// Test cube index buffer (fallback when no extracted meshes)
     pub index_buffer: Buffer,
     pub view_uniform_buffer: Buffer,
     pub mesh_uniform_buffer: Buffer,
     pub view_bind_group: Option<BindGroup>,
     pub mesh_bind_group: Option<BindGroup>,
+    /// Index count for test cube
     pub index_count: u32,
+    /// Meshes to render this frame (extracted from main world)
+    pub meshes_to_render: Vec<GBufferMeshDrawData>,
 }
 
 /// Generate a test cube mesh.
@@ -315,6 +399,7 @@ pub fn init_gbuffer_geometry_pipeline(
         view_bind_group: None,
         mesh_bind_group: None,
         index_count,
+        meshes_to_render: Vec::new(),
     });
 
     info!("GBufferGeometryPipeline initialized with test cube");

@@ -7,9 +7,10 @@ use bevy::prelude::*;
 use bevy::render::{
     extract_component::ExtractComponentPlugin,
     render_graph::{RenderGraphExt, ViewNodeRunner},
-    Render, RenderApp, RenderSystems,
+    ExtractSchedule, Render, RenderApp, RenderSystems,
 };
 
+use super::extract::{extract_deferred_meshes, prepare_deferred_meshes, DeferredRenderable};
 use super::gbuffer::DeferredCamera;
 use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_uniforms};
 use super::gbuffer_node::GBufferPassNode;
@@ -42,8 +43,9 @@ impl Plugin for DeferredRenderingPlugin {
         // Main app resources
         app.init_resource::<DeferredLightingConfig>();
 
-        // Extract DeferredCamera component to render world
+        // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
+        app.add_plugins(ExtractComponentPlugin::<DeferredRenderable>::default());
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -51,9 +53,13 @@ impl Plugin for DeferredRenderingPlugin {
             return;
         };
 
+        // Add extraction system for deferred meshes
+        render_app.add_systems(ExtractSchedule, extract_deferred_meshes);
+
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources
         // - prepare_gbuffer_textures creates the G-buffer textures
+        // - prepare_deferred_meshes collects extracted meshes for rendering
         // - update_gbuffer_uniforms fills uniform buffers each frame
         render_app.add_systems(
             Render,
@@ -61,6 +67,9 @@ impl Plugin for DeferredRenderingPlugin {
                 init_gbuffer_geometry_pipeline.in_set(RenderSystems::Prepare),
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
+                prepare_deferred_meshes
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_gbuffer_geometry_pipeline),
                 update_gbuffer_uniforms.in_set(RenderSystems::PrepareResources),
             ),
         );

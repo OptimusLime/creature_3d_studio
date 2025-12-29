@@ -1,18 +1,16 @@
-//! Phase 8 Screenshot Test: Deferred Rendering Pipeline.
+//! Phase 9.5: Floating Island Test Scene
 //!
-//! This test verifies:
-//! - DeferredRenderingPlugin initializes with custom render graph nodes
-//! - G-Buffer pass renders to MRT (color, normal, position)
-//! - Lighting pass reads G-buffer and outputs to view target
+//! This example renders a more complex voxel scene to test the deferred pipeline:
+//! - Floating island with grass, dirt, and stone layers
+//! - Glowing crystals with high emission
+//! - A small tree
 //!
-//! This is a FULL CUSTOM RENDER GRAPH implementation.
+//! Run with: `cargo run --example p9_island`
 //!
-//! Run with: `cargo run --example p8_gbuffer`
-//!
-//! Expected output: `screenshots/p8_gbuffer.png`
-//! - Scene rendered through deferred pipeline
-//! - Deep purple background from fog color
-//! - Voxels rendered (initially just fog since G-buffer is cleared)
+//! Expected output: `screenshots/p9_island.png`
+//! - Floating island with multiple colors
+//! - Purple fog background
+//! - Glowing cyan/magenta crystals
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -25,27 +23,27 @@ use studio_core::{
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
-const SCREENSHOT_PATH: &str = "screenshots/p8_gbuffer.png";
-const CREATURE_SCRIPT: &str = "assets/scripts/test_emission.lua";
+const SCREENSHOT_PATH: &str = "screenshots/p9_island.png";
+const CREATURE_SCRIPT: &str = "assets/scripts/test_island.lua";
 
 fn main() {
     std::fs::create_dir_all(SCREENSHOT_DIR).expect("Failed to create screenshots directory");
 
-    println!("Running Phase 8 Screenshot Test: Deferred Rendering Pipeline...");
+    println!("Running Phase 9.5: Floating Island Test Scene...");
     println!("Loading test script: {}", CREATURE_SCRIPT);
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 resolution: (800, 600).into(),
-                title: "Phase 8: Deferred Rendering Pipeline".into(),
+                title: "Phase 9.5: Floating Island".into(),
                 ..default()
             }),
             ..default()
         }))
         .add_plugins(VoxelMaterialPlugin)
         .add_plugins(DeferredRenderingPlugin)
-        // Fog color as clear color (backup for non-deferred cameras)
+        // Fog color as clear color
         .insert_resource(ClearColor(Color::srgb(0.102, 0.039, 0.180)))
         .insert_resource(FrameCount(0))
         .add_systems(Startup, setup)
@@ -71,7 +69,7 @@ fn setup(
     // Load test script
     let chunk = match load_creature_script(CREATURE_SCRIPT) {
         Ok(c) => {
-            println!("Loaded test scene with {} voxels", c.count());
+            println!("Loaded island scene with {} voxels", c.count());
             c
         }
         Err(e) => {
@@ -81,37 +79,46 @@ fn setup(
     };
 
     let mesh = build_chunk_mesh(&chunk);
+    
+    // Log mesh statistics
+    if let Some(positions) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
+        println!("Mesh vertices: {}", positions.len());
+    }
+    if let Some(indices) = mesh.indices() {
+        println!("Mesh indices: {}", indices.len());
+    }
+    
     let mesh_handle = meshes.add(mesh);
     let material = materials.add(VoxelMaterial::default());
 
-    // Spawn voxels with DeferredRenderable marker for our custom pipeline
+    // Spawn island
     commands.spawn((
         Mesh3d(mesh_handle),
         MeshMaterial3d(material),
         Transform::from_xyz(0.0, 0.0, 0.0),
-        DeferredRenderable, // Mark for deferred rendering
+        DeferredRenderable,
     ));
 
-    // Camera with DeferredCamera marker - uses our custom render graph
+    // Camera positioned to see the island from an angle
+    // Pulled back and elevated to see the whole scene
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(0.0, 5.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-        DeferredCamera, // Mark this camera for our deferred rendering
+        Transform::from_xyz(15.0, 12.0, 15.0).looking_at(Vec3::new(0.0, 2.0, 0.0), Vec3::Y),
+        DeferredCamera,
     ));
 
-    // Directional light (not used by our deferred lighting yet, but here for reference)
+    // Directional light (used by forward pass, our deferred has hardcoded sun)
     commands.spawn((
         DirectionalLight {
             illuminance: 10000.0,
-            shadows_enabled: false, // Shadows not implemented in deferred yet
+            shadows_enabled: false,
             ..default()
         },
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    println!("Scene setup complete with DeferredCamera.");
-    println!("Deferred pipeline nodes: GBufferPass -> LightingPass");
+    println!("Island scene setup complete.");
 }
 
 #[allow(deprecated)]
