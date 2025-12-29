@@ -66,6 +66,21 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<studio_core::VoxelMaterial>>,
 ) {
+    // IMPORTANT: Spawn the shadow-casting light FIRST so it gets priority
+    // (shadow system uses first lights in the list)
+    // Island grass is at world Y=4-11, tree canopy up to Y=16
+    // Place light well above at Y=20 to ensure it's above everything
+    use studio_core::DeferredPointLight;
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(1.0, 0.95, 0.8), // Warm white
+            intensity: 50.0,
+            radius: 35.0,
+        },
+        Transform::from_xyz(0.0, 20.0, 0.0), // Directly above island center, high up
+    ));
+    println!("Added shadow-casting point light at (0, 20, 0)");
+
     // Load test script
     let chunk = match load_creature_script(CREATURE_SCRIPT) {
         Ok(c) => {
@@ -95,13 +110,12 @@ fn setup(
         result.emissive_count
     );
 
-    // Camera looking at the island - tighter framing to see details
-    // Island center is around Y=8 in world coords (after ground_level_offset)
+    // Camera looking at the island - framed to see the whole scene
     let island_center = Vec3::new(0.0, 6.0, 0.0);
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(14.0, 12.0, 14.0).looking_at(island_center, Vec3::Y),
+        Transform::from_xyz(18.0, 16.0, 18.0).looking_at(island_center, Vec3::Y),
         DeferredCamera,
     ));
 
@@ -114,6 +128,8 @@ fn setup(
         },
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+
+
 
     println!("Island scene setup complete.");
 }

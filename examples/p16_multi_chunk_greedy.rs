@@ -1,9 +1,9 @@
-//! Phase 16 Simple: Multi-Chunk World Test WITHOUT Greedy Meshing
+//! Phase 16 Greedy: Multi-Chunk World Test WITH Greedy Meshing
 //!
-//! This is a diagnostic version to test if AO artifacts are caused by greedy meshing.
-//! Uses face-culling only (no greedy meshing) to isolate the issue.
+//! Same flat terrain as p16_simple but WITH greedy meshing enabled.
+//! Compare with p16_multi_chunk_simple to see AO artifacts.
 //!
-//! Run with: `cargo run --example p16_multi_chunk_simple`
+//! Run with: `cargo run --example p16_multi_chunk_greedy`
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -16,19 +16,19 @@ use studio_core::{
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
-const SCREENSHOT_PATH: &str = "screenshots/p16_multi_chunk_simple.png";
+const SCREENSHOT_PATH: &str = "screenshots/p16_multi_chunk_greedy.png";
 
 fn main() {
     std::fs::create_dir_all(SCREENSHOT_DIR).expect("Failed to create screenshots directory");
 
-    println!("Running Phase 16 SIMPLE: Multi-Chunk WITHOUT Greedy Meshing...");
-    println!("This test disables greedy meshing to isolate AO artifacts.");
+    println!("Running Phase 16 GREEDY: Multi-Chunk WITH Greedy Meshing...");
+    println!("Compare with p16_multi_chunk_simple to see AO artifacts.");
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 resolution: (1024, 768).into(),
-                title: "Phase 16 Simple: No Greedy Meshing".into(),
+                title: "Phase 16 Greedy: WITH Greedy Meshing".into(),
                 ..default()
             }),
             ..default()
@@ -52,12 +52,10 @@ fn main() {
 #[derive(Resource)]
 struct FrameCount(u32);
 
-/// Create a simpler world - just flat terrain to clearly see AO artifacts.
+/// Create identical world to p16_simple - flat terrain.
 fn create_world() -> VoxelWorld {
     let mut world = VoxelWorld::new();
 
-    // Create a 2x1x2 grid of chunks with FLAT terrain (height=3)
-    // This makes AO artifacts more visible
     let chunk_colors: [[(u8, u8, u8); 2]; 2] = [
         [(180, 60, 60), (60, 180, 60)],
         [(60, 60, 180), (180, 180, 60)],
@@ -75,7 +73,6 @@ fn create_world() -> VoxelWorld {
                     let wx = world_x_start + lx;
                     let wz = world_z_start + lz;
 
-                    // Flat terrain, height = 3
                     for wy in 0..3 {
                         world.set_voxel(wx, wy, wz, Voxel::solid(base_r, base_g, base_b));
                     }
@@ -111,9 +108,9 @@ fn setup(
         world.total_voxel_count()
     );
 
-    // KEY DIFFERENCE: Disable greedy meshing!
+    // KEY DIFFERENCE: Enable greedy meshing!
     let config = WorldSpawnConfig {
-        use_greedy_meshing: false,  // <-- DISABLED
+        use_greedy_meshing: true,  // <-- ENABLED
         use_cross_chunk_culling: true,
         ..Default::default()
     };
@@ -121,7 +118,7 @@ fn setup(
     let result = spawn_world_with_lights_config(&mut commands, &mut meshes, &mut materials, &world, &config);
 
     println!(
-        "Spawned {} chunk meshes + {} point lights (NO greedy meshing)",
+        "Spawned {} chunk meshes + {} point lights (WITH greedy meshing)",
         result.chunk_entities.len(),
         result.light_entities.len(),
     );
@@ -146,7 +143,7 @@ fn setup(
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    println!("Setup complete. Look for AO artifacts on the FLAT terrain.");
+    println!("Setup complete. This should show AO artifacts on flat terrain.");
 }
 
 #[allow(deprecated)]

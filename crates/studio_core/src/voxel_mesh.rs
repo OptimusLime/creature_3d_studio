@@ -422,6 +422,428 @@ pub fn build_single_chunk_mesh(chunk: &VoxelChunk, chunk_pos: ChunkPos, use_gree
     }
 }
 
+// ============================================================================
+// CROSS-CHUNK FACE CULLING
+// ============================================================================
+
+use crate::voxel::ChunkBorders;
+
+/// Build meshes for all chunks in a VoxelWorld with cross-chunk face culling.
+///
+/// This is the preferred method for multi-chunk worlds as it eliminates seams
+/// at chunk boundaries by checking neighbor chunks for adjacent voxels.
+///
+/// For each chunk, we extract border data from its 6 neighbors and use that
+/// information when generating faces at chunk boundaries. This ensures that
+/// faces between adjacent solid voxels across chunk boundaries are culled.
+///
+/// # Example
+///
+/// ```ignore
+/// let world = VoxelWorld::new();
+/// // ... populate world with voxels ...
+///
+/// // With cross-chunk culling (no seams at boundaries)
+/// for chunk_mesh in build_world_meshes_cross_chunk(&world) {
+///     let mesh_handle = meshes.add(chunk_mesh.mesh);
+///     commands.spawn((
+///         Mesh3d(mesh_handle),
+///         Transform::from_translation(chunk_mesh.translation()),
+///     ));
+/// }
+/// ```
+pub fn build_world_meshes_cross_chunk(world: &VoxelWorld) -> Vec<ChunkMesh> {
+    build_world_meshes_cross_chunk_with_options(world, true)
+}
+
+/// Build meshes with cross-chunk face culling and configurable options.
+///
+/// # Arguments
+/// * `world` - The voxel world to mesh
+/// * `use_greedy` - If true, use greedy meshing; if false, use face culling only
+pub fn build_world_meshes_cross_chunk_with_options(world: &VoxelWorld, use_greedy: bool) -> Vec<ChunkMesh> {
+    world
+        .iter_chunks()
+        .filter(|(_, chunk)| !chunk.is_empty())
+        .map(|(chunk_pos, chunk)| {
+            // Extract border data from neighboring chunks
+            let borders = world.extract_borders(chunk_pos);
+
+            // Build the mesh with cross-chunk culling
+            let mesh = if use_greedy {
+                build_chunk_mesh_greedy_with_borders(chunk, &borders)
+            } else {
+                build_chunk_mesh_with_borders(chunk, &borders)
+            };
+
+            let half = CHUNK_SIZE as f32 / 2.0;
+            let world_offset = [
+                chunk_pos.x as f32 * CHUNK_SIZE as f32 + half,
+                chunk_pos.y as f32 * CHUNK_SIZE as f32 + half,
+                chunk_pos.z as f32 * CHUNK_SIZE as f32 + half,
+            ];
+
+            ChunkMesh {
+                chunk_pos,
+                mesh,
+                world_offset,
+            }
+        })
+        .collect()
+}
+
+/// Build a mesh for a single chunk with border data from neighbors.
+///
+/// This is the cross-chunk-aware version of `build_chunk_mesh()`.
+/// Faces at chunk boundaries are culled if the neighbor chunk has a solid voxel.
+pub fn build_chunk_mesh_with_borders(chunk: &VoxelChunk, borders: &ChunkBorders) -> Mesh {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 3]> = Vec::new();
+    let mut emissions: Vec<f32> = Vec::new();
+    let mut aos: Vec<f32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    let offset = CHUNK_SIZE as f32 / 2.0;
+
+    for (x, y, z, voxel) in chunk.iter() {
+        let base_pos = [x as f32 - offset, y as f32 - offset, z as f32 - offset];
+        let color = voxel.color_f32();
+        let emission = voxel.emission_f32();
+
+        // Compute face visibility mask with cross-chunk awareness
+        let mut face_mask: u8 = 0;
+        
+        // +X face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 1, 0, 0) {
+            face_mask |= 1 << 0;
+        }
+        // -X face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, -1, 0, 0) {
+            face_mask |= 1 << 1;
+        }
+        // +Y face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 0, 1, 0) {
+            face_mask |= 1 << 2;
+        }
+        // -Y face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 0, -1, 0) {
+            face_mask |= 1 << 3;
+        }
+        // +Z face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 0, 0, 1) {
+            face_mask |= 1 << 4;
+        }
+        // -Z face
+        if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 0, 0, -1) {
+            face_mask |= 1 << 5;
+        }
+
+        add_cube_faces_with_ao_cross_chunk(
+            chunk,
+            borders,
+            x,
+            y,
+            z,
+            face_mask,
+            &mut positions,
+            &mut normals,
+            &mut colors,
+            &mut emissions,
+            &mut aos,
+            &mut indices,
+            base_pos,
+            color,
+            emission,
+        );
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
+/// Build a mesh with greedy meshing and cross-chunk face culling.
+pub fn build_chunk_mesh_greedy_with_borders(chunk: &VoxelChunk, borders: &ChunkBorders) -> Mesh {
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 3]> = Vec::new();
+    let mut emissions: Vec<f32> = Vec::new();
+    let mut aos: Vec<f32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    let offset = CHUNK_SIZE as f32 / 2.0;
+
+    // Process each of 6 face directions
+    for direction in [
+        FaceDir::PosX,
+        FaceDir::NegX,
+        FaceDir::PosY,
+        FaceDir::NegY,
+        FaceDir::PosZ,
+        FaceDir::NegZ,
+    ] {
+        for slice in 0..CHUNK_SIZE {
+            // Build 2D mask with cross-chunk awareness
+            let mut mask = build_slice_mask_with_borders(chunk, borders, direction, slice);
+
+            // Greedy merge the mask
+            let quads = greedy_merge_slice(&mut mask, direction, slice);
+
+            // Convert quads to vertices
+            for quad in quads {
+                emit_greedy_quad_with_borders(
+                    chunk,
+                    borders,
+                    &quad,
+                    offset,
+                    &mut positions,
+                    &mut normals,
+                    &mut colors,
+                    &mut emissions,
+                    &mut aos,
+                    &mut indices,
+                );
+            }
+        }
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
+/// Check if a neighbor voxel is solid, including across chunk boundaries.
+#[inline]
+fn is_neighbor_solid_cross_chunk(
+    chunk: &VoxelChunk,
+    borders: &ChunkBorders,
+    x: usize,
+    y: usize,
+    z: usize,
+    dx: i32,
+    dy: i32,
+    dz: i32,
+) -> bool {
+    let nx = x as i32 + dx;
+    let ny = y as i32 + dy;
+    let nz = z as i32 + dz;
+
+    // Check if within chunk bounds
+    if nx >= 0 && nx < CHUNK_SIZE as i32 && ny >= 0 && ny < CHUNK_SIZE as i32 && nz >= 0 && nz < CHUNK_SIZE as i32 {
+        // Within chunk - use chunk's data
+        chunk.get(nx as usize, ny as usize, nz as usize).is_some()
+    } else {
+        // Outside chunk - use border data
+        borders.is_neighbor_solid(x, y, z, dx, dy, dz)
+    }
+}
+
+/// Build a 2D mask of visible faces with cross-chunk border awareness.
+fn build_slice_mask_with_borders(
+    chunk: &VoxelChunk,
+    borders: &ChunkBorders,
+    direction: FaceDir,
+    slice: usize,
+) -> [[Option<FaceKey>; CHUNK_SIZE]; CHUNK_SIZE] {
+    let mut mask = [[None; CHUNK_SIZE]; CHUNK_SIZE];
+
+    let (slice_axis, u_axis, v_axis, neighbor_offset) = direction.axis_config();
+
+    for v in 0..CHUNK_SIZE {
+        for u in 0..CHUNK_SIZE {
+            let mut pos = [0usize; 3];
+            pos[slice_axis] = slice;
+            pos[u_axis] = u;
+            pos[v_axis] = v;
+
+            let (x, y, z) = (pos[0], pos[1], pos[2]);
+
+            if let Some(voxel) = chunk.get(x, y, z) {
+                let (dx, dy, dz) = neighbor_offset;
+                // Use cross-chunk neighbor check
+                if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, dx, dy, dz) {
+                    mask[v][u] = Some(FaceKey::from_voxel(&voxel));
+                }
+            }
+        }
+    }
+
+    mask
+}
+
+/// Emit vertices for a greedy quad with cross-chunk AO calculation.
+#[allow(clippy::too_many_arguments)]
+fn emit_greedy_quad_with_borders(
+    chunk: &VoxelChunk,
+    borders: &ChunkBorders,
+    quad: &GreedyQuad,
+    offset: f32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 3]>,
+    emissions: &mut Vec<f32>,
+    aos: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+) {
+    let base_idx = positions.len() as u32;
+
+    let corners = quad.world_corners(offset);
+    let normal = quad.direction.normal();
+    let color = quad.key.color_f32();
+    let emission = quad.key.emission_f32();
+
+    let corner_voxels = quad.corner_voxel_positions();
+
+    // Calculate AO for all 4 corners first
+    let mut ao_values = [0.0f32; 4];
+    for (i, corner) in corners.iter().enumerate() {
+        positions.push(*corner);
+        normals.push(normal);
+        colors.push(color);
+        emissions.push(emission);
+
+        let (vx, vy, vz) = corner_voxels[i];
+        ao_values[i] = calculate_corner_ao_cross_chunk(chunk, borders, quad.direction, vx, vy, vz, i);
+        aos.push(ao_values[i]);
+    }
+
+    // Quad flip for AO: choose the diagonal that minimizes interpolation artifacts.
+    // If AO[0] + AO[2] > AO[1] + AO[3], use diagonal 1-3 instead of 0-2.
+    // This prevents visible seams when AO values vary significantly across the quad.
+    // Reference: https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+    if ao_values[0] + ao_values[2] > ao_values[1] + ao_values[3] {
+        // Flip: use triangles (1-2-3) and (1-3-0)
+        indices.extend_from_slice(&[
+            base_idx + 1,
+            base_idx + 2,
+            base_idx + 3,
+            base_idx + 1,
+            base_idx + 3,
+            base_idx,
+        ]);
+    } else {
+        // Normal: use triangles (0-1-2) and (0-2-3)
+        indices.extend_from_slice(&[
+            base_idx,
+            base_idx + 1,
+            base_idx + 2,
+            base_idx,
+            base_idx + 2,
+            base_idx + 3,
+        ]);
+    }
+}
+
+/// Calculate AO for a corner with cross-chunk awareness.
+fn calculate_corner_ao_cross_chunk(
+    chunk: &VoxelChunk,
+    borders: &ChunkBorders,
+    direction: FaceDir,
+    vx: usize,
+    vy: usize,
+    vz: usize,
+    corner_idx: usize,
+) -> f32 {
+    let ao_offsets = get_ao_offsets(direction);
+    let offsets = &ao_offsets[corner_idx];
+
+    let side1 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
+    let side2 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
+    let corner = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+
+    calculate_vertex_ao(side1, side2, corner)
+}
+
+/// Add cube faces with AO, using cross-chunk neighbor checking.
+#[allow(clippy::too_many_arguments)]
+fn add_cube_faces_with_ao_cross_chunk(
+    chunk: &VoxelChunk,
+    borders: &ChunkBorders,
+    vx: usize,
+    vy: usize,
+    vz: usize,
+    face_mask: u8,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 3]>,
+    emissions: &mut Vec<f32>,
+    aos: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+    base: [f32; 3],
+    color: [f32; 3],
+    emission: f32,
+) {
+    let faces: [([f32; 3], [[f32; 3]; 4], FaceDir, u8); 6] = [
+        ([1.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0], [1.0, 0.0, 1.0]], FaceDir::PosX, 1 << 0),
+        ([-1.0, 0.0, 0.0], [[0.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], FaceDir::NegX, 1 << 1),
+        ([0.0, 1.0, 0.0], [[0.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 0.0]], FaceDir::PosY, 1 << 2),
+        ([0.0, -1.0, 0.0], [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 1.0]], FaceDir::NegY, 1 << 3),
+        ([0.0, 0.0, 1.0], [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]], FaceDir::PosZ, 1 << 4),
+        ([0.0, 0.0, -1.0], [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]], FaceDir::NegZ, 1 << 5),
+    ];
+
+    for (normal, corners, face_dir, mask_bit) in faces.iter() {
+        if face_mask & mask_bit == 0 {
+            continue;
+        }
+
+        let face_base = positions.len() as u32;
+        let ao_offsets = get_ao_offsets(*face_dir);
+
+        // Calculate AO for all 4 corners first
+        let mut ao_values = [0.0f32; 4];
+        for (vert_idx, corner) in corners.iter().enumerate() {
+            positions.push([
+                base[0] + corner[0],
+                base[1] + corner[1],
+                base[2] + corner[2],
+            ]);
+            normals.push(*normal);
+            colors.push(color);
+            emissions.push(emission);
+
+            let offsets = &ao_offsets[vert_idx];
+            let side1 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
+            let side2 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
+            let corner_solid = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+            ao_values[vert_idx] = calculate_vertex_ao(side1, side2, corner_solid);
+            aos.push(ao_values[vert_idx]);
+        }
+
+        // Quad flip for AO: choose the diagonal that minimizes interpolation artifacts.
+        if ao_values[0] + ao_values[2] > ao_values[1] + ao_values[3] {
+            // Flip: use triangles (1-2-3) and (1-3-0)
+            indices.extend_from_slice(&[
+                face_base + 1,
+                face_base + 2,
+                face_base + 3,
+                face_base + 1,
+                face_base + 3,
+                face_base,
+            ]);
+        } else {
+            // Normal: use triangles (0-1-2) and (0-2-3)
+            indices.extend_from_slice(&[
+                face_base,
+                face_base + 1,
+                face_base + 2,
+                face_base,
+                face_base + 2,
+                face_base + 3,
+            ]);
+        }
+    }
+}
+
 /// Build a 2D mask of visible faces for a single slice.
 ///
 /// For each cell in the slice, we store Some(FaceKey) if there's a visible face,
@@ -543,6 +965,8 @@ fn emit_greedy_quad(
     // Get the 4 corner voxel positions for AO calculation
     let corner_voxels = quad.corner_voxel_positions();
 
+    // Calculate AO for all 4 corners first
+    let mut ao_values = [0.0f32; 4];
     for (i, corner) in corners.iter().enumerate() {
         positions.push(*corner);
         normals.push(normal);
@@ -551,19 +975,35 @@ fn emit_greedy_quad(
 
         // Calculate AO for this corner using the corner voxel
         let (vx, vy, vz) = corner_voxels[i];
-        let ao = calculate_corner_ao(chunk, quad.direction, vx, vy, vz, i);
-        aos.push(ao);
+        ao_values[i] = calculate_corner_ao(chunk, quad.direction, vx, vy, vz, i);
+        aos.push(ao_values[i]);
     }
 
-    // Two triangles: 0-1-2, 0-2-3 (CCW winding)
-    indices.extend_from_slice(&[
-        base_idx,
-        base_idx + 1,
-        base_idx + 2,
-        base_idx,
-        base_idx + 2,
-        base_idx + 3,
-    ]);
+    // Quad flip for AO: choose the diagonal that minimizes interpolation artifacts.
+    // If AO[0] + AO[2] > AO[1] + AO[3], use diagonal 1-3 instead of 0-2.
+    // This prevents visible seams when AO values vary significantly across the quad.
+    // Reference: https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+    if ao_values[0] + ao_values[2] > ao_values[1] + ao_values[3] {
+        // Flip: use triangles (1-2-3) and (1-3-0)
+        indices.extend_from_slice(&[
+            base_idx + 1,
+            base_idx + 2,
+            base_idx + 3,
+            base_idx + 1,
+            base_idx + 3,
+            base_idx,
+        ]);
+    } else {
+        // Normal: use triangles (0-1-2) and (0-2-3)
+        indices.extend_from_slice(&[
+            base_idx,
+            base_idx + 1,
+            base_idx + 2,
+            base_idx,
+            base_idx + 2,
+            base_idx + 3,
+        ]);
+    }
 }
 
 /// Calculate AO for a specific corner of a face.
@@ -653,24 +1093,35 @@ impl GreedyQuad {
     /// Get the voxel positions for the 4 corners (for AO calculation).
     ///
     /// Returns the voxel coordinate that each corner vertex belongs to.
+    /// IMPORTANT: The ordering MUST match corner_uv_order() for each face direction,
+    /// otherwise AO values will be assigned to the wrong vertices!
     fn corner_voxel_positions(&self) -> [(usize, usize, usize); 4] {
         let (slice_axis, u_axis, v_axis, _) = self.direction.axis_config();
 
-        // Corner voxel offsets in (u, v) space
-        // We want the voxel that "owns" each corner for AO calculation
+        let w = self.width.saturating_sub(1);
+        let h = self.height.saturating_sub(1);
+
+        // Voxel positions must match the vertex ordering in corner_uv_order().
+        // For each vertex at (u_offset, v_offset), we map to the nearest voxel in the quad:
+        // - Vertex at (0, 0) -> voxel (0, 0)
+        // - Vertex at (width, 0) -> voxel (w, 0) where w = width-1
+        // - Vertex at (width, height) -> voxel (w, h) where h = height-1
+        // - Vertex at (0, height) -> voxel (0, h)
+        //
+        // The ordering matches corner_uv_order() for each face direction.
         let uv_voxels: [(usize, usize); 4] = match self.direction {
-            FaceDir::PosX | FaceDir::PosY | FaceDir::PosZ => [
-                (0, 0),
-                (0, self.height.saturating_sub(1)),
-                (self.width.saturating_sub(1), self.height.saturating_sub(1)),
-                (self.width.saturating_sub(1), 0),
-            ],
-            FaceDir::NegX | FaceDir::NegY | FaceDir::NegZ => [
-                (self.width.saturating_sub(1), 0),
-                (self.width.saturating_sub(1), self.height.saturating_sub(1)),
-                (0, self.height.saturating_sub(1)),
-                (0, 0),
-            ],
+            // PosX: [(0, 0), (0, height), (width, height), (width, 0)]
+            FaceDir::PosX => [(0, 0), (0, h), (w, h), (w, 0)],
+            // NegX: [(width, 0), (width, height), (0, height), (0, 0)]
+            FaceDir::NegX => [(w, 0), (w, h), (0, h), (0, 0)],
+            // PosY: [(0, 0), (0, height), (width, height), (width, 0)]
+            FaceDir::PosY => [(0, 0), (0, h), (w, h), (w, 0)],
+            // NegY: [(0, height), (0, 0), (width, 0), (width, height)]
+            FaceDir::NegY => [(0, h), (0, 0), (w, 0), (w, h)],
+            // PosZ: [(0, 0), (width, 0), (width, height), (0, height)]
+            FaceDir::PosZ => [(0, 0), (w, 0), (w, h), (0, h)],
+            // NegZ: [(width, 0), (0, 0), (0, height), (width, height)]
+            FaceDir::NegZ => [(w, 0), (0, 0), (0, h), (w, h)],
         };
 
         let mut voxels = [(0usize, 0usize, 0usize); 4];
@@ -966,7 +1417,8 @@ fn add_cube_faces_with_ao(
         // Get AO offsets for this face direction
         let ao_offsets = get_ao_offsets(*face_dir);
 
-        // Add 4 vertices for this face
+        // Calculate AO for all 4 corners first
+        let mut ao_values = [0.0f32; 4];
         for (vert_idx, corner) in corners.iter().enumerate() {
             positions.push([
                 base[0] + corner[0],
@@ -982,20 +1434,34 @@ fn add_cube_faces_with_ao(
             let side1 = chunk.is_neighbor_solid(vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
             let side2 = chunk.is_neighbor_solid(vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
             let corner_solid = chunk.is_neighbor_solid(vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
-            let ao = calculate_vertex_ao(side1, side2, corner_solid);
-            aos.push(ao);
+            ao_values[vert_idx] = calculate_vertex_ao(side1, side2, corner_solid);
+            aos.push(ao_values[vert_idx]);
         }
 
-        // Add 2 triangles (6 indices) for this face
-        // CCW winding: 0-1-2, 0-2-3
-        indices.extend_from_slice(&[
-            face_base,
-            face_base + 1,
-            face_base + 2,
-            face_base,
-            face_base + 2,
-            face_base + 3,
-        ]);
+        // Quad flip for AO: choose the diagonal that minimizes interpolation artifacts.
+        // If AO[0] + AO[2] > AO[1] + AO[3], use diagonal 1-3 instead of 0-2.
+        // Reference: https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+        if ao_values[0] + ao_values[2] > ao_values[1] + ao_values[3] {
+            // Flip: use triangles (1-2-3) and (1-3-0)
+            indices.extend_from_slice(&[
+                face_base + 1,
+                face_base + 2,
+                face_base + 3,
+                face_base + 1,
+                face_base + 3,
+                face_base,
+            ]);
+        } else {
+            // Normal: use triangles (0-1-2) and (0-2-3)
+            indices.extend_from_slice(&[
+                face_base,
+                face_base + 1,
+                face_base + 2,
+                face_base,
+                face_base + 2,
+                face_base + 3,
+            ]);
+        }
     }
 }
 
@@ -1415,5 +1881,221 @@ mod tests {
         assert!(mesh.attribute(ATTRIBUTE_VOXEL_COLOR).is_some());
         assert!(mesh.attribute(ATTRIBUTE_VOXEL_EMISSION).is_some());
         assert!(mesh.attribute(ATTRIBUTE_VOXEL_AO).is_some());
+    }
+
+    // =========================================================================
+    // CROSS-CHUNK FACE CULLING TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_cross_chunk_culling_two_adjacent_chunks_x() {
+        let mut world = VoxelWorld::new();
+
+        // Create two adjacent voxels across chunk boundary
+        // World (31, 16, 16) in chunk (0,0,0), local (31, 16, 16)
+        // World (32, 16, 16) in chunk (1,0,0), local (0, 16, 16)
+        world.set_voxel(31, 16, 16, Voxel::solid(255, 0, 0));
+        world.set_voxel(32, 16, 16, Voxel::solid(0, 255, 0));
+
+        // Build meshes without cross-chunk culling
+        let meshes_no_culling = build_world_meshes_with_options(&world, false);
+        
+        // Build meshes with cross-chunk culling
+        let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
+
+        // Count total vertices
+        let verts_no_culling: usize = meshes_no_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+        
+        let verts_with_culling: usize = meshes_with_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        // Without cross-chunk culling: 2 voxels * 6 faces * 4 verts = 48 vertices
+        // (boundary faces are NOT culled)
+        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
+
+        // With cross-chunk culling: faces at x=31 (+X) and x=32 (-X) are culled
+        // 2 voxels * 6 faces - 2 culled faces = 10 faces * 4 verts = 40 vertices
+        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+    }
+
+    #[test]
+    fn test_cross_chunk_culling_two_adjacent_chunks_y() {
+        let mut world = VoxelWorld::new();
+
+        // Create two adjacent voxels across Y chunk boundary
+        world.set_voxel(16, 31, 16, Voxel::solid(255, 0, 0)); // Top of chunk (0,0,0)
+        world.set_voxel(16, 32, 16, Voxel::solid(0, 255, 0)); // Bottom of chunk (0,1,0)
+
+        let meshes_no_culling = build_world_meshes_with_options(&world, false);
+        let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
+
+        let verts_no_culling: usize = meshes_no_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+        
+        let verts_with_culling: usize = meshes_with_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
+        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+    }
+
+    #[test]
+    fn test_cross_chunk_culling_two_adjacent_chunks_z() {
+        let mut world = VoxelWorld::new();
+
+        // Create two adjacent voxels across Z chunk boundary
+        world.set_voxel(16, 16, 31, Voxel::solid(255, 0, 0)); // Front of chunk (0,0,0)
+        world.set_voxel(16, 16, 32, Voxel::solid(0, 255, 0)); // Back of chunk (0,0,1)
+
+        let meshes_no_culling = build_world_meshes_with_options(&world, false);
+        let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
+
+        let verts_no_culling: usize = meshes_no_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+        
+        let verts_with_culling: usize = meshes_with_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
+        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+    }
+
+    #[test]
+    fn test_cross_chunk_culling_greedy_same_color() {
+        let mut world = VoxelWorld::new();
+
+        // Create a 2x2x2 cube that spans two chunks
+        // Voxels at x=30,31 in chunk 0 and x=32,33 in chunk 1
+        for x in 30..34 {
+            for y in 16..18 {
+                for z in 16..18 {
+                    world.set_voxel(x, y, z, Voxel::solid(128, 128, 128));
+                }
+            }
+        }
+
+        // With greedy meshing and cross-chunk culling
+        let meshes = build_world_meshes_cross_chunk_with_options(&world, true);
+
+        // The 4x2x2 cube should have the boundary faces culled
+        // Each chunk should contribute to the overall shape
+        let total_verts: usize = meshes.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        // 4x2x2 cube: 6 sides (some merged)
+        // - Top/bottom: 4x2 faces each, merged
+        // - Front/back: 4x2 faces each, merged
+        // - Left/right: 2x2 faces each, merged
+        // Total should be 6 merged quads (if same color) = 24 vertices
+        // But split across 2 chunks, so slightly more due to chunk boundaries
+        // The internal X faces between chunks ARE culled though
+        
+        // This is harder to predict exactly, but it should be less than
+        // what we'd get without cross-chunk culling
+        let meshes_no_cross = build_world_meshes_with_options(&world, true);
+        let total_verts_no_cross: usize = meshes_no_cross.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        // Cross-chunk culling should reduce vertices
+        assert!(
+            total_verts < total_verts_no_cross,
+            "Cross-chunk greedy should have fewer vertices ({}) than without ({})",
+            total_verts,
+            total_verts_no_cross
+        );
+    }
+
+    #[test]
+    fn test_cross_chunk_culling_solid_wall() {
+        let mut world = VoxelWorld::new();
+
+        // Create a solid 4x4 wall at the X boundary between chunks
+        // 2 voxels thick (1 in each chunk)
+        for y in 14..18 {
+            for z in 14..18 {
+                world.set_voxel(31, y, z, Voxel::solid(200, 100, 50));
+                world.set_voxel(32, y, z, Voxel::solid(200, 100, 50));
+            }
+        }
+
+        let meshes_no_culling = build_world_meshes_with_options(&world, false);
+        let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
+
+        let verts_no_culling: usize = meshes_no_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+        
+        let verts_with_culling: usize = meshes_with_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        // Without cross-chunk culling: each 4x4 layer has internal culling but
+        // the boundary faces between chunks are NOT culled
+        // With cross-chunk culling: the 16 faces at x=31 (+X) and 16 at x=32 (-X) are culled
+        // That's 32 * 4 = 128 fewer vertices
+
+        assert!(
+            verts_with_culling < verts_no_culling,
+            "Cross-chunk culling should reduce vertices: {} < {}",
+            verts_with_culling,
+            verts_no_culling
+        );
+
+        // Specifically: 32 faces culled * 4 verts = 128 difference
+        assert_eq!(
+            verts_no_culling - verts_with_culling,
+            128,
+            "Should cull exactly 32 faces (128 vertices)"
+        );
+    }
+
+    #[test]
+    fn test_cross_chunk_culling_isolated_chunks() {
+        let mut world = VoxelWorld::new();
+
+        // Create voxels in two non-adjacent chunks - no cross-chunk culling should apply
+        world.set_voxel(16, 16, 16, Voxel::solid(255, 0, 0)); // Chunk (0,0,0)
+        world.set_voxel(80, 16, 16, Voxel::solid(0, 255, 0)); // Chunk (2,0,0) - not adjacent!
+
+        let meshes_no_culling = build_world_meshes_with_options(&world, false);
+        let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
+
+        let verts_no_culling: usize = meshes_no_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+        
+        let verts_with_culling: usize = meshes_with_culling.iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        // Both should be 48 (2 isolated voxels, no culling possible)
+        assert_eq!(verts_no_culling, 48);
+        assert_eq!(verts_with_culling, 48);
+    }
+
+    #[test]
+    fn test_cross_chunk_mesh_has_all_attributes() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(31, 16, 16, Voxel::new(255, 128, 64, 200));
+        world.set_voxel(32, 16, 16, Voxel::new(64, 128, 255, 150));
+
+        let meshes = build_world_meshes_cross_chunk(&world);
+
+        for chunk_mesh in meshes {
+            assert!(chunk_mesh.mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+            assert!(chunk_mesh.mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
+            assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_COLOR).is_some());
+            assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_EMISSION).is_some());
+            assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_AO).is_some());
+        }
     }
 }

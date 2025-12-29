@@ -265,16 +265,24 @@ fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
 // Calculate shadow for a point light using cube shadow map.
 // Returns 0.0 for fully in shadow, 1.0 for fully lit.
 // Uses the actual view-projection matrices from the shadow render pass.
-// light_pos: world position of the light
+// NOTE: This function ignores the light_pos and radius parameters and instead
+// uses the values from point_shadow_matrices to ensure consistency with the
+// shadow map that was actually rendered.
+// light_pos: (IGNORED) world position of the light
 // world_pos: world position of the fragment being shaded
-// radius: light's maximum range (used as far plane)
+// radius: (IGNORED) light's maximum range
 fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f32) -> f32 {
+    // IMPORTANT: Use the light position from the shadow matrices, not the parameter!
+    // The shadow map was rendered using this light position, so sampling must match.
+    let shadow_light_pos = point_shadow_matrices.light_pos_radius.xyz;
+    let shadow_radius = point_shadow_matrices.light_pos_radius.w;
+    
     // Vector from light to fragment - used to select which cube face
-    let light_to_frag = world_pos - light_pos;
+    let light_to_frag = world_pos - shadow_light_pos;
     let distance = length(light_to_frag);
     
-    // Skip if outside light radius
-    if distance > radius {
+    // Skip if outside light radius (use shadow_radius, not parameter)
+    if distance > shadow_radius {
         return 1.0;
     }
     
@@ -307,8 +315,8 @@ fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f3
     );
     
     // The shadow pass writes LINEAR distance/radius as depth (not clip-space Z!)
-    // We must compute the same value for comparison
-    let compare_depth = (distance / radius) - 0.02;  // Small bias
+    // We must compute the same value for comparison (use shadow_radius, not parameter)
+    let compare_depth = (distance / shadow_radius) - 0.02;  // Small bias
     
     // Sample the appropriate face texture
     var shadow_result: f32;

@@ -23,7 +23,9 @@ use bevy::prelude::*;
 
 use crate::deferred::{DeferredPointLight, DeferredRenderable};
 use crate::voxel::{extract_emissive_lights, EmissiveLight, VoxelChunk, VoxelWorld, CHUNK_SIZE};
-use crate::voxel_mesh::{build_chunk_mesh, build_chunk_mesh_greedy, VoxelMaterial};
+use crate::voxel_mesh::{
+    build_chunk_mesh_greedy, build_world_meshes_cross_chunk_with_options, VoxelMaterial,
+};
 
 /// Configuration for spawning point lights from emissive voxels.
 #[derive(Clone, Debug)]
@@ -279,6 +281,8 @@ pub struct WorldSpawnConfig {
     pub light_config: EmissiveLightConfig,
     /// Whether to use greedy meshing.
     pub use_greedy_meshing: bool,
+    /// Whether to use cross-chunk face culling (eliminates seams at chunk boundaries).
+    pub use_cross_chunk_culling: bool,
     /// Shared material handle (if None, creates one per chunk).
     pub shared_material: Option<Handle<VoxelMaterial>>,
 }
@@ -288,7 +292,18 @@ impl Default for WorldSpawnConfig {
         Self {
             light_config: EmissiveLightConfig::default(),
             use_greedy_meshing: true,
+            use_cross_chunk_culling: true, // Enable by default for best visuals
             shared_material: None,
+        }
+    }
+}
+
+impl WorldSpawnConfig {
+    /// Create config with cross-chunk culling disabled (faster meshing, may have seams).
+    pub fn without_cross_chunk_culling() -> Self {
+        Self {
+            use_cross_chunk_culling: false,
+            ..Default::default()
         }
     }
 }
@@ -331,27 +346,17 @@ pub fn spawn_world_with_lights_config(
     let mut light_entities = Vec::new();
     let mut total_emissive = 0;
 
-    for (chunk_pos, chunk) in world.iter_chunks() {
-        if chunk.is_empty() {
-            continue;
-        }
+    // Build all chunk meshes (using cross-chunk culling if enabled)
+    let chunk_meshes = if config.use_cross_chunk_culling {
+        build_world_meshes_cross_chunk_with_options(world, config.use_greedy_meshing)
+    } else {
+        crate::voxel_mesh::build_world_meshes_with_options(world, config.use_greedy_meshing)
+    };
 
-        // Build mesh
-        let mesh = if config.use_greedy_meshing {
-            build_chunk_mesh_greedy(chunk)
-        } else {
-            build_chunk_mesh(chunk)
-        };
-        let mesh_handle = meshes.add(mesh);
-
-        // Calculate world position for this chunk
-        // Chunk at (1, 0, 2) with CHUNK_SIZE=32 should be at world (32, 0, 64) + centering
-        let half = CHUNK_SIZE as f32 / 2.0;
-        let world_offset = Vec3::new(
-            chunk_pos.x as f32 * CHUNK_SIZE as f32 + half,
-            chunk_pos.y as f32 * CHUNK_SIZE as f32 + half,
-            chunk_pos.z as f32 * CHUNK_SIZE as f32 + half,
-        );
+    for chunk_mesh in chunk_meshes {
+        let chunk_pos = chunk_mesh.chunk_pos;
+        let world_offset = chunk_mesh.translation();
+        let mesh_handle = meshes.add(chunk_mesh.mesh);
 
         // Spawn chunk mesh
         let entity = commands
@@ -364,30 +369,32 @@ pub fn spawn_world_with_lights_config(
             .id();
         chunk_entities.push(entity);
 
-        // Extract and spawn lights for this chunk
-        let emissive = extract_emissive_lights(chunk, config.light_config.min_emission);
-        total_emissive += emissive.len();
+        // Get the chunk for light extraction
+        if let Some(chunk) = world.get_chunk(chunk_pos) {
+            let emissive = extract_emissive_lights(chunk, config.light_config.min_emission);
+            total_emissive += emissive.len();
 
-        for light in &emissive {
-            let mesh_pos = light.mesh_position();
-            let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2])
-                + world_offset
-                + Vec3::new(0.0, config.light_config.y_offset, 0.0);
+            for light in &emissive {
+                let mesh_pos = light.mesh_position();
+                let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2])
+                    + world_offset
+                    + Vec3::new(0.0, config.light_config.y_offset, 0.0);
 
-            let intensity = config.light_config.intensity_multiplier * light.emission;
-            let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
+                let intensity = config.light_config.intensity_multiplier * light.emission;
+                let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
 
-            let light_entity = commands
-                .spawn((
-                    DeferredPointLight {
-                        color,
-                        intensity,
-                        radius: config.light_config.base_radius,
-                    },
-                    Transform::from_translation(world_pos),
-                ))
-                .id();
-            light_entities.push(light_entity);
+                let light_entity = commands
+                    .spawn((
+                        DeferredPointLight {
+                            color,
+                            intensity,
+                            radius: config.light_config.base_radius,
+                        },
+                        Transform::from_translation(world_pos),
+                    ))
+                    .id();
+                light_entities.push(light_entity);
+            }
         }
     }
 

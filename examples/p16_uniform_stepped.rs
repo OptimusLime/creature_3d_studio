@@ -1,9 +1,9 @@
-//! Phase 16 Simple: Multi-Chunk World Test WITHOUT Greedy Meshing
+//! Phase 16 Uniform Stepped: Test with UNIFORM color stepped terrain
 //!
-//! This is a diagnostic version to test if AO artifacts are caused by greedy meshing.
-//! Uses face-culling only (no greedy meshing) to isolate the issue.
+//! Uses uniform color so greedy meshing can merge large areas.
+//! This should reveal if the AO artifacts are in greedy merging.
 //!
-//! Run with: `cargo run --example p16_multi_chunk_simple`
+//! Run with: `cargo run --example p16_uniform_stepped`
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -16,19 +16,18 @@ use studio_core::{
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
-const SCREENSHOT_PATH: &str = "screenshots/p16_multi_chunk_simple.png";
+const SCREENSHOT_PATH: &str = "screenshots/p16_uniform_stepped.png";
 
 fn main() {
     std::fs::create_dir_all(SCREENSHOT_DIR).expect("Failed to create screenshots directory");
 
-    println!("Running Phase 16 SIMPLE: Multi-Chunk WITHOUT Greedy Meshing...");
-    println!("This test disables greedy meshing to isolate AO artifacts.");
+    println!("Running Phase 16 UNIFORM STEPPED: Greedy meshing with uniform color stepped terrain...");
 
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 resolution: (1024, 768).into(),
-                title: "Phase 16 Simple: No Greedy Meshing".into(),
+                title: "Phase 16: Uniform Color Stepped".into(),
                 ..default()
             }),
             ..default()
@@ -52,12 +51,11 @@ fn main() {
 #[derive(Resource)]
 struct FrameCount(u32);
 
-/// Create a simpler world - just flat terrain to clearly see AO artifacts.
+/// Create world with UNIFORM COLOR stepped terrain.
 fn create_world() -> VoxelWorld {
     let mut world = VoxelWorld::new();
 
-    // Create a 2x1x2 grid of chunks with FLAT terrain (height=3)
-    // This makes AO artifacts more visible
+    // Single uniform color per chunk - NO height variation in color
     let chunk_colors: [[(u8, u8, u8); 2]; 2] = [
         [(180, 60, 60), (60, 180, 60)],
         [(60, 60, 180), (180, 180, 60)],
@@ -69,24 +67,26 @@ fn create_world() -> VoxelWorld {
             let world_x_start = cx * CHUNK_SIZE as i32;
             let world_z_start = cz * CHUNK_SIZE as i32;
 
-            // FLAT terrain - constant height of 3
             for lx in 0..CHUNK_SIZE as i32 {
                 for lz in 0..CHUNK_SIZE as i32 {
                     let wx = world_x_start + lx;
                     let wz = world_z_start + lz;
 
-                    // Flat terrain, height = 3
-                    for wy in 0..3 {
+                    // STEPPED terrain - height varies based on position
+                    let height = 3 + ((wx.abs() + wz.abs()) % 5) as i32;
+
+                    for wy in 0..height {
+                        // UNIFORM COLOR - no height factor!
                         world.set_voxel(wx, wy, wz, Voxel::solid(base_r, base_g, base_b));
                     }
                 }
             }
 
-            // Add a glowing pillar in center of each chunk
+            // Add a glowing pillar
             let crystal_x = world_x_start + CHUNK_SIZE as i32 / 2;
             let crystal_z = world_z_start + CHUNK_SIZE as i32 / 2;
 
-            for cy in 3..10 {
+            for cy in 5..13 {
                 let crystal_r = (base_r as u16 * 3 / 2).min(255) as u8;
                 let crystal_g = (base_g as u16 * 3 / 2).min(255) as u8;
                 let crystal_b = (base_b as u16 * 3 / 2).min(255) as u8;
@@ -111,9 +111,9 @@ fn setup(
         world.total_voxel_count()
     );
 
-    // KEY DIFFERENCE: Disable greedy meshing!
+    // Greedy meshing ON
     let config = WorldSpawnConfig {
-        use_greedy_meshing: false,  // <-- DISABLED
+        use_greedy_meshing: true,
         use_cross_chunk_culling: true,
         ..Default::default()
     };
@@ -121,7 +121,7 @@ fn setup(
     let result = spawn_world_with_lights_config(&mut commands, &mut meshes, &mut materials, &world, &config);
 
     println!(
-        "Spawned {} chunk meshes + {} point lights (NO greedy meshing)",
+        "Spawned {} chunk meshes + {} point lights",
         result.chunk_entities.len(),
         result.light_entities.len(),
     );
@@ -136,7 +136,6 @@ fn setup(
         DeferredCamera,
     ));
 
-    // Directional light
     commands.spawn((
         DirectionalLight {
             illuminance: 10000.0,
@@ -146,7 +145,7 @@ fn setup(
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    println!("Setup complete. Look for AO artifacts on the FLAT terrain.");
+    println!("Setup complete.");
 }
 
 #[allow(deprecated)]
