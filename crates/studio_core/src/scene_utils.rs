@@ -230,6 +230,112 @@ pub fn centered_offset() -> Vec3 {
     Vec3::ZERO
 }
 
+/// Get the world-space bounding box of a chunk given its transform offset.
+/// Returns (min_corner, max_corner) in world coordinates.
+pub fn chunk_world_bounds(chunk: &VoxelChunk, world_offset: Vec3) -> Option<(Vec3, Vec3)> {
+    let ((min_x, min_y, min_z), (max_x, max_y, max_z)) = chunk.bounds()?;
+    
+    // Convert chunk coords to mesh-local coords (centered at origin)
+    let half = CHUNK_SIZE as f32 / 2.0;
+    let min_local = Vec3::new(
+        min_x as f32 - half,
+        min_y as f32 - half,
+        min_z as f32 - half,
+    );
+    let max_local = Vec3::new(
+        max_x as f32 + 1.0 - half, // +1 because max is inclusive
+        max_y as f32 + 1.0 - half,
+        max_z as f32 + 1.0 - half,
+    );
+    
+    // Apply world offset
+    Some((min_local + world_offset, max_local + world_offset))
+}
+
+/// Camera framing result with computed position and target.
+#[derive(Debug, Clone)]
+pub struct CameraFraming {
+    /// World position for the camera
+    pub position: Vec3,
+    /// Point the camera should look at
+    pub look_at: Vec3,
+    /// Recommended FOV in degrees (default 45)
+    pub fov: f32,
+}
+
+/// Calculate camera position to frame a bounding box.
+/// 
+/// Arguments:
+/// - `min`: Minimum corner of bounding box
+/// - `max`: Maximum corner of bounding box  
+/// - `angle`: Horizontal angle in degrees (0 = +X, 90 = +Z, etc.)
+/// - `elevation`: Vertical angle in degrees above horizon (0 = level, 45 = looking down)
+/// - `padding`: Extra distance multiplier (1.0 = tight fit, 1.5 = 50% padding)
+pub fn compute_camera_framing(
+    min: Vec3,
+    max: Vec3,
+    angle: f32,
+    elevation: f32,
+    padding: f32,
+) -> CameraFraming {
+    // Calculate bounding box properties
+    let center = (min + max) * 0.5;
+    let size = max - min;
+    let diagonal = size.length();
+    
+    // Distance needed to fit the diagonal in view (assuming ~45 degree FOV)
+    // For a 45 degree FOV, distance = size / (2 * tan(22.5)) ≈ size * 1.2
+    let base_distance = diagonal * 1.2 * padding;
+    
+    // Convert angles to radians
+    let angle_rad = angle.to_radians();
+    let elevation_rad = elevation.to_radians();
+    
+    // Calculate camera offset from center
+    let horizontal_dist = base_distance * elevation_rad.cos();
+    let vertical_dist = base_distance * elevation_rad.sin();
+    
+    let offset = Vec3::new(
+        horizontal_dist * angle_rad.cos(),
+        vertical_dist,
+        horizontal_dist * angle_rad.sin(),
+    );
+    
+    CameraFraming {
+        position: center + offset,
+        look_at: center,
+        fov: 45.0,
+    }
+}
+
+/// Spawn a camera framed to view a chunk.
+/// 
+/// Arguments:
+/// - `chunk`: The voxel chunk to frame
+/// - `world_offset`: Transform offset applied to the chunk mesh
+/// - `angle`: Horizontal viewing angle (degrees, 0 = from +X direction)
+/// - `elevation`: Vertical angle above horizon (degrees, 30-45 typical)
+pub fn spawn_framed_camera(
+    commands: &mut Commands,
+    chunk: &VoxelChunk,
+    world_offset: Vec3,
+    angle: f32,
+    elevation: f32,
+) -> Option<Entity> {
+    use bevy::core_pipeline::tonemapping::Tonemapping;
+    use crate::deferred::DeferredCamera;
+    
+    let (min, max) = chunk_world_bounds(chunk, world_offset)?;
+    let framing = compute_camera_framing(min, max, angle, elevation, 1.3);
+    
+    Some(commands.spawn((
+        Camera3d::default(),
+        Tonemapping::TonyMcMapface,
+        Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y),
+        DeferredCamera,
+    )).id())
+}
+
 /// Extract emissive voxels from a chunk and convert to world-space light positions.
 ///
 /// Lower-level function if you need custom light spawning logic.

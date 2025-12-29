@@ -45,10 +45,10 @@ pub use chunk_streaming::{
     ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
 };
 pub use scene_utils::{
-    centered_offset, ground_level_offset, spawn_chunk, spawn_chunk_with_lights,
-    spawn_chunk_with_lights_config, spawn_point_light, spawn_world_with_lights,
-    spawn_world_with_lights_config, CameraPreset, EmissiveLightConfig, SpawnedChunk,
-    SpawnedWorld, WorldSpawnConfig,
+    centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset,
+    spawn_chunk, spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
+    spawn_point_light, spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming,
+    CameraPreset, EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
 };
 
 /// Core plugin for shared functionality.

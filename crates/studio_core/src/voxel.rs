@@ -148,6 +148,35 @@ impl VoxelChunk {
         self.count() == 0
     }
 
+    /// Get the bounding box of all voxels in this chunk (in local chunk coordinates).
+    /// Returns None if chunk is empty.
+    /// Returns Some((min, max)) where min/max are inclusive corners.
+    pub fn bounds(&self) -> Option<((usize, usize, usize), (usize, usize, usize))> {
+        let mut min_x = CHUNK_SIZE;
+        let mut min_y = CHUNK_SIZE;
+        let mut min_z = CHUNK_SIZE;
+        let mut max_x = 0usize;
+        let mut max_y = 0usize;
+        let mut max_z = 0usize;
+        let mut found = false;
+
+        for (x, y, z, _) in self.iter() {
+            found = true;
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            min_z = min_z.min(z);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+            max_z = max_z.max(z);
+        }
+
+        if found {
+            Some(((min_x, min_y, min_z), (max_x, max_y, max_z)))
+        } else {
+            None
+        }
+    }
+
     /// Check if a voxel exists at the given position (with signed coordinates).
     /// Returns true if there's a solid voxel, false if empty or out of bounds.
     /// This is useful for AO calculations where we need to check neighbors

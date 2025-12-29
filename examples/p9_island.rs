@@ -18,8 +18,8 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use studio_core::{
-    ground_level_offset, load_creature_script, spawn_chunk_with_lights, CameraPreset,
-    DeferredCamera, DeferredRenderingPlugin, VoxelMaterialPlugin,
+    ground_level_offset, load_creature_script, spawn_chunk_with_lights, spawn_framed_camera,
+    DeferredRenderingPlugin, VoxelMaterialPlugin,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -67,19 +67,18 @@ fn setup(
     mut materials: ResMut<Assets<studio_core::VoxelMaterial>>,
 ) {
     // IMPORTANT: Spawn the shadow-casting light FIRST so it gets priority
-    // (shadow system uses first lights in the list)
-    // Island grass is at world Y=4-11, tree canopy up to Y=16
-    // Place light well above at Y=20 to ensure it's above everything
+    // Position to side/above so shadows cast visibly across the grass
+    // Island grass is at world Y=-4 to +3 (chunk Y=4-11 with -8 offset)
     use studio_core::DeferredPointLight;
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(1.0, 0.95, 0.8), // Warm white
-            intensity: 50.0,
-            radius: 35.0,
+            color: Color::srgb(1.0, 0.9, 0.7), // Warm white
+            intensity: 40.0,
+            radius: 25.0,
         },
-        Transform::from_xyz(0.0, 20.0, 0.0), // Directly above island center, high up
+        Transform::from_xyz(-6.0, 10.0, -6.0), // Side position - shadows cast toward +X,+Z
     ));
-    println!("Added shadow-casting point light at (0, 20, 0)");
+    println!("Added shadow-casting point light at (-6, 10, -6)");
 
     // Load test script
     let chunk = match load_creature_script(CREATURE_SCRIPT) {
@@ -110,14 +109,21 @@ fn setup(
         result.emissive_count
     );
 
-    // Camera looking at the island - framed to see the whole scene
-    let island_center = Vec3::new(0.0, 6.0, 0.0);
-    commands.spawn((
-        Camera3d::default(),
-        Tonemapping::TonyMcMapface,
-        Transform::from_xyz(18.0, 16.0, 18.0).looking_at(island_center, Vec3::Y),
-        DeferredCamera,
-    ));
+    // Camera - automatically framed to show the chunk
+    // Angle 45 = viewing from +X+Z quadrant, elevation 30 = slightly above horizon
+    if let Some(_cam) = spawn_framed_camera(&mut commands, &chunk, world_offset, 45.0, 30.0) {
+        println!("Camera auto-framed to chunk bounds");
+    } else {
+        // Fallback if chunk is empty
+        use studio_core::DeferredCamera;
+        let island_center = Vec3::new(0.0, 0.0, 0.0);
+        commands.spawn((
+            Camera3d::default(),
+            Tonemapping::TonyMcMapface,
+            Transform::from_xyz(14.0, 10.0, 14.0).looking_at(island_center, Vec3::Y),
+            DeferredCamera,
+        ));
+    }
 
     // Directional light (used by forward pass, our deferred has hardcoded sun)
     commands.spawn((
