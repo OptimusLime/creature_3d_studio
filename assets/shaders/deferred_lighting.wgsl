@@ -55,6 +55,13 @@ struct PointLightsStorage {
 @group(4) @binding(5) var point_shadow_face_nz: texture_depth_2d;
 @group(4) @binding(6) var point_shadow_sampler: sampler_comparison;
 
+// Point shadow matrices (bind group 5) - view-proj matrices for cube face sampling
+struct PointShadowMatrices {
+    face_matrices: array<mat4x4<f32>, 6>,  // +X, -X, +Y, -Y, +Z, -Z
+    light_pos_radius: vec4<f32>,           // xyz = position, w = radius
+}
+@group(5) @binding(0) var<uniform> point_shadow_matrices: PointShadowMatrices;
+
 // Point shadow map size (must match POINT_SHADOW_MAP_SIZE in Rust)
 const POINT_SHADOW_MAP_SIZE: f32 = 512.0;
 
@@ -121,6 +128,7 @@ const SHADOW_BIAS_MIN: f32 = 0.001;  // Minimum bias to prevent shadow acne
 const SHADOW_BIAS_MAX: f32 = 0.01;   // Maximum bias for grazing angles
 
 // Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only, 4 = shadow only, 5 = AO only, 6 = point lights only, 7 = world position XZ, 8 = light count, 9 = distance to light 0, 10 = first light color, 11 = first light radius, 20 = point shadow for light 0, 21 = raw -Y face shadow sample, 22 = face UV coords, 23 = which cube face, 24 = compare depth, 25 = show UV coords for -Y face, 26 = test fixed UV sample
+// 50 = matrix-based UV, 51 = compare matrix vs manual UV, 52 = stored vs compare depth
 const DEBUG_MODE: i32 = 0;
 
 // Calculate point light contribution at a world position.
@@ -256,11 +264,12 @@ fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
 
 // Calculate shadow for a point light using cube shadow map.
 // Returns 0.0 for fully in shadow, 1.0 for fully lit.
+// Uses the actual view-projection matrices from the shadow render pass.
 // light_pos: world position of the light
 // world_pos: world position of the fragment being shaded
 // radius: light's maximum range (used as far plane)
 fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f32) -> f32 {
-    // Vector from light to fragment (NOT normalized - we need the actual components for projection)
+    // Vector from light to fragment - used to select which cube face
     let light_to_frag = world_pos - light_pos;
     let distance = length(light_to_frag);
     
@@ -269,121 +278,51 @@ fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f3
         return 1.0;
     }
     
-    // Use raw vector components for cube face UV calculation
-    // This gives us proper perspective projection matching the shadow render pass
     let abs_vec = abs(light_to_frag);
-    var face_uv: vec2<f32>;
-    var shadow_depth: f32;
     
-    // Add small bias to prevent shadow acne
-    let bias = 0.02;
-    let compare_depth = (distance / radius) - bias;
-    
-    // Find dominant axis and compute UV + sample shadow
-    // The UV calculation must match the view matrices in CubeFaceMatrices::new()
-    // For look_at_rh looking in direction D with up U:
-    //   Right = normalize(cross(D, U))
-    //   Up = cross(Right, D)  
-    //   View transforms world to (Right, Up, -D) basis
-    // Then perspective divides by -view_z to get clip coords
-    
-    // UV mapping derived from look_to_rh view matrices:
-    // For look_to_rh(eye, dir, up): Right = cross(dir, up), TrueUp = cross(Right, dir)
-    // view = (dot(ltf, Right), dot(ltf, TrueUp), -dot(ltf, dir))
-    // clip.w = -view.z = dot(ltf, dir)
-    // NDC = (view.x / clip.w, view.y / clip.w)
-    // UV = (NDC.x * 0.5 + 0.5, -NDC.y * 0.5 + 0.5)  <- Y flipped for texture coords
-    
+    // Select cube face based on dominant axis
+    // Face order: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+    var face_idx: i32;
     if abs_vec.x >= abs_vec.y && abs_vec.x >= abs_vec.z {
-        // X is dominant axis
-        if light_to_frag.x > 0.0 {
-            // +X face: look_to_rh(pos, X, -Y)
-            // Right = Z, TrueUp = -Y, view = (ltf.z, -ltf.y, -ltf.x)
-            // clip.w = ltf.x, NDC = (ltf.z/ltf.x, -ltf.y/ltf.x)
-            // UV = (ltf.z/abs_x * 0.5 + 0.5, ltf.y/abs_x * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                light_to_frag.z / abs_vec.x * 0.5 + 0.5,
-                light_to_frag.y / abs_vec.x * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_px, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        } else {
-            // -X face: look_to_rh(pos, -X, -Y)
-            // Right = -Z, TrueUp = -Y, view = (-ltf.z, -ltf.y, ltf.x)
-            // clip.w = -ltf.x = abs_x, NDC = (-ltf.z/abs_x, -ltf.y/abs_x)
-            // UV = (-ltf.z/abs_x * 0.5 + 0.5, ltf.y/abs_x * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                -light_to_frag.z / abs_vec.x * 0.5 + 0.5,
-                light_to_frag.y / abs_vec.x * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_nx, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        }
+        face_idx = select(1, 0, light_to_frag.x > 0.0);  // +X or -X
     } else if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z {
-        // Y is dominant axis
-        if light_to_frag.y > 0.0 {
-            // +Y face: look_to_rh(pos, Y, Z)
-            // Right = X, TrueUp = Z, view = (ltf.x, ltf.z, -ltf.y)
-            // clip.w = ltf.y, NDC = (ltf.x/ltf.y, ltf.z/ltf.y)
-            // UV = (ltf.x/abs_y * 0.5 + 0.5, -ltf.z/abs_y * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                light_to_frag.x / abs_vec.y * 0.5 + 0.5,
-                -light_to_frag.z / abs_vec.y * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_py, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        } else {
-            // -Y face: look_to_rh(pos, -Y, -Z)
-            // Right = X, TrueUp = -Z, view = (ltf.x, -ltf.z, ltf.y)
-            // clip.w = -ltf.y = abs_y, NDC = (ltf.x/abs_y, -ltf.z/abs_y)
-            // UV = (ltf.x/abs_y * 0.5 + 0.5, ltf.z/abs_y * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                light_to_frag.x / abs_vec.y * 0.5 + 0.5,
-                light_to_frag.z / abs_vec.y * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_ny, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        }
+        face_idx = select(3, 2, light_to_frag.y > 0.0);  // +Y or -Y
     } else {
-        // Z is dominant axis
-        if light_to_frag.z > 0.0 {
-            // +Z face: look_to_rh(pos, Z, -Y)
-            // Right = X, TrueUp = -Y, view = (ltf.x, -ltf.y, -ltf.z)
-            // clip.w = ltf.z, NDC = (ltf.x/ltf.z, -ltf.y/ltf.z)
-            // UV = (ltf.x/abs_z * 0.5 + 0.5, ltf.y/abs_z * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                light_to_frag.x / abs_vec.z * 0.5 + 0.5,
-                light_to_frag.y / abs_vec.z * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_pz, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        } else {
-            // -Z face: look_to_rh(pos, -Z, -Y)
-            // Right = -X, TrueUp = -Y, view = (-ltf.x, -ltf.y, ltf.z)
-            // clip.w = -ltf.z = abs_z, NDC = (-ltf.x/abs_z, -ltf.y/abs_z)
-            // UV = (-ltf.x/abs_z * 0.5 + 0.5, ltf.y/abs_z * 0.5 + 0.5)
-            face_uv = vec2<f32>(
-                -light_to_frag.x / abs_vec.z * 0.5 + 0.5,
-                light_to_frag.y / abs_vec.z * 0.5 + 0.5
-            );
-            shadow_depth = textureSampleCompare(
-                point_shadow_face_nz, point_shadow_sampler,
-                face_uv, compare_depth
-            );
-        }
+        face_idx = select(5, 4, light_to_frag.z > 0.0);  // +Z or -Z
     }
     
-    return shadow_depth;
+    // Transform world position through the ACTUAL view-proj matrix used in shadow pass
+    let view_proj = point_shadow_matrices.face_matrices[face_idx];
+    let clip = view_proj * vec4<f32>(world_pos, 1.0);
+    
+    // Perspective divide to get NDC
+    let ndc = clip.xyz / clip.w;
+    
+    // Convert NDC to texture UV
+    // NDC is [-1, 1], UV is [0, 1]
+    // Y is flipped because texture origin is top-left
+    let face_uv = vec2<f32>(
+        (ndc.x + 1.0) * 0.5,
+        (1.0 - ndc.y) * 0.5
+    );
+    
+    // The shadow pass writes LINEAR distance/radius as depth (not clip-space Z!)
+    // We must compute the same value for comparison
+    let compare_depth = (distance / radius) - 0.02;  // Small bias
+    
+    // Sample the appropriate face texture
+    var shadow_result: f32;
+    switch face_idx {
+        case 0: { shadow_result = textureSampleCompare(point_shadow_face_px, point_shadow_sampler, face_uv, compare_depth); }
+        case 1: { shadow_result = textureSampleCompare(point_shadow_face_nx, point_shadow_sampler, face_uv, compare_depth); }
+        case 2: { shadow_result = textureSampleCompare(point_shadow_face_py, point_shadow_sampler, face_uv, compare_depth); }
+        case 3: { shadow_result = textureSampleCompare(point_shadow_face_ny, point_shadow_sampler, face_uv, compare_depth); }
+        case 4: { shadow_result = textureSampleCompare(point_shadow_face_pz, point_shadow_sampler, face_uv, compare_depth); }
+        case 5: { shadow_result = textureSampleCompare(point_shadow_face_nz, point_shadow_sampler, face_uv, compare_depth); }
+        default: { shadow_result = 1.0; }
+    }
+    
+    return shadow_result;
 }
 
 @fragment
@@ -604,6 +543,79 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return vec4<f32>(1.0 - shadow, shadow, 0.0, 1.0);
         }
         return vec4<f32>(0.0, 0.0, 1.0, 1.0);  // Blue if no lights
+    }
+    
+    // Debug: Show matrix-based UV for -Y face (ground)
+    if DEBUG_MODE == 50 {
+        let light_pos = point_shadow_matrices.light_pos_radius.xyz;
+        let light_to_frag = world_pos - light_pos;
+        let abs_vec = abs(light_to_frag);
+        
+        // Only for -Y face
+        if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+            // Use matrix directly
+            let view_proj = point_shadow_matrices.face_matrices[3]; // -Y face
+            let clip = view_proj * vec4<f32>(world_pos, 1.0);
+            let ndc = clip.xyz / clip.w;
+            let face_uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
+            
+            // R = U, G = V from matrix
+            return vec4<f32>(face_uv.x, face_uv.y, 0.0, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 0.5, 1.0); // Blue if not -Y
+    }
+    
+    // Debug: Compare matrix UV vs manual UV
+    if DEBUG_MODE == 51 {
+        let light_pos = point_shadow_matrices.light_pos_radius.xyz;
+        let radius = point_shadow_matrices.light_pos_radius.w;
+        let light_to_frag = world_pos - light_pos;
+        let abs_vec = abs(light_to_frag);
+        
+        // Only for -Y face
+        if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+            // Matrix-based UV
+            let view_proj = point_shadow_matrices.face_matrices[3];
+            let clip = view_proj * vec4<f32>(world_pos, 1.0);
+            let ndc = clip.xyz / clip.w;
+            let matrix_uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
+            
+            // Old manual UV (from the original formula)
+            let manual_uv = vec2<f32>(
+                light_to_frag.x / abs_vec.y * 0.5 + 0.5,
+                light_to_frag.z / abs_vec.y * 0.5 + 0.5
+            );
+            
+            // Show difference: if they match, should be black
+            let diff = abs(matrix_uv - manual_uv);
+            return vec4<f32>(diff.x * 10.0, diff.y * 10.0, 0.0, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 0.5, 1.0);
+    }
+    
+    // Debug: Show raw stored depth vs our compare depth
+    if DEBUG_MODE == 52 {
+        let light_pos = point_shadow_matrices.light_pos_radius.xyz;
+        let radius = point_shadow_matrices.light_pos_radius.w;
+        let light_to_frag = world_pos - light_pos;
+        let distance = length(light_to_frag);
+        let abs_vec = abs(light_to_frag);
+        
+        if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+            let view_proj = point_shadow_matrices.face_matrices[3];
+            let clip = view_proj * vec4<f32>(world_pos, 1.0);
+            let ndc = clip.xyz / clip.w;
+            let face_uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
+            
+            let tex_coord = vec2<i32>(face_uv * 512.0);
+            let stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+            let compare_depth = distance / radius;
+            
+            // R = stored, G = compare, B = lit test (1 if stored >= compare)
+            let is_lit = select(0.0, 1.0, stored_depth >= compare_depth - 0.02);
+            return vec4<f32>(stored_depth, compare_depth, is_lit, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 0.5, 1.0);
     }
     
     // Debug: Sample -Y face shadow map directly (this is the floor-facing direction)

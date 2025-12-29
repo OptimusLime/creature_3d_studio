@@ -136,6 +136,46 @@ impl CubeFaceMatrices {
                     let ndc = if clip.w.abs() > 0.001 { clip / clip.w } else { clip };
                     bevy::log::info!("-Y face: point {:?} -> clip {:?}, ndc {:?}", test_point, clip, ndc);
                 }
+                
+                // STEP 2 DEBUG: Trace a single test voxel through both render and sample paths
+                // Test voxel at world (2, 1, 2) - should cast shadow on ground
+                let test_voxel = Vec3::new(2.0, 1.0, 2.0);
+                let clip = view_proj[i] * Vec4::new(test_voxel.x, test_voxel.y, test_voxel.z, 1.0);
+                let ndc = clip / clip.w;
+                // Render UV: where this voxel appears in shadow texture
+                let render_u = (ndc.x + 1.0) / 2.0;
+                let render_v = (1.0 - ndc.y) / 2.0;  // Y flip for texture coords
+                bevy::log::info!("=== STEP 2 DEBUG ===");
+                bevy::log::info!("Test voxel at world (2, 1, 2)");
+                bevy::log::info!("  -> NDC: ({}, {})", ndc.x, ndc.y);
+                bevy::log::info!("  -> Render UV (with Y flip): ({}, {})", render_u, render_v);
+                bevy::log::info!("  -> Render UV (no Y flip):   ({}, {})", (ndc.x + 1.0) / 2.0, (ndc.y + 1.0) / 2.0);
+                
+                // Ground point in shadow: ray from light (0,6,0) through (2,1,2) to y=0
+                // Direction: (2, -5, 2), need t where 6 - 5t = 0 -> t = 1.2
+                // Shadow point: (2*1.2, 0, 2*1.2) = (2.4, 0, 2.4)
+                let shadow_ground = Vec3::new(2.4, 0.0, 2.4);
+                let ltf = shadow_ground - light_pos; // (2.4, -6, 2.4)
+                bevy::log::info!("Shadow on ground at world (2.4, 0, 2.4)");
+                bevy::log::info!("  -> light_to_frag: ({}, {}, {})", ltf.x, ltf.y, ltf.z);
+                
+                // Sample UV using our simplified formula
+                let sample_u = ltf.x / ltf.y.abs() * 0.5 + 0.5;
+                let sample_v = ltf.z / ltf.y.abs() * 0.5 + 0.5;
+                bevy::log::info!("  -> Sample UV (current formula): ({}, {})", sample_u, sample_v);
+                
+                // What the render UV SHOULD be for the test voxel if formula is correct
+                let voxel_ltf = test_voxel - light_pos; // (2, -5, 2)
+                let expected_u = voxel_ltf.x / voxel_ltf.y.abs() * 0.5 + 0.5;
+                let expected_v = voxel_ltf.z / voxel_ltf.y.abs() * 0.5 + 0.5;
+                bevy::log::info!("  -> Expected voxel UV (simplified formula): ({}, {})", expected_u, expected_v);
+                
+                bevy::log::info!("=== COMPARISON ===");
+                bevy::log::info!("Render UV (with Y flip):    ({:.4}, {:.4})", render_u, render_v);
+                bevy::log::info!("Expected UV (simplified):   ({:.4}, {:.4})", expected_u, expected_v);
+                bevy::log::info!("Sample UV (ground point):   ({:.4}, {:.4})", sample_u, sample_v);
+                bevy::log::info!("If render != expected, the simplified formula is WRONG");
+                bevy::log::info!("If render == expected but render != sample, that's CORRECT (different depths)");
             }
         }
         

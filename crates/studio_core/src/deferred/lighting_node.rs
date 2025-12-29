@@ -14,11 +14,12 @@ use bevy::render::{
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
         BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-        BufferBindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction,
-        FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PipelineCache,
-        PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
-        Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, StoreOp, TextureFormat,
-        TextureSampleType, TextureViewDimension, VertexState,
+        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId, 
+        ColorTargetState, ColorWrites, CompareFunction, FilterMode, FragmentState, LoadOp, 
+        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment, 
+        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType, 
+        SamplerDescriptor, ShaderStages, StoreOp, TextureFormat, TextureSampleType, 
+        TextureViewDimension, VertexState,
     },
     renderer::{RenderContext, RenderDevice},
     view::ViewTarget,
@@ -26,9 +27,20 @@ use bevy::render::{
 
 use super::gbuffer::ViewGBufferTextures;
 use super::point_light::PointLightsBuffer;
-use super::point_light_shadow::ViewPointShadowTextures;
+use super::point_light_shadow::{ViewPointShadowTextures, ShadowCastingLights, CubeFaceMatrices};
 use super::shadow::ViewShadowTextures;
 use super::shadow_node::ViewShadowUniforms;
+
+/// GPU uniform data for point shadow view-projection matrices.
+/// Contains the 6 face matrices needed to sample the cube shadow map correctly.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct PointShadowMatricesUniform {
+    /// View-projection matrices for each cube face: +X, -X, +Y, -Y, +Z, -Z
+    pub face_matrices: [[[f32; 4]; 4]; 6],
+    /// Light position (xyz) and radius (w)
+    pub light_pos_radius: [f32; 4],
+}
 
 /// Render graph node that performs deferred lighting.
 ///
@@ -172,6 +184,46 @@ impl ViewNode for LightingPassNode {
         } else {
             None
         };
+        
+        // Create bind group for point shadow matrices (group 5)
+        // Get the shadow casting lights to compute the matrices
+        let point_shadow_matrices_bind_group = if let Some(shadow_lights) = world.get_resource::<ShadowCastingLights>() {
+            if let Some(light) = shadow_lights.lights.first() {
+                // Compute the view-proj matrices for this light
+                let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
+                
+                let uniform = PointShadowMatricesUniform {
+                    face_matrices: [
+                        matrices.view_proj[0].to_cols_array_2d(),
+                        matrices.view_proj[1].to_cols_array_2d(),
+                        matrices.view_proj[2].to_cols_array_2d(),
+                        matrices.view_proj[3].to_cols_array_2d(),
+                        matrices.view_proj[4].to_cols_array_2d(),
+                        matrices.view_proj[5].to_cols_array_2d(),
+                    ],
+                    light_pos_radius: [light.position.x, light.position.y, light.position.z, light.radius],
+                };
+                
+                let buffer = render_context.render_device().create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("point_shadow_matrices_uniform"),
+                    contents: bytemuck::bytes_of(&uniform),
+                    usage: BufferUsages::UNIFORM,
+                });
+                
+                Some(render_context.render_device().create_bind_group(
+                    Some("lighting_point_shadow_matrices_bind_group"),
+                    &lighting_pipeline.point_shadow_matrices_layout,
+                    &[BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Begin render pass writing to view target
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -211,6 +263,9 @@ impl ViewNode for LightingPassNode {
         if let Some(ref point_shadow_bg) = point_shadow_bind_group {
             render_pass.set_bind_group(4, point_shadow_bg, &[]);
         }
+        if let Some(ref point_shadow_matrices_bg) = point_shadow_matrices_bind_group {
+            render_pass.set_bind_group(5, point_shadow_matrices_bg, &[]);
+        }
         
         render_pass.draw(0..3, 0..1);
 
@@ -238,6 +293,8 @@ pub struct LightingPipeline {
     pub point_shadow_layout: BindGroupLayout,
     /// Point shadow comparison sampler
     pub point_shadow_sampler: Sampler,
+    /// Point shadow matrices layout (group 5) - view-proj matrices for cube faces
+    pub point_shadow_matrices_layout: BindGroupLayout,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -443,6 +500,24 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
+    
+    // Create bind group layout for point shadow matrices (group 5)
+    // Contains the 6 view-proj matrices for cube face sampling
+    let point_shadow_matrices_layout = render_device.create_bind_group_layout(
+        "lighting_point_shadow_matrices_layout",
+        &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    );
 
     // Create G-buffer sampler (point sampling)
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
@@ -485,6 +560,7 @@ pub fn init_lighting_pipeline(
             shadow_uniforms_layout.clone(),
             point_lights_layout.clone(),
             point_shadow_layout.clone(),
+            point_shadow_matrices_layout.clone(),
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {
@@ -519,5 +595,6 @@ pub fn init_lighting_pipeline(
         point_lights_layout,
         point_shadow_layout,
         point_shadow_sampler,
+        point_shadow_matrices_layout,
     });
 }
