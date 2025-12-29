@@ -738,22 +738,88 @@ For each face direction (e.g., +Y top faces):
 
 ---
 
+## Phase 10.8: Minecraft-Style Face Shading (QUICK WIN)
+
+**Goal**: Add fixed brightness multipliers per face direction so blocks are distinguishable even on flat surfaces.
+
+**Why**: Currently all faces pointing the same direction have identical shading. In Minecraft, faces have different base multipliers (top=1.0, bottom=0.5, sides=0.6-0.8) making blocks distinguishable.
+
+**Status**: Pending
+
+### Implementation
+
+In `deferred_lighting.wgsl`, after N·L calculation:
+```wgsl
+// Minecraft-style face shading multipliers
+var face_multiplier = 1.0;
+if (abs(world_normal.y) > 0.9) {
+    face_multiplier = select(0.5, 1.0, world_normal.y > 0.0); // top=1.0, bottom=0.5
+} else if (abs(world_normal.z) > 0.9) {
+    face_multiplier = 0.8; // north/south
+} else {
+    face_multiplier = 0.6; // east/west
+}
+total_light *= face_multiplier;
+```
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 10.8.1 | Add face multiplier logic to lighting shader | Compile succeeds | Pending |
+| 10.8.2 | Test: different faces have different brightness | Screenshot shows variation | Pending |
+| 10.8.3 | Tune multiplier values for best visual result | Manual review approval | Pending |
+
+**Estimate**: 15 minutes
+
+---
+
+## Phase 10.9: Per-Vertex Ambient Occlusion
+
+**Goal**: Darken corners and edges where blocks meet for depth and block separation.
+
+**Why**: AO is the primary technique Minecraft uses to make individual blocks distinguishable on flat surfaces. Corners get darker, giving visual "weight" to each block.
+
+**Status**: Future
+
+### Algorithm
+
+During mesh generation in `build_chunk_mesh()`:
+1. For each vertex, check the 3 corner-adjacent voxels
+2. Count how many are solid (0-3)
+3. Store AO value as vertex attribute (or bake into color)
+4. Interpolate across face for smooth corner darkening
+
+### Reference
+
+- [0fps: Ambient Occlusion for Minecraft-like Worlds](https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/)
+
+**Estimate**: 2-4 hours
+
+---
+
 ## Roadmap Summary
 
 ```
-Current State (Phase 9 Complete)
+Current State (Phase 9.5 Complete - Island renders)
         │
         ▼
-┌───────────────────┐
-│ Phase 9.5: Island │  Visual test scene
-│   Test Scene      │  ~200 voxels, colors
-└────────┬──────────┘
+┌────────────────────────┐
+│ Phase 10: Bloom        │  Fix BloomNode borrow issue
+│   (In Progress)        │  Glow on crystals
+└────────┬───────────────┘
          │
          ▼
-┌───────────────────┐
-│ Phase 10: Bloom   │  Glow effect
-│                   │  Bonsai signature look
-└────────┬──────────┘
+┌────────────────────────┐
+│ Phase 10.8: Face       │  QUICK WIN - 15 min
+│   Shading Multipliers  │  Block differentiation
+└────────┬───────────────┘
+         │
+         ▼
+┌────────────────────────┐
+│ Phase 10.9: Vertex AO  │  Corner/edge darkening
+│   (Optional)           │  Full Minecraft-style look
+└────────┬───────────────┘
          │
          ▼
 ┌───────────────────┐
@@ -774,7 +840,7 @@ Current State (Phase 9 Complete)
 └────────┬──────────┘
          │
          ▼
-    Future: SSAO, Shadows, OIT, Creatures...
+    Future: Shadow Mapping, SSAO, OIT, Creatures...
 ```
 
 ---
