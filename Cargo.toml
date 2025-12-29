@@ -17,6 +17,10 @@ name = "creature_3d_studio"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+screenshot-tests = []
+
 [dependencies]
 bevy.workspace = true
 studio_core = { path = "crates/studio_core" }
