@@ -25,8 +25,9 @@ use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use bevy::prelude::MessageReader;
 use studio_core::{
-    chunk_streaming_system, ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, DeferredCamera,
-    DeferredRenderingPlugin, Voxel, VoxelMaterial, VoxelMaterialPlugin, VoxelWorld, CHUNK_SIZE,
+    chunk_streaming_system, spawn_point_light, ChunkManager, ChunkMaterialHandle,
+    ChunkStreamingConfig, DeferredCamera, DeferredRenderingPlugin, Voxel, VoxelMaterial,
+    VoxelMaterialPlugin, VoxelWorld, CHUNK_SIZE,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -183,6 +184,43 @@ fn setup(
 
     // Insert chunk manager (streaming system will load chunks as needed)
     commands.insert_resource(ChunkManager::new(world));
+
+    // Spawn point lights for each glowing pillar (one per chunk)
+    // Pillars are at center of each chunk from y=3 to y=7
+    // World spans 8x8 chunks, each 32x32, so 256x256 total
+    // Chunk positions use world coords which start at 0, so pillar at chunk (cx, cz)
+    // is at world pos (cx*32 + 16, y, cz*32 + 16)
+    let mut light_count = 0;
+    for cx in 0..8 {
+        for cz in 0..8 {
+            let hue = ((cx + cz * 8) as f32 / 64.0) * 360.0;
+            let (r, g, b) = hue_to_rgb(hue);
+
+            // Pillar world position (center of chunk + half chunk size for proper world coords)
+            // Since spawn_world_with_lights uses (chunk_pos * CHUNK_SIZE + half), 
+            // pillars are at those same centers
+            let pillar_x = (cx * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2) as f32;
+            let pillar_z = (cz * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2) as f32;
+            // Pillar Y center: voxels at y=3-7, mesh centered means y is relative
+            // With world offset of (half, half, half) = (16, 16, 16) for chunk (0,0,0)
+            // Pillar at chunk y=5.5 -> world y = 5.5 + 16 = 21.5 for chunk (0,0,0)
+            // But chunk_pos.y = 0, so offset.y = 0*32 + 16 = 16
+            // Actually for streaming, chunks are at y=0 in chunk coords
+            // Pillar voxels are at local y=3-7, after mesh centering they're at mesh y=-13 to -9
+            // Then world offset adds 16 (for chunk y=0), so world y = 3 to 7
+            let pillar_y = 5.5 + 1.0; // Middle of pillar + light offset
+
+            spawn_point_light(
+                &mut commands,
+                Vec3::new(pillar_x, pillar_y, pillar_z),
+                Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),
+                20.0,
+                18.0,
+            );
+            light_count += 1;
+        }
+    }
+    println!("Spawned {} point lights for emissive pillars", light_count);
 
     // Camera positioned at center of the world, looking at terrain
     // World spans 0 to 256 in X and Z (8 chunks * 32 each)

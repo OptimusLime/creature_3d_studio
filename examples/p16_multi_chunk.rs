@@ -1,16 +1,17 @@
 //! Phase 16: Multi-Chunk World Test
 //!
 //! This example demonstrates rendering a world with multiple chunks:
-//! - 3x3x1 grid of chunks (9 chunks total)
+//! - 2x1x2 grid of chunks (4 chunks total)
 //! - Each chunk has distinct terrain features
 //! - Voxels can span chunk boundaries
+//! - Automatic point light extraction from emissive voxels
 //!
 //! Run with: `cargo run --example p16_multi_chunk`
 //!
 //! Expected output: `screenshots/p16_multi_chunk.png`
-//! - 9 chunks arranged in a 3x3 grid
+//! - 4 chunks arranged in a 2x2 grid
 //! - Visible chunk boundaries (seams expected - no cross-chunk culling yet)
-//! - Different colored terrain per chunk
+//! - Different colored terrain per chunk with glowing crystals
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -18,8 +19,8 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use studio_core::{
-    build_world_meshes, ChunkPos, DeferredCamera, DeferredRenderable, DeferredRenderingPlugin,
-    Voxel, VoxelMaterial, VoxelMaterialPlugin, VoxelWorld, CHUNK_SIZE,
+    spawn_world_with_lights, CameraPreset, DeferredCamera, DeferredRenderingPlugin, Voxel,
+    VoxelMaterialPlugin, VoxelWorld, CHUNK_SIZE,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -69,13 +70,13 @@ fn create_world() -> VoxelWorld {
     let chunk_colors: [[(u8, u8, u8); 2]; 2] = [
         // Row 0 (z = 0)
         [
-            (180, 60, 60),   // Red-ish
-            (60, 180, 60),   // Green-ish
+            (180, 60, 60),  // Red-ish
+            (60, 180, 60),  // Green-ish
         ],
         // Row 1 (z = 1)
         [
-            (60, 60, 180),   // Blue-ish
-            (180, 180, 60),  // Yellow-ish
+            (60, 60, 180),  // Blue-ish
+            (180, 180, 60), // Yellow-ish
         ],
     ];
 
@@ -150,7 +151,7 @@ fn create_world() -> VoxelWorld {
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<VoxelMaterial>>,
+    mut materials: ResMut<Assets<studio_core::VoxelMaterial>>,
 ) {
     // Create the multi-chunk world
     let world = create_world();
@@ -169,68 +170,24 @@ fn setup(
         );
     }
 
-    // Build meshes for all chunks
-    let chunk_meshes = build_world_meshes(&world);
-
-    println!("Generated {} chunk meshes", chunk_meshes.len());
-
-    // Shared material for all chunks
-    let material = materials.add(VoxelMaterial::default());
-
-    // Spawn each chunk as a separate entity
-    let mut total_vertices = 0;
-    let mut total_indices = 0;
-
-    for chunk_mesh in chunk_meshes {
-        // Log per-chunk stats
-        let verts = chunk_mesh
-            .mesh
-            .attribute(Mesh::ATTRIBUTE_POSITION)
-            .map(|a| a.len())
-            .unwrap_or(0);
-        let inds = chunk_mesh.mesh.indices().map(|i| i.len()).unwrap_or(0);
-
-        println!(
-            "  Chunk ({}, {}, {}): {} vertices, {} indices, offset {:?}",
-            chunk_mesh.chunk_pos.x,
-            chunk_mesh.chunk_pos.y,
-            chunk_mesh.chunk_pos.z,
-            verts,
-            inds,
-            chunk_mesh.world_offset
-        );
-
-        total_vertices += verts;
-        total_indices += inds;
-
-        // Store values before consuming chunk_mesh
-        let translation = chunk_mesh.translation();
-        let chunk_pos = chunk_mesh.chunk_pos;
-        let mesh_handle = meshes.add(chunk_mesh.mesh);
-
-        commands.spawn((
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(material.clone()),
-            Transform::from_translation(translation),
-            DeferredRenderable,
-            ChunkMarker(chunk_pos),
-        ));
-    }
+    // Use scene_utils to spawn all chunks with automatic point lights
+    let result = spawn_world_with_lights(&mut commands, &mut meshes, &mut materials, &world);
 
     println!(
-        "Total: {} vertices, {} indices across {} chunks",
-        total_vertices,
-        total_indices,
-        world.chunk_count()
+        "Spawned {} chunk meshes + {} point lights from {} emissive voxels",
+        result.chunk_entities.len(),
+        result.light_entities.len(),
+        result.total_emissive
     );
 
     // Camera positioned to see all chunks
     // The world spans roughly 0 to 64 in X and Z (2 chunks * 32 each)
-    // Position camera to see the entire grid
+    let world_center = Vec3::new(32.0, 5.0, 32.0);
+    let camera = CameraPreset::isometric(world_center, 60.0);
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(80.0, 50.0, 80.0).looking_at(Vec3::new(32.0, 5.0, 32.0), Vec3::Y),
+        Transform::from_translation(camera.position).looking_at(camera.look_at, Vec3::Y),
         DeferredCamera,
     ));
 
@@ -246,10 +203,6 @@ fn setup(
 
     println!("Multi-chunk world setup complete.");
 }
-
-/// Marker component to identify chunk entities.
-#[derive(Component)]
-struct ChunkMarker(ChunkPos);
 
 #[allow(deprecated)]
 fn capture_and_exit(

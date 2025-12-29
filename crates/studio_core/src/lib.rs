@@ -16,6 +16,7 @@ pub mod chunk_streaming;
 pub mod creature_script;
 pub mod deferred;
 pub mod orbit_camera;
+pub mod scene_utils;
 pub mod screenshot;
 pub mod voxel;
 pub mod voxel_mesh;
@@ -39,6 +40,12 @@ pub use voxel_mesh::{
 pub use chunk_streaming::{
     chunk_streaming_system, load_all_chunks_in_radius, world_pos_to_chunk, ChunkEntity,
     ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
+};
+pub use scene_utils::{
+    centered_offset, ground_level_offset, spawn_chunk, spawn_chunk_with_lights,
+    spawn_chunk_with_lights_config, spawn_point_light, spawn_world_with_lights,
+    spawn_world_with_lights_config, CameraPreset, EmissiveLightConfig, SpawnedChunk,
+    SpawnedWorld, WorldSpawnConfig,
 };
 
 /// Core plugin for shared functionality.

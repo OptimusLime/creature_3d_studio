@@ -10,7 +10,7 @@
 //! Expected output: `screenshots/p9_island.png`
 //! - Floating island with multiple colors
 //! - Purple fog background
-//! - Glowing cyan/magenta crystals
+//! - Glowing cyan/magenta crystals with point light shadows
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -18,8 +18,8 @@ use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 use studio_core::{
-    build_chunk_mesh, load_creature_script, DeferredCamera, DeferredRenderable,
-    DeferredRenderingPlugin, VoxelMaterial, VoxelMaterialPlugin,
+    ground_level_offset, load_creature_script, spawn_chunk_with_lights, CameraPreset,
+    DeferredCamera, DeferredRenderingPlugin, VoxelMaterialPlugin,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -64,7 +64,7 @@ struct FrameCount(u32);
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<VoxelMaterial>>,
+    mut materials: ResMut<Assets<studio_core::VoxelMaterial>>,
 ) {
     // Load test script
     let chunk = match load_creature_script(CREATURE_SCRIPT) {
@@ -78,32 +78,30 @@ fn setup(
         }
     };
 
-    let mesh = build_chunk_mesh(&chunk);
-    
-    // Log mesh statistics
-    if let Some(positions) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
-        println!("Mesh vertices: {}", positions.len());
-    }
-    if let Some(indices) = mesh.indices() {
-        println!("Mesh indices: {}", indices.len());
-    }
-    
-    let mesh_handle = meshes.add(mesh);
-    let material = materials.add(VoxelMaterial::default());
+    // Use scene_utils to spawn chunk with lights at correct world position
+    // ground_level_offset() places chunk Y=0 at world Y=0, putting the island at proper height
+    let world_offset = ground_level_offset();
+    let result = spawn_chunk_with_lights(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &chunk,
+        world_offset,
+    );
 
-    // Spawn island
-    commands.spawn((
-        Mesh3d(mesh_handle),
-        MeshMaterial3d(material),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        DeferredRenderable,
-    ));
+    println!(
+        "Spawned mesh + {} point lights from {} emissive voxels",
+        result.light_entities.len(),
+        result.emissive_count
+    );
 
-    // Classic 3/4 isometric-style view - shows top, front, and side clearly
+    // Camera looking at the island - tighter framing to see details
+    // Island center is around Y=8 in world coords (after ground_level_offset)
+    let island_center = Vec3::new(0.0, 6.0, 0.0);
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(16.0, 12.0, 16.0).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
+        Transform::from_xyz(14.0, 12.0, 14.0).looking_at(island_center, Vec3::Y),
         DeferredCamera,
     ));
 
