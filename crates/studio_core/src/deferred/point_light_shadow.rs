@@ -416,6 +416,7 @@ pub fn prepare_point_shadow_bind_groups(
     
     // Create view bind groups for each light/face combination
     for light in &shadow_lights.lights {
+        bevy::log::info_once!("Shadow render using light at {:?}, radius {}", light.position, light.radius);
         let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
         
         for face_idx in 0..6 {

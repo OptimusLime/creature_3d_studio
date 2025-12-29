@@ -789,6 +789,263 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 1.0, 1.0);
     }
     
+    // Debug mode 34: Show raw -Y shadow map contents (not sampled by world pos, just display the texture)
+    if DEBUG_MODE == 34 {
+        // Map screen UV directly to shadow map UV to see what's actually stored
+        let shadow_uv = in.uv;
+        let tex_coord = vec2<i32>(shadow_uv * 512.0);
+        let raw_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+        // Show depth: 0.0 = black (close), 1.0 = white (far/empty)
+        return vec4<f32>(raw_depth, raw_depth, raw_depth, 1.0);
+    }
+    
+    // Debug mode 35: Overlay - show shadow map with computed sample UV as crosshair
+    if DEBUG_MODE == 35 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Show shadow map for -Y face
+            let shadow_uv = in.uv;
+            let tex_coord = vec2<i32>(shadow_uv * 512.0);
+            let raw_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+            
+            // Compute where THIS fragment would sample from
+            var sample_uv = vec2<f32>(0.5, 0.5);
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                sample_uv = vec2<f32>(
+                    light_to_frag.x / abs_vec.y * 0.5 + 0.5,
+                    light_to_frag.z / abs_vec.y * 0.5 + 0.5
+                );
+            }
+            
+            // Draw crosshair at sample UV location
+            let dist_to_sample = length(in.uv - sample_uv);
+            if dist_to_sample < 0.01 {
+                return vec4<f32>(1.0, 0.0, 0.0, 1.0); // Red dot at sample location
+            }
+            
+            return vec4<f32>(raw_depth, raw_depth, raw_depth, 1.0);
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 36: Sample shadow map using world position UV, show as color on geometry
+    // This shows where each ground point samples FROM - if correct, pillar shapes should appear
+    // at the pillar BASE positions on the ground
+    if DEBUG_MODE == 36 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Only for -Y face (ground)
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                let face_uv = vec2<f32>(
+                    light_to_frag.x / abs_vec.y * 0.5 + 0.5,
+                    light_to_frag.z / abs_vec.y * 0.5 + 0.5
+                );
+                let tex_coord = vec2<i32>(face_uv * 512.0);
+                let stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+                
+                // Compare with our depth
+                let radius = light.radius_padding.x;
+                let distance = length(light_to_frag);
+                let compare_depth = distance / radius;
+                
+                // If stored < compare, we're in shadow (something closer blocks us)
+                if stored_depth < compare_depth - 0.02 {
+                    return vec4<f32>(0.2, 0.0, 0.0, 1.0); // Dark red = shadow
+                } else {
+                    return vec4<f32>(0.0, 0.5, 0.0, 1.0); // Green = lit
+                }
+            }
+            return vec4<f32>(0.0, 0.0, 0.3, 1.0); // Blue = not -Y face
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 37: Same as 36 but with V flipped to test coordinate system
+    if DEBUG_MODE == 37 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Only for -Y face (ground)
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                let face_uv = vec2<f32>(
+                    light_to_frag.x / abs_vec.y * 0.5 + 0.5,
+                    1.0 - (light_to_frag.z / abs_vec.y * 0.5 + 0.5)  // FLIP V
+                );
+                let tex_coord = vec2<i32>(face_uv * 512.0);
+                let stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+                
+                // Compare with our depth
+                let radius = light.radius_padding.x;
+                let distance = length(light_to_frag);
+                let compare_depth = distance / radius;
+                
+                // If stored < compare, we're in shadow (something closer blocks us)
+                if stored_depth < compare_depth - 0.02 {
+                    return vec4<f32>(0.2, 0.0, 0.0, 1.0); // Dark red = shadow
+                } else {
+                    return vec4<f32>(0.0, 0.5, 0.0, 1.0); // Green = lit
+                }
+            }
+            return vec4<f32>(0.0, 0.0, 0.3, 1.0); // Blue = not -Y face
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 38: Try both U and V flipped
+    if DEBUG_MODE == 38 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Only for -Y face (ground)
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                let face_uv = vec2<f32>(
+                    1.0 - (light_to_frag.x / abs_vec.y * 0.5 + 0.5),  // FLIP U
+                    1.0 - (light_to_frag.z / abs_vec.y * 0.5 + 0.5)   // FLIP V
+                );
+                let tex_coord = vec2<i32>(face_uv * 512.0);
+                let stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+                
+                // Compare with our depth
+                let radius = light.radius_padding.x;
+                let distance = length(light_to_frag);
+                let compare_depth = distance / radius;
+                
+                // If stored < compare, we're in shadow (something closer blocks us)
+                if stored_depth < compare_depth - 0.02 {
+                    return vec4<f32>(0.2, 0.0, 0.0, 1.0); // Dark red = shadow
+                } else {
+                    return vec4<f32>(0.0, 0.5, 0.0, 1.0); // Green = lit
+                }
+            }
+            return vec4<f32>(0.0, 0.0, 0.3, 1.0); // Blue = not -Y face
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 39: Only flip U
+    if DEBUG_MODE == 39 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Only for -Y face (ground)
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                let face_uv = vec2<f32>(
+                    1.0 - (light_to_frag.x / abs_vec.y * 0.5 + 0.5),  // FLIP U only
+                    light_to_frag.z / abs_vec.y * 0.5 + 0.5
+                );
+                let tex_coord = vec2<i32>(face_uv * 512.0);
+                let stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+                
+                // Compare with our depth
+                let radius = light.radius_padding.x;
+                let distance = length(light_to_frag);
+                let compare_depth = distance / radius;
+                
+                // If stored < compare, we're in shadow (something closer blocks us)
+                if stored_depth < compare_depth - 0.02 {
+                    return vec4<f32>(0.2, 0.0, 0.0, 1.0); // Dark red = shadow
+                } else {
+                    return vec4<f32>(0.0, 0.5, 0.0, 1.0); // Green = lit
+                }
+            }
+            return vec4<f32>(0.0, 0.0, 0.3, 1.0); // Blue = not -Y face
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 40: Show world XZ position to verify pillar locations
+    if DEBUG_MODE == 40 {
+        // R = X position (-8 to +8 mapped to 0-1), G = Z position, B = Y position
+        let x_norm = (world_pos.x + 8.0) / 16.0;
+        let z_norm = (world_pos.z + 8.0) / 16.0;
+        let y_norm = world_pos.y / 8.0;
+        return vec4<f32>(clamp(x_norm, 0.0, 1.0), clamp(z_norm, 0.0, 1.0), clamp(y_norm, 0.0, 1.0), 1.0);
+    }
+    
+    // Debug mode 41: Show shadow map with markers at expected pillar positions
+    // Pillar 1: world (-2, 1-4, 2-3) -> sample UV calc: (-2/6*0.5+0.5, 2.5/6*0.5+0.5) = (0.33, 0.71)
+    // Pillar 2: world (2.5, 1-2, -3.5) -> sample UV calc: (2.5/6*0.5+0.5, -3.5/6*0.5+0.5) = (0.71, 0.21)
+    if DEBUG_MODE == 41 {
+        let tex_uv = in.uv;
+        let tex_coord = vec2<i32>(tex_uv * 512.0);
+        let raw_depth = textureLoad(point_shadow_face_ny, tex_coord, 0);
+        
+        // Expected pillar positions (where sampling shader would look)
+        let p1_uv = vec2<f32>(0.33, 0.71);  // Pillar 1
+        let p2_uv = vec2<f32>(0.71, 0.21);  // Pillar 2
+        
+        // Draw markers
+        if length(tex_uv - p1_uv) < 0.02 {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0);  // Red for pillar 1 expected
+        }
+        if length(tex_uv - p2_uv) < 0.02 {
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0);  // Blue for pillar 2 expected
+        }
+        
+        // Center marker
+        if length(tex_uv - vec2<f32>(0.5, 0.5)) < 0.01 {
+            return vec4<f32>(1.0, 1.0, 0.0, 1.0);  // Yellow for center
+        }
+        
+        return vec4<f32>(raw_depth, raw_depth, raw_depth, 1.0);
+    }
+    
+    // Debug mode 33: Show light_to_frag vector components for ground
+    if DEBUG_MODE == 33 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            
+            // Normalize to visible range: expect values -10 to +10, map to 0-1
+            let ltf_norm = (light_to_frag + 10.0) / 20.0;
+            return vec4<f32>(ltf_norm.x, ltf_norm.y, ltf_norm.z, 1.0);
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
+    // Debug mode 32: Show computed face_uv for -Y face (ground)
+    if DEBUG_MODE == 32 {
+        if point_lights.count.x > 0u {
+            let light = point_lights.lights[0];
+            let light_pos = light.position.xyz;
+            let light_to_frag = world_pos - light_pos;
+            let abs_vec = abs(light_to_frag);
+            
+            // Only show -Y face (ground looking up at light)
+            if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z && light_to_frag.y < 0.0 {
+                // Current -Y face UV calculation
+                let face_uv = vec2<f32>(
+                    light_to_frag.x / abs_vec.y * 0.5 + 0.5,
+                    light_to_frag.z / abs_vec.y * 0.5 + 0.5
+                );
+                // R = U, G = V, B = 0
+                return vec4<f32>(face_uv.x, face_uv.y, 0.0, 1.0);
+            } else {
+                // Not -Y face - show blue
+                return vec4<f32>(0.0, 0.0, 0.5, 1.0);
+            }
+        }
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
+    
     // Debug mode 30: Compare textureLoad vs textureSampleCompare on face 3 (-Y)
     // Split into 4 quadrants to test different compare values
     if DEBUG_MODE == 30 {
