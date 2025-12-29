@@ -1076,44 +1076,190 @@ total_light *= face_multiplier;
 
 ---
 
-## Roadmap Summary
+## Roadmap Summary - Lighting Focus
+
+**Current State**: Dark World scene with dual moons and basic point lights working.
+
+**Priority Order** (based on user preference):
+1. **A. High Volume Lights** - Many lights in same space
+2. **B. Point Light Shadows** - Lights cast shadows
+3. **C. Auto-gen Point Lights** - Generate from emissive voxels
+4. **D. Multi-Shadow (Moons)** - Both moons cast shadows
+5. **E. Day/Night Cycle** - Time-based moon transitions
+6. **F. Multi-frame Render** - Capture day/night sequence
 
 ```
-Current State (Phase 11 Complete - Shadow Mapping working!)
+Current State (Phase 13 Complete - Point Lights Working!)
         │
         ▼
 ┌────────────────────────┐
-│ Phase 11: SHADOWS      │  ✅ COMPLETE
-│   (Critical Visual)    │  2048x2048 shadow map, PCF 3x3
+│ Phase 14: HIGH VOLUME  │  ◀◀◀ CURRENT PRIORITY
+│   POINT LIGHTS         │  256+ lights, GPU optimization
 └────────┬───────────────┘
          │
          ▼
 ┌────────────────────────┐
-│ Phase 12: Vertex AO    │  ◀◀◀ NEXT PRIORITY
-│   (Visual Polish)      │  Corner/edge darkening
+│ Phase 15: POINT LIGHT  │  
+│   SHADOWS              │  Cube shadow maps per light
 └────────┬───────────────┘
          │
          ▼
-┌───────────────────┐
-│ Phase 13: Face    │  Performance
-│   Culling         │  16x geometry reduction
-└────────┬──────────┘
+┌────────────────────────┐
+│ Phase 16: AUTO-GEN     │
+│   POINT LIGHTS         │  From emissive voxels
+└────────┬───────────────┘
          │
          ▼
-┌───────────────────┐
-│ Phase 14: Greedy  │  More performance
-│   Meshing         │  Merge adjacent faces
-└────────┬──────────┘
+┌────────────────────────┐
+│ Phase 17: MULTI-SHADOW │
+│   (BOTH MOONS)         │  Second shadow map for orange moon
+└────────┬───────────────┘
          │
          ▼
-┌───────────────────┐
-│ Phase 15: Multi   │  Voxel world
-│   Chunk World     │  Larger scenes
-└────────┬──────────┘
+┌────────────────────────┐
+│ Phase 18: DAY/NIGHT    │
+│   CYCLE                │  Time-based moon colors, dusk/dawn
+└────────┬───────────────┘
          │
          ▼
-    Future: SSAO, OIT, Creatures...
+┌────────────────────────┐
+│ Phase 19: MULTI-FRAME  │
+│   RENDER               │  Capture day/night sequence
+└────────┬───────────────┘
+         │
+         ▼
+    Future: Face Culling, Greedy Meshing, SSAO...
 ```
+
+### Phase 13: Point Lights (COMPLETE)
+
+**Status**: ✅ COMPLETE
+
+**What was built**:
+- `DeferredPointLight` component with color, intensity, radius
+- Point light extraction to render world via `ExtractedPointLights` resource
+- Uniform buffer with up to 32 lights (MAX_POINT_LIGHTS)
+- Smooth quadratic attenuation: `(1 - (d/r)²)²`
+- Point light contribution in `deferred_lighting.wgsl`
+- Debug mode 6 for point lights visualization
+
+**Verification**: Dark world scene shows colored illumination from crystals on nearby surfaces.
+
+---
+
+### Phase 14: High Volume Point Lights (NEXT)
+
+**Goal**: Support 256+ point lights efficiently for dense light fields.
+
+**Why**: Current MAX_POINT_LIGHTS=32 is too low for scenes with many glowing voxels.
+
+**Approach**:
+1. Increase MAX_POINT_LIGHTS to 256 (or use storage buffer for unlimited)
+2. Implement light culling (only process lights near fragment)
+3. Consider clustered deferred lighting for better scaling
+
+**Tasks**:
+| ID | Task | Status |
+|----|------|--------|
+| 14.1 | Increase MAX_POINT_LIGHTS to 256 | Pending |
+| 14.2 | Switch from uniform to storage buffer | Pending |
+| 14.3 | Add distance culling in shader | Pending |
+| 14.4 | Test with 100+ lights | Pending |
+| 14.5 | Profile GPU performance | Pending |
+
+---
+
+### Phase 15: Point Light Shadows
+
+**Goal**: Point lights cast shadows using cube shadow maps.
+
+**Why**: Without shadows, lights "bleed" through walls unrealistically.
+
+**Architecture**:
+```
+For each shadow-casting point light:
+  Render 6 faces of cube shadow map
+  Sample cube map in lighting pass
+  Compare distance to light vs shadow depth
+```
+
+**Complexity**: HIGH - 6 render passes per shadow-casting light, expensive!
+
+**Optimization**: Limit shadow-casting lights (nearest 4-8 only)
+
+---
+
+### Phase 16: Auto-Generate Point Lights from Emissive Voxels
+
+**Goal**: Automatically create point lights at emissive voxel positions.
+
+**Algorithm**:
+1. During mesh build, collect emissive voxel positions
+2. For each emissive voxel:
+   - Create `DeferredPointLight` at voxel center
+   - Color = voxel color
+   - Intensity = emission * scale_factor
+   - Radius = emission-based (brighter = farther reach)
+
+**Why**: No manual placement needed. Glowing crystals automatically illuminate.
+
+---
+
+### Phase 17: Multi-Shadow (Both Moons)
+
+**Goal**: Both purple and orange moons cast independent shadows.
+
+**Implementation**:
+- Second 2048x2048 shadow map
+- Second light-space matrix
+- Sample both in lighting shader
+- Each moon's shadow only affects its own contribution
+
+---
+
+### Phase 18: Day/Night Cycle
+
+**Goal**: Time-based moon positions and colors with dusk/dawn transitions.
+
+**Concept**:
+```
+Time 0.0  (Midnight): Both moons high, full intensity
+Time 0.25 (Dawn):     Purple moon setting (orange tint), orange rising
+Time 0.5  (Midday):   Moons below horizon, only ambient (or sun mode?)
+Time 0.75 (Dusk):     Orange moon setting (red tint), purple rising
+Time 1.0  (Midnight): Back to start
+```
+
+**Implementation**:
+- `DayNightCycle` resource with time (0.0-1.0)
+- System updates moon direction, color, intensity
+- Pass to shader via uniforms
+
+---
+
+### Phase 19: Multi-Frame Render
+
+**Goal**: Capture day/night cycle as image sequence.
+
+**Implementation**:
+- Loop time from 0.0 to 1.0
+- Render and save screenshot at each step
+- Output: `screenshots/cycle_000.png` through `cycle_100.png`
+
+---
+
+## Deferred Optimization Phases
+
+These are lower priority than lighting features:
+
+### Phase 20: Face Culling
+Only generate mesh faces not occluded by adjacent voxels. 16x geometry reduction.
+
+### Phase 21: Greedy Meshing  
+Merge adjacent same-material faces into larger quads.
+
+### Phase 22: Multi-Chunk World
+Support worlds larger than single 16x16x16 chunk.
 
 ---
 

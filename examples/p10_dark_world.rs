@@ -108,12 +108,11 @@ fn setup(
         DeferredRenderable,
     ));
 
-    // Camera - angled view to show both purple and orange moon lighting
-    // Purple moon from back-left, orange moon from front-right
+    // Camera - closer to see point light details
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(20.0, 18.0, 30.0).looking_at(Vec3::new(0.0, 3.0, 0.0), Vec3::Y),
+        Transform::from_xyz(10.0, 8.0, 14.0).looking_at(Vec3::new(0.0, 4.0, 0.0), Vec3::Y),
         DeferredCamera,
         MainCamera,
     ));
@@ -156,14 +155,15 @@ fn setup(
     // === POINT LIGHTS ===
     // These are positioned at the crystal/glowing voxel locations
     // The scene is offset by (-16, 0, -16) so we need to adjust positions
+    // Higher intensity to make colors clearly visible
     let scene_offset = Vec3::new(-16.0, 0.0, -16.0);
     
     // Central altar orb (orange glow) - positioned at voxel (15.5, 6.5, 15.5)
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(1.0, 0.6, 0.2),  // Orange
-            intensity: 3.0,
-            radius: 12.0,
+            color: Color::srgb(1.0, 0.5, 0.1),  // Warm orange
+            intensity: 8.0,
+            radius: 15.0,
         },
         Transform::from_translation(Vec3::new(15.5, 7.0, 15.5) + scene_offset),
     ));
@@ -171,9 +171,9 @@ fn setup(
     // Purple crystal cluster (left side) - at voxel (5, 2, 8)
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(0.7, 0.2, 1.0),  // Purple
-            intensity: 2.5,
-            radius: 10.0,
+            color: Color::srgb(0.6, 0.1, 1.0),  // Deep purple
+            intensity: 6.0,
+            radius: 12.0,
         },
         Transform::from_translation(Vec3::new(5.0, 2.5, 8.0) + scene_offset),
     ));
@@ -181,9 +181,9 @@ fn setup(
     // Cyan crystal (front right) - at voxel (26, 2.5, 5)
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(0.2, 0.9, 1.0),  // Cyan
-            intensity: 2.5,
-            radius: 10.0,
+            color: Color::srgb(0.1, 0.9, 1.0),  // Bright cyan
+            intensity: 6.0,
+            radius: 12.0,
         },
         Transform::from_translation(Vec3::new(26.0, 2.5, 5.0) + scene_offset),
     ));
@@ -191,9 +191,9 @@ fn setup(
     // Magenta crystal (back) - at voxel (10, 2, 26)
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(1.0, 0.2, 0.7),  // Magenta
-            intensity: 2.5,
-            radius: 10.0,
+            color: Color::srgb(1.0, 0.1, 0.6),  // Hot magenta
+            intensity: 6.0,
+            radius: 12.0,
         },
         Transform::from_translation(Vec3::new(10.0, 2.5, 26.0) + scene_offset),
     ));
@@ -201,9 +201,9 @@ fn setup(
     // Floating rock orange crystal - at voxel (21.5, 10, 9.5)
     commands.spawn((
         DeferredPointLight {
-            color: Color::srgb(1.0, 0.6, 0.2),  // Orange
-            intensity: 2.0,
-            radius: 8.0,
+            color: Color::srgb(1.0, 0.4, 0.05),  // Deep orange
+            intensity: 5.0,
+            radius: 10.0,
         },
         Transform::from_translation(Vec3::new(21.5, 10.5, 9.5) + scene_offset),
     ));

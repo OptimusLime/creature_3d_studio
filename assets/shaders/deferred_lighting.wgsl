@@ -80,17 +80,17 @@ const FILL_INTENSITY: f32 = 0.4;
 // --- Dark World Mode (DARK_WORLD_MODE = 1) ---
 // Purple Moon - from back-left, moderate height
 const MOON1_DIRECTION: vec3<f32> = vec3<f32>(0.6, -0.6, 0.55);  // Back-left
-const MOON1_COLOR: vec3<f32> = vec3<f32>(0.55, 0.2, 0.85);  // Purple
-const MOON1_INTENSITY: f32 = 0.85;
+const MOON1_COLOR: vec3<f32> = vec3<f32>(0.4, 0.15, 0.7);  // Deep purple
+const MOON1_INTENSITY: f32 = 0.35;  // Dimmer - let point lights dominate
 
 // Orange Moon - from front-right, similar height (lights opposite faces)
 const MOON2_DIRECTION: vec3<f32> = vec3<f32>(-0.6, -0.6, -0.55);  // Front-right
-const MOON2_COLOR: vec3<f32> = vec3<f32>(1.0, 0.5, 0.15);  // Orange
-const MOON2_INTENSITY: f32 = 0.85;
+const MOON2_COLOR: vec3<f32> = vec3<f32>(1.0, 0.45, 0.1);  // Deep orange
+const MOON2_INTENSITY: f32 = 0.3;  // Dimmer
 
-// Dark world ambient - very dim purple (cold void)
-const DARK_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.04);
-const DARK_AMBIENT_INTENSITY: f32 = 0.1;
+// Dark world ambient - near zero (very dark scene)
+const DARK_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.01, 0.005, 0.02);
+const DARK_AMBIENT_INTENSITY: f32 = 0.05;
 
 // --- Fog Settings ---
 const FOG_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.03);  // Near black for dark world
