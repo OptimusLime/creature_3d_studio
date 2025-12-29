@@ -2,7 +2,7 @@
 //
 // This shader writes geometry data to multiple render targets (MRT):
 // - location 0: gColor (RGBA16F) - RGB = albedo, A = emission
-// - location 1: gNormal (RGBA16F) - RGB = world-space normal
+// - location 1: gNormal (RGBA16F) - RGB = world-space normal, A = ambient occlusion
 // - location 2: gPosition (RGBA32F) - XYZ = world position, W = linear depth
 //
 // NO LIGHTING is computed here - that happens in the lighting pass.
@@ -43,6 +43,7 @@ struct Vertex {
     @location(1) normal: vec3<f32>,
     @location(2) voxel_color: vec3<f32>,
     @location(3) voxel_emission: f32,
+    @location(4) voxel_ao: f32,
 }
 
 // Vertex output
@@ -52,12 +53,13 @@ struct VertexOutput {
     @location(1) world_normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) emission: f32,
+    @location(4) ao: f32,
 }
 
 // Fragment output - Multiple Render Targets
 struct FragmentOutput {
     @location(0) g_color: vec4<f32>,      // RGB = albedo, A = emission
-    @location(1) g_normal: vec4<f32>,     // RGB = world normal, A = unused
+    @location(1) g_normal: vec4<f32>,     // RGB = world normal, A = ambient occlusion
     @location(2) g_position: vec4<f32>,   // XYZ = world position, W = linear depth
 }
 
@@ -81,9 +83,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     );
     out.world_normal = normalize(normal_matrix * vertex.normal);
     
-    // Pass through color and emission
+    // Pass through color, emission, and AO
     out.color = vertex.voxel_color;
     out.emission = vertex.voxel_emission;
+    out.ao = vertex.voxel_ao;
     
     return out;
 }
@@ -106,9 +109,10 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     // Emission is stored as 0-1 normalized value
     out.g_color = vec4<f32>(in.color, in.emission);
     
-    // G-Buffer output 1: World-space normal (normalized)
+    // G-Buffer output 1: World-space normal + Ambient Occlusion
+    // AO is stored in the alpha channel (0.0 = fully occluded, 1.0 = fully lit)
     let normal = normalize(in.world_normal);
-    out.g_normal = vec4<f32>(normal, 0.0);
+    out.g_normal = vec4<f32>(normal, in.ao);
     
     // G-Buffer output 2: World position + linear depth
     // Linear depth is calculated from NDC z for use in fog/lighting

@@ -20,6 +20,8 @@ use super::labels::DeferredLabel;
 use super::lighting::DeferredLightingConfig;
 use super::lighting_node::{init_lighting_pipeline, LightingPassNode};
 use super::prepare::{prepare_gbuffer_textures, prepare_gbuffer_view_uniforms};
+use super::shadow::{init_shadow_pipeline, prepare_shadow_textures, ShadowConfig};
+use super::shadow_node::{prepare_shadow_mesh_bind_groups, prepare_shadow_view_uniforms, ShadowPassNode};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -45,6 +47,7 @@ impl Plugin for DeferredRenderingPlugin {
         // Main app resources
         app.init_resource::<DeferredLightingConfig>();
         app.init_resource::<BloomConfig>();
+        app.init_resource::<ShadowConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -55,6 +58,10 @@ impl Plugin for DeferredRenderingPlugin {
             warn!("RenderApp not found - deferred rendering disabled");
             return;
         };
+        
+        // Initialize shadow config in render world
+        // (Can't easily extract resources, so we create it directly)
+        render_app.init_resource::<ShadowConfig>();
 
         // Add extraction system for deferred meshes
         render_app.add_systems(ExtractSchedule, extract_deferred_meshes);
@@ -66,12 +73,15 @@ impl Plugin for DeferredRenderingPlugin {
         // - prepare_deferred_meshes collects extracted meshes for rendering
         // - update_gbuffer_mesh_bind_group creates mesh bind group for fallback test cube
         // - prepare_bloom_textures creates bloom mip chain textures
+        // - prepare_shadow_textures creates shadow map depth texture
+        // - prepare_shadow_view_uniforms creates light-space matrices
         render_app.add_systems(
             Render,
             (
                 init_gbuffer_geometry_pipeline.in_set(RenderSystems::Prepare),
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
                 init_bloom_pipeline.in_set(RenderSystems::Prepare),
+                init_shadow_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
                 prepare_gbuffer_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
@@ -85,11 +95,26 @@ impl Plugin for DeferredRenderingPlugin {
                 prepare_bloom_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_bloom_pipeline),
+                prepare_shadow_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_shadow_pipeline),
+                prepare_shadow_view_uniforms
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_shadow_pipeline),
+                prepare_shadow_mesh_bind_groups
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_shadow_pipeline)
+                    .after(prepare_deferred_meshes),
             ),
         );
 
         // Add render graph nodes
         render_app
+            // Shadow pass node (runs first to generate shadow map)
+            .add_render_graph_node::<ViewNodeRunner<ShadowPassNode>>(
+                Core3d,
+                DeferredLabel::ShadowPass,
+            )
             // G-Buffer pass node
             .add_render_graph_node::<ViewNodeRunner<GBufferPassNode>>(
                 Core3d,
@@ -107,11 +132,12 @@ impl Plugin for DeferredRenderingPlugin {
             );
 
         // Define render graph edges (execution order)
-        // G-Buffer runs first
+        // Shadow pass runs first (before any geometry rendering)
         render_app.add_render_graph_edges(
             Core3d,
             (
                 Node3d::StartMainPass,
+                DeferredLabel::ShadowPass,
                 DeferredLabel::GBufferPass,
             ),
         );
@@ -127,6 +153,6 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
 
-        info!("DeferredRenderingPlugin initialized with custom render graph");
+        info!("DeferredRenderingPlugin initialized with custom render graph (shadow mapping enabled)");
     }
 }

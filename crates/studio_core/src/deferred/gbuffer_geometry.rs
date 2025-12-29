@@ -10,8 +10,9 @@
 //! - Normal (Float32x3) at offset 12
 //! - VoxelColor (Float32x3) at offset 24
 //! - VoxelEmission (Float32) at offset 36
+//! - VoxelAO (Float32) at offset 40
 //!
-//! Total stride: 40 bytes
+//! Total stride: 44 bytes
 //!
 //! This matches Bevy's mesh storage order when using our custom attributes.
 
@@ -41,13 +42,14 @@ pub struct GBufferVertex {
     pub normal: [f32; 3],
     pub color: [f32; 3],
     pub emission: f32,
+    pub ao: f32,
 }
 
 impl GBufferVertex {
     /// Vertex buffer layout for the test cube (matches our GBufferVertex struct).
     pub fn vertex_buffer_layout() -> VertexBufferLayout {
         VertexBufferLayout {
-            array_stride: 40, // 12 + 12 + 12 + 4 = 40 bytes
+            array_stride: 44, // 12 + 12 + 12 + 4 + 4 = 44 bytes
             step_mode: VertexStepMode::Vertex,
             attributes: vec![
                 VertexAttribute {
@@ -70,6 +72,11 @@ impl GBufferVertex {
                     offset: 36,
                     shader_location: 3, // voxel_emission
                 },
+                VertexAttribute {
+                    format: VertexFormat::Float32.into(),
+                    offset: 40,
+                    shader_location: 4, // voxel_ao
+                },
             ],
         }
     }
@@ -82,9 +89,10 @@ impl GBufferVertex {
 /// - Normal (ID=1) at offset 12
 /// - VoxelColor (ID=988540917) at offset 24
 /// - VoxelEmission (ID=988540918) at offset 36
+/// - VoxelAO (ID=988540919) at offset 40
 pub fn voxel_mesh_vertex_buffer_layout() -> VertexBufferLayout {
     VertexBufferLayout {
-        array_stride: 40, // 12 + 12 + 12 + 4 = 40 bytes
+        array_stride: 44, // 12 + 12 + 12 + 4 + 4 = 44 bytes
         step_mode: VertexStepMode::Vertex,
         attributes: vec![
             VertexAttribute {
@@ -106,6 +114,11 @@ pub fn voxel_mesh_vertex_buffer_layout() -> VertexBufferLayout {
                 format: VertexFormat::Float32.into(),
                 offset: 36,
                 shader_location: 3, // @location(3) voxel_emission
+            },
+            VertexAttribute {
+                format: VertexFormat::Float32.into(),
+                offset: 40,
+                shader_location: 4, // @location(4) voxel_ao
             },
         ],
     }
@@ -242,6 +255,7 @@ fn generate_test_cube() -> (Vec<GBufferVertex>, Vec<u32>) {
                 normal: *normal,
                 color,
                 emission,
+                ao: 1.0, // Test cube has no neighbors, full AO
             });
         }
 

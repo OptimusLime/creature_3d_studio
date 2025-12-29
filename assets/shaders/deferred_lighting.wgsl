@@ -5,14 +5,24 @@
 //
 // G-Buffer inputs:
 // - gColor: RGB = albedo, A = emission intensity (0-1)
-// - gNormal: RGB = world-space normal (raw -1 to +1, NOT encoded)
+// - gNormal: RGB = world-space normal, A = ambient occlusion (0-1)
 // - gPosition: XYZ = world position, W = linear depth
 
-// G-buffer textures
+// G-buffer textures (bind group 0)
 @group(0) @binding(0) var gColor: texture_2d<f32>;
 @group(0) @binding(1) var gNormal: texture_2d<f32>;
 @group(0) @binding(2) var gPosition: texture_2d<f32>;
 @group(0) @binding(3) var gbuffer_sampler: sampler;
+
+// Shadow map (bind group 1)
+@group(1) @binding(0) var shadow_map: texture_depth_2d;
+@group(1) @binding(1) var shadow_sampler: sampler_comparison;
+
+// Shadow uniforms (bind group 2) - light-space matrix
+struct ShadowUniforms {
+    light_view_proj: mat4x4<f32>,
+}
+@group(2) @binding(0) var<uniform> shadow: ShadowUniforms;
 
 // Fullscreen triangle vertices
 struct VertexOutput {
@@ -51,8 +61,68 @@ const FOG_COLOR: vec3<f32> = vec3<f32>(0.102, 0.039, 0.180); // #1a0a2e - deep p
 const FOG_START: f32 = 15.0;
 const FOG_END: f32 = 80.0;
 
-// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only
+// Shadow map constants
+const SHADOW_MAP_SIZE: f32 = 2048.0;
+const SHADOW_BIAS_MIN: f32 = 0.001;  // Minimum bias to prevent shadow acne
+const SHADOW_BIAS_MAX: f32 = 0.01;   // Maximum bias for grazing angles
+
+// Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only, 4 = shadow only, 5 = AO only
 const DEBUG_MODE: i32 = 0;
+
+// Calculate shadow factor using PCF (Percentage Closer Filtering).
+// Returns 0.0 for fully in shadow, 1.0 for fully lit.
+fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+    // Transform world position to light clip space
+    let light_space_pos = shadow.light_view_proj * vec4<f32>(world_pos, 1.0);
+    
+    // Perspective divide (orthographic projection, but still needed for proper coords)
+    let proj_coords = light_space_pos.xyz / light_space_pos.w;
+    
+    // Transform from NDC [-1,1] to texture UV [0,1]
+    // Note: Y is flipped because texture coordinates go top-to-bottom
+    let shadow_uv = vec2<f32>(
+        proj_coords.x * 0.5 + 0.5,
+        proj_coords.y * -0.5 + 0.5  // Flip Y
+    );
+    
+    // Current fragment depth in light space
+    let current_depth = proj_coords.z;
+    
+    // Check if outside shadow map bounds
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
+        return 1.0;  // Outside shadow map = not in shadow
+    }
+    
+    // Check if behind the light's far plane
+    if current_depth > 1.0 || current_depth < 0.0 {
+        return 1.0;  // Outside frustum = not in shadow
+    }
+    
+    // Calculate slope-scaled bias based on surface angle to light
+    // Surfaces perpendicular to light need less bias, grazing angles need more
+    let sun_dir = normalize(-SUN_DIRECTION);
+    let n_dot_l = max(dot(world_normal, sun_dir), 0.0);
+    let bias = max(SHADOW_BIAS_MAX * (1.0 - n_dot_l), SHADOW_BIAS_MIN);
+    
+    // PCF 3x3 sampling for soft shadow edges
+    var shadow_sum = 0.0;
+    let texel_size = 1.0 / SHADOW_MAP_SIZE;
+    
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            // textureSampleCompare returns 1.0 if current_depth - bias < shadow_depth
+            shadow_sum += textureSampleCompare(
+                shadow_map,
+                shadow_sampler,
+                shadow_uv + offset,
+                current_depth - bias
+            );
+        }
+    }
+    
+    return shadow_sum / 9.0;
+}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -67,6 +137,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Normal is stored directly as world-space normal (-1 to +1)
     // NO encoding/decoding needed - just normalize to handle interpolation
     let world_normal = normalize(normal_sample.rgb);
+    
+    // Ambient occlusion is stored in normal.a (0 = fully occluded, 1 = fully lit)
+    let ao = normal_sample.a;
     
     let world_pos = position_sample.xyz;
     let depth = position_sample.w;
@@ -93,15 +166,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(FOG_COLOR, 1.0);
     }
     
+    // --- Shadow Calculation ---
+    let shadow_factor = calculate_shadow(world_pos, world_normal);
+    
+    // Debug: Show shadow only
+    if DEBUG_MODE == 4 {
+        return vec4<f32>(vec3<f32>(shadow_factor), 1.0);
+    }
+    
+    // Debug: Show AO only
+    if DEBUG_MODE == 5 {
+        return vec4<f32>(vec3<f32>(ao), 1.0);
+    }
+    
     // --- Lighting Calculation ---
     
-    // Ambient - base illumination for all surfaces
+    // Ambient - base illumination for all surfaces (not affected by shadow)
     var total_light = AMBIENT_COLOR * AMBIENT_INTENSITY;
     
-    // Main directional light (sun) - standard N dot L
+    // Main directional light (sun) - standard N dot L, modulated by shadow
     let sun_dir = normalize(-SUN_DIRECTION);  // Direction TO the light
     let n_dot_sun = max(dot(world_normal, sun_dir), 0.0);
-    total_light += SUN_COLOR * SUN_INTENSITY * n_dot_sun;
+    total_light += SUN_COLOR * SUN_INTENSITY * n_dot_sun * shadow_factor;
     
     // Fill light from opposite side - prevents pure black shadows
     let fill_dir = normalize(-FILL_DIRECTION);  // Direction TO the light
@@ -131,6 +217,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Apply face multiplier to total light
     total_light *= face_multiplier;
+    
+    // --- Per-Vertex Ambient Occlusion ---
+    // AO darkens corners and edges where blocks meet.
+    // This is the key visual feature that makes voxels "pop" like Minecraft.
+    // Applied after all other lighting as a multiplier.
+    total_light *= ao;
     
     // Apply lighting to albedo
     var final_color = albedo * total_light;

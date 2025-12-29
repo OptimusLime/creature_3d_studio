@@ -2,9 +2,10 @@
 //!
 //! This node performs a fullscreen pass that:
 //! 1. Reads from the G-buffer textures (color, normal, position)
-//! 2. Computes lighting (directional + point lights)
-//! 3. Applies fog
-//! 4. Outputs to the view target
+//! 2. Samples the shadow map for shadow determination
+//! 3. Computes lighting (directional + point lights)
+//! 4. Applies fog
+//! 5. Outputs to the view target
 
 use bevy::prelude::*;
 use bevy::image::BevyDefault;
@@ -13,17 +14,19 @@ use bevy::render::{
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
         BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-        CachedRenderPipelineId, ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp,
-        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
-        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-        SamplerDescriptor, ShaderStages, StoreOp, TextureFormat, TextureSampleType,
-        TextureViewDimension, VertexState,
+        BufferBindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction,
+        FilterMode, FragmentState, LoadOp, MultisampleState, Operations, PipelineCache,
+        PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor,
+        Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, StoreOp, TextureFormat,
+        TextureSampleType, TextureViewDimension, VertexState,
     },
     renderer::{RenderContext, RenderDevice},
     view::ViewTarget,
 };
 
 use super::gbuffer::ViewGBufferTextures;
+use super::shadow::ViewShadowTextures;
+use super::shadow_node::ViewShadowUniforms;
 
 /// Render graph node that performs deferred lighting.
 ///
@@ -37,13 +40,15 @@ impl ViewNode for LightingPassNode {
         &'static ExtractedCamera,
         &'static ViewTarget,
         &'static ViewGBufferTextures,
+        &'static ViewShadowTextures,
+        &'static ViewShadowUniforms,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, target, gbuffer, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -59,10 +64,10 @@ impl ViewNode for LightingPassNode {
             return Ok(());
         };
 
-        // Create bind group for G-buffer textures
-        let bind_group = render_context.render_device().create_bind_group(
-            "lighting_bind_group",
-            &lighting_pipeline.bind_group_layout,
+        // Create bind group for G-buffer textures (group 0)
+        let gbuffer_bind_group = render_context.render_device().create_bind_group(
+            "lighting_gbuffer_bind_group",
+            &lighting_pipeline.gbuffer_layout,
             &[
                 BindGroupEntry {
                     binding: 0,
@@ -78,9 +83,35 @@ impl ViewNode for LightingPassNode {
                 },
                 BindGroupEntry {
                     binding: 3,
-                    resource: BindingResource::Sampler(&lighting_pipeline.sampler),
+                    resource: BindingResource::Sampler(&lighting_pipeline.gbuffer_sampler),
                 },
             ],
+        );
+        
+        // Create bind group for shadow map (group 1)
+        let shadow_map_bind_group = render_context.render_device().create_bind_group(
+            "lighting_shadow_bind_group",
+            &lighting_pipeline.shadow_map_layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&shadow_textures.depth.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&lighting_pipeline.shadow_sampler),
+                },
+            ],
+        );
+        
+        // Create bind group for shadow uniforms (group 2)
+        let shadow_uniforms_bind_group = render_context.render_device().create_bind_group(
+            "lighting_shadow_uniforms_bind_group",
+            &lighting_pipeline.shadow_uniforms_layout,
+            &[BindGroupEntry {
+                binding: 0,
+                resource: shadow_uniforms.buffer.as_entire_binding(),
+            }],
         );
 
         // Begin render pass writing to view target
@@ -112,7 +143,10 @@ impl ViewNode for LightingPassNode {
 
         // Draw fullscreen triangle
         render_pass.set_render_pipeline(pipeline);
-        render_pass.set_bind_group(0, &bind_group, &[]);
+        render_pass.set_bind_group(0, &gbuffer_bind_group, &[]);
+        render_pass.set_bind_group(1, &shadow_map_bind_group, &[]);
+        render_pass.set_bind_group(2, &shadow_uniforms_bind_group, &[]);
+        
         render_pass.draw(0..3, 0..1);
 
         Ok(())
@@ -123,8 +157,16 @@ impl ViewNode for LightingPassNode {
 #[derive(Resource)]
 pub struct LightingPipeline {
     pub pipeline_id: CachedRenderPipelineId,
-    pub bind_group_layout: BindGroupLayout,
-    pub sampler: Sampler,
+    /// G-buffer textures layout (group 0)
+    pub gbuffer_layout: BindGroupLayout,
+    /// G-buffer sampler (point sampling)
+    pub gbuffer_sampler: Sampler,
+    /// Shadow map texture layout (group 1)
+    pub shadow_map_layout: BindGroupLayout,
+    /// Shadow comparison sampler
+    pub shadow_sampler: Sampler,
+    /// Shadow uniforms layout (group 2)
+    pub shadow_uniforms_layout: BindGroupLayout,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -140,11 +182,10 @@ pub fn init_lighting_pipeline(
     if existing.is_some() {
         return;
     }
-    
 
-    // Create bind group layout for G-buffer textures
-    let bind_group_layout = render_device.create_bind_group_layout(
-        "lighting_bind_group_layout",
+    // Create bind group layout for G-buffer textures (group 0)
+    let gbuffer_layout = render_device.create_bind_group_layout(
+        "lighting_gbuffer_layout",
         &[
             // gColor texture (Rgba16Float is filterable but we use point sampling)
             BindGroupLayoutEntry {
@@ -179,7 +220,7 @@ pub fn init_lighting_pipeline(
                 },
                 count: None,
             },
-            // Sampler (non-filtering since we sample position texture which is Rgba32Float)
+            // G-buffer sampler (non-filtering since we sample position texture which is Rgba32Float)
             BindGroupLayoutEntry {
                 binding: 3,
                 visibility: ShaderStages::FRAGMENT,
@@ -188,22 +229,78 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
+    
+    // Create bind group layout for shadow map (group 1)
+    let shadow_map_layout = render_device.create_bind_group_layout(
+        "lighting_shadow_map_layout",
+        &[
+            // Shadow depth texture
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Shadow comparison sampler
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Comparison),
+                count: None,
+            },
+        ],
+    );
+    
+    // Create bind group layout for shadow uniforms (group 2)
+    let shadow_uniforms_layout = render_device.create_bind_group_layout(
+        "lighting_shadow_uniforms_layout",
+        &[
+            // Light-space view-projection matrix
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    );
 
-    // Create sampler
-    let sampler = render_device.create_sampler(&SamplerDescriptor {
+    // Create G-buffer sampler (point sampling)
+    let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
         label: Some("gbuffer_sampler"),
         mag_filter: FilterMode::Nearest,
         min_filter: FilterMode::Nearest,
+        ..default()
+    });
+    
+    // Create shadow comparison sampler
+    let shadow_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("shadow_comparison_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        compare: Some(CompareFunction::LessEqual),
         ..default()
     });
 
     // Load shader via asset server
     let shader = asset_server.load("shaders/deferred_lighting.wgsl");
 
-    // Queue pipeline creation
+    // Queue pipeline creation with all bind group layouts
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("deferred_lighting_pipeline".into()),
-        layout: vec![bind_group_layout.clone()],
+        layout: vec![
+            gbuffer_layout.clone(),
+            shadow_map_layout.clone(),
+            shadow_uniforms_layout.clone(),
+        ],
         push_constant_ranges: vec![],
         vertex: VertexState {
             shader: shader.clone(),
@@ -229,7 +326,12 @@ pub fn init_lighting_pipeline(
 
     commands.insert_resource(LightingPipeline {
         pipeline_id,
-        bind_group_layout,
-        sampler,
+        gbuffer_layout,
+        gbuffer_sampler,
+        shadow_map_layout,
+        shadow_sampler,
+        shadow_uniforms_layout,
     });
+    
+    info!("LightingPipeline initialized with shadow mapping support");
 }

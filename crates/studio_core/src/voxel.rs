@@ -134,6 +134,23 @@ impl VoxelChunk {
     pub fn is_empty(&self) -> bool {
         self.count() == 0
     }
+
+    /// Check if a voxel exists at the given position (with signed coordinates).
+    /// Returns true if there's a solid voxel, false if empty or out of bounds.
+    /// This is useful for AO calculations where we need to check neighbors
+    /// that might be outside the chunk bounds.
+    pub fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
+        if x < 0 || y < 0 || z < 0 {
+            return false;
+        }
+        self.get(x as usize, y as usize, z as usize).is_some()
+    }
+
+    /// Check if a neighbor at offset (dx, dy, dz) from (x, y, z) is solid.
+    /// Returns true if solid, false if empty or out of bounds.
+    pub fn is_neighbor_solid(&self, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
+        self.is_solid(x as i32 + dx, y as i32 + dy, z as i32 + dz)
+    }
 }
 
 #[cfg(test)]

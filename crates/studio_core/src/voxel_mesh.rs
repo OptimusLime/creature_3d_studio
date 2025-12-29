@@ -9,8 +9,22 @@
 //! - normal: face normal
 //! - color: RGB from voxel (custom attribute)
 //! - emission: emission intensity from voxel (custom attribute)
+//! - ao: ambient occlusion (0.0-1.0, where 1.0 = fully lit, lower = darker corners)
 //!
 //! The custom shader reads these attributes and applies lighting with emission support.
+//!
+//! ## Per-Vertex Ambient Occlusion
+//!
+//! AO is calculated at mesh generation time using the algorithm from:
+//! https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/
+//!
+//! For each vertex of a face, we check the 3 corner-adjacent voxels:
+//! - side1: adjacent along one axis of the face
+//! - side2: adjacent along the other axis of the face  
+//! - corner: diagonally adjacent
+//!
+//! AO value = 3 - (side1 + side2 + corner), normalized to [0,1]
+//! Special case: if both sides are solid, corner is occluded (AO = 0)
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology};
@@ -30,6 +44,11 @@ pub const ATTRIBUTE_VOXEL_COLOR: MeshVertexAttribute =
 /// Custom vertex attribute for per-vertex emission.
 pub const ATTRIBUTE_VOXEL_EMISSION: MeshVertexAttribute =
     MeshVertexAttribute::new("VoxelEmission", 988540918, VertexFormat::Float32);
+
+/// Custom vertex attribute for per-vertex ambient occlusion.
+/// 1.0 = fully lit (no occlusion), 0.0 = fully occluded (dark corner)
+pub const ATTRIBUTE_VOXEL_AO: MeshVertexAttribute =
+    MeshVertexAttribute::new("VoxelAO", 988540919, VertexFormat::Float32);
 
 /// Custom material for voxel rendering.
 ///
@@ -69,6 +88,7 @@ impl Material for VoxelMaterial {
             Mesh::ATTRIBUTE_NORMAL.at_shader_location(1),
             ATTRIBUTE_VOXEL_COLOR.at_shader_location(2),
             ATTRIBUTE_VOXEL_EMISSION.at_shader_location(3),
+            ATTRIBUTE_VOXEL_AO.at_shader_location(4),
         ])?;
 
         descriptor.vertex.buffers = vec![vertex_layout];
@@ -88,7 +108,7 @@ impl Plugin for VoxelMaterialPlugin {
 /// Build a single mesh from a VoxelChunk.
 ///
 /// Each filled voxel generates 6 quads (24 vertices, 36 indices).
-/// Vertices include position, normal, color (RGB), and emission attributes.
+/// Vertices include position, normal, color (RGB), emission, and AO attributes.
 ///
 /// The mesh is centered at origin (chunk coords 0-15 map to world -8 to +7).
 pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
@@ -96,6 +116,7 @@ pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut colors: Vec<[f32; 3]> = Vec::new();
     let mut emissions: Vec<f32> = Vec::new();
+    let mut aos: Vec<f32> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     // Offset to center chunk at origin
@@ -107,12 +128,17 @@ pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
         let color = voxel.color_f32();
         let emission = voxel.emission_f32();
 
-        // Generate 6 faces for this voxel
-        add_cube_faces(
+        // Generate 6 faces for this voxel with AO
+        add_cube_faces_with_ao(
+            chunk,
+            x,
+            y,
+            z,
             &mut positions,
             &mut normals,
             &mut colors,
             &mut emissions,
+            &mut aos,
             &mut indices,
             base_pos,
             color,
@@ -126,15 +152,135 @@ pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
         .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
         .with_inserted_indices(Indices::U32(indices))
 }
 
+/// Calculate ambient occlusion for a vertex based on neighboring voxels.
+///
+/// For a vertex at a corner of a face, we check 3 neighbors:
+/// - side1: adjacent voxel along one edge of the face
+/// - side2: adjacent voxel along the other edge of the face
+/// - corner: diagonally adjacent voxel
+///
+/// AO value is based on how many of these are solid:
+/// - 0 solid: AO = 1.0 (fully lit)
+/// - 1 solid: AO = 0.75
+/// - 2 solid: AO = 0.5
+/// - 3 solid: AO = 0.25
+///
+/// Special case: if both sides are solid, the corner is automatically
+/// occluded even if empty (prevents light leaking through diagonal cracks).
+fn calculate_vertex_ao(side1: bool, side2: bool, corner: bool) -> f32 {
+    if side1 && side2 {
+        // Both sides solid = maximum occlusion (corner blocked)
+        0.0
+    } else {
+        // Count solid neighbors
+        let count = side1 as u8 + side2 as u8 + corner as u8;
+        // Map 0->1.0, 1->0.7, 2->0.4, 3->0.1
+        1.0 - (count as f32 * 0.3)
+    }
+}
+
+/// Face direction enum for AO calculation
+#[derive(Clone, Copy)]
+enum FaceDir {
+    PosX,
+    NegX,
+    PosY,
+    NegY,
+    PosZ,
+    NegZ,
+}
+
+/// Get the AO neighbor offsets for each vertex of a face.
+/// Returns [(side1, side2, corner); 4] for the 4 vertices of the face.
+/// Each offset is (dx, dy, dz) relative to the voxel position.
+fn get_ao_offsets(face: FaceDir) -> [[(i32, i32, i32); 3]; 4] {
+    match face {
+        // +X face: vertices at x+1, checking neighbors in Y and Z directions
+        FaceDir::PosX => [
+            // Vertex 0: (1,0,0) - bottom-back corner
+            [(1, -1, 0), (1, 0, -1), (1, -1, -1)],
+            // Vertex 1: (1,1,0) - top-back corner
+            [(1, 1, 0), (1, 0, -1), (1, 1, -1)],
+            // Vertex 2: (1,1,1) - top-front corner
+            [(1, 1, 0), (1, 0, 1), (1, 1, 1)],
+            // Vertex 3: (1,0,1) - bottom-front corner
+            [(1, -1, 0), (1, 0, 1), (1, -1, 1)],
+        ],
+        // -X face: vertices at x-1
+        FaceDir::NegX => [
+            // Vertex 0: (0,0,1) - bottom-front corner
+            [(-1, -1, 0), (-1, 0, 1), (-1, -1, 1)],
+            // Vertex 1: (0,1,1) - top-front corner
+            [(-1, 1, 0), (-1, 0, 1), (-1, 1, 1)],
+            // Vertex 2: (0,1,0) - top-back corner
+            [(-1, 1, 0), (-1, 0, -1), (-1, 1, -1)],
+            // Vertex 3: (0,0,0) - bottom-back corner
+            [(-1, -1, 0), (-1, 0, -1), (-1, -1, -1)],
+        ],
+        // +Y face (top): vertices at y+1, checking neighbors in X and Z
+        FaceDir::PosY => [
+            // Vertex 0: (0,1,0) - back-left corner
+            [(0, 1, -1), (-1, 1, 0), (-1, 1, -1)],
+            // Vertex 1: (0,1,1) - front-left corner
+            [(0, 1, 1), (-1, 1, 0), (-1, 1, 1)],
+            // Vertex 2: (1,1,1) - front-right corner
+            [(0, 1, 1), (1, 1, 0), (1, 1, 1)],
+            // Vertex 3: (1,1,0) - back-right corner
+            [(0, 1, -1), (1, 1, 0), (1, 1, -1)],
+        ],
+        // -Y face (bottom): vertices at y-1
+        FaceDir::NegY => [
+            // Vertex 0: (0,0,1) - front-left corner
+            [(0, -1, 1), (-1, -1, 0), (-1, -1, 1)],
+            // Vertex 1: (0,0,0) - back-left corner
+            [(0, -1, -1), (-1, -1, 0), (-1, -1, -1)],
+            // Vertex 2: (1,0,0) - back-right corner
+            [(0, -1, -1), (1, -1, 0), (1, -1, -1)],
+            // Vertex 3: (1,0,1) - front-right corner
+            [(0, -1, 1), (1, -1, 0), (1, -1, 1)],
+        ],
+        // +Z face (front): vertices at z+1, checking neighbors in X and Y
+        FaceDir::PosZ => [
+            // Vertex 0: (0,0,1) - bottom-left corner
+            [(-1, 0, 1), (0, -1, 1), (-1, -1, 1)],
+            // Vertex 1: (1,0,1) - bottom-right corner
+            [(1, 0, 1), (0, -1, 1), (1, -1, 1)],
+            // Vertex 2: (1,1,1) - top-right corner
+            [(1, 0, 1), (0, 1, 1), (1, 1, 1)],
+            // Vertex 3: (0,1,1) - top-left corner
+            [(-1, 0, 1), (0, 1, 1), (-1, 1, 1)],
+        ],
+        // -Z face (back): vertices at z-1
+        FaceDir::NegZ => [
+            // Vertex 0: (1,0,0) - bottom-right corner
+            [(1, 0, -1), (0, -1, -1), (1, -1, -1)],
+            // Vertex 1: (0,0,0) - bottom-left corner
+            [(-1, 0, -1), (0, -1, -1), (-1, -1, -1)],
+            // Vertex 2: (0,1,0) - top-left corner
+            [(-1, 0, -1), (0, 1, -1), (-1, 1, -1)],
+            // Vertex 3: (1,1,0) - top-right corner
+            [(1, 0, -1), (0, 1, -1), (1, 1, -1)],
+        ],
+    }
+}
+
 /// Add 6 faces (24 vertices, 36 indices) for a unit cube at the given position.
-fn add_cube_faces(
+/// Includes per-vertex ambient occlusion calculation.
+#[allow(clippy::too_many_arguments)]
+fn add_cube_faces_with_ao(
+    chunk: &VoxelChunk,
+    vx: usize,
+    vy: usize,
+    vz: usize,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 3]>,
     emissions: &mut Vec<f32>,
+    aos: &mut Vec<f32>,
     indices: &mut Vec<u32>,
     base: [f32; 3],
     color: [f32; 3],
@@ -142,9 +288,8 @@ fn add_cube_faces(
 ) {
     let base_index = positions.len() as u32;
 
-    // Face definitions: (normal, 4 corner offsets)
-    // Each face is a quad with vertices in CCW order when viewed from outside
-    let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
+    // Face definitions: (normal, 4 corner offsets, face direction for AO)
+    let faces: [([f32; 3], [[f32; 3]; 4], FaceDir); 6] = [
         // +X face (right)
         (
             [1.0, 0.0, 0.0],
@@ -154,6 +299,7 @@ fn add_cube_faces(
                 [1.0, 1.0, 1.0],
                 [1.0, 0.0, 1.0],
             ],
+            FaceDir::PosX,
         ),
         // -X face (left)
         (
@@ -164,6 +310,7 @@ fn add_cube_faces(
                 [0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0],
             ],
+            FaceDir::NegX,
         ),
         // +Y face (top)
         (
@@ -174,6 +321,7 @@ fn add_cube_faces(
                 [1.0, 1.0, 1.0],
                 [1.0, 1.0, 0.0],
             ],
+            FaceDir::PosY,
         ),
         // -Y face (bottom)
         (
@@ -184,6 +332,7 @@ fn add_cube_faces(
                 [1.0, 0.0, 0.0],
                 [1.0, 0.0, 1.0],
             ],
+            FaceDir::NegY,
         ),
         // +Z face (front)
         (
@@ -194,6 +343,7 @@ fn add_cube_faces(
                 [1.0, 1.0, 1.0],
                 [0.0, 1.0, 1.0],
             ],
+            FaceDir::PosZ,
         ),
         // -Z face (back)
         (
@@ -204,14 +354,18 @@ fn add_cube_faces(
                 [0.0, 1.0, 0.0],
                 [1.0, 1.0, 0.0],
             ],
+            FaceDir::NegZ,
         ),
     ];
 
-    for (face_idx, (normal, corners)) in faces.iter().enumerate() {
+    for (face_idx, (normal, corners, face_dir)) in faces.iter().enumerate() {
         let face_base = base_index + (face_idx as u32 * 4);
 
+        // Get AO offsets for this face direction
+        let ao_offsets = get_ao_offsets(*face_dir);
+
         // Add 4 vertices for this face
-        for corner in corners {
+        for (vert_idx, corner) in corners.iter().enumerate() {
             positions.push([
                 base[0] + corner[0],
                 base[1] + corner[1],
@@ -220,6 +374,14 @@ fn add_cube_faces(
             normals.push(*normal);
             colors.push(color);
             emissions.push(emission);
+
+            // Calculate AO for this vertex
+            let offsets = &ao_offsets[vert_idx];
+            let side1 = chunk.is_neighbor_solid(vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
+            let side2 = chunk.is_neighbor_solid(vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
+            let corner_solid = chunk.is_neighbor_solid(vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+            let ao = calculate_vertex_ao(side1, side2, corner_solid);
+            aos.push(ao);
         }
 
         // Add 2 triangles (6 indices) for this face
@@ -327,5 +489,67 @@ mod tests {
 
         // Check normal attribute exists
         assert!(mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
+    }
+
+    #[test]
+    fn test_mesh_has_ao_attribute() {
+        let mut chunk = VoxelChunk::new();
+        chunk.set(8, 8, 8, Voxel::solid(255, 0, 0));
+
+        let mesh = build_chunk_mesh(&chunk);
+
+        // Check AO attribute exists
+        assert!(mesh.attribute(ATTRIBUTE_VOXEL_AO).is_some());
+    }
+
+    #[test]
+    fn test_isolated_voxel_has_full_ao() {
+        let mut chunk = VoxelChunk::new();
+        chunk.set(8, 8, 8, Voxel::solid(255, 0, 0));
+
+        let mesh = build_chunk_mesh(&chunk);
+
+        // An isolated voxel should have AO = 1.0 for all vertices (no neighbors)
+        if let Some(bevy::mesh::VertexAttributeValues::Float32(ao_values)) =
+            mesh.attribute(ATTRIBUTE_VOXEL_AO)
+        {
+            for ao in ao_values {
+                assert!(
+                    (*ao - 1.0).abs() < 0.01,
+                    "Isolated voxel should have AO = 1.0, got {}",
+                    ao
+                );
+            }
+        } else {
+            panic!("AO attribute not found or wrong type");
+        }
+    }
+
+    #[test]
+    fn test_corner_voxels_have_reduced_ao() {
+        let mut chunk = VoxelChunk::new();
+        // Create a 2x2x2 cube of voxels - inner corners should have reduced AO
+        for x in 7..9 {
+            for y in 7..9 {
+                for z in 7..9 {
+                    chunk.set(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+
+        let mesh = build_chunk_mesh(&chunk);
+
+        // With neighbors, some AO values should be less than 1.0
+        if let Some(bevy::mesh::VertexAttributeValues::Float32(ao_values)) =
+            mesh.attribute(ATTRIBUTE_VOXEL_AO)
+        {
+            let has_occluded = ao_values.iter().any(|ao| *ao < 0.99);
+            assert!(
+                has_occluded,
+                "2x2x2 cube should have some occluded vertices"
+            );
+        } else {
+            panic!("AO attribute not found or wrong type");
+        }
     }
 }

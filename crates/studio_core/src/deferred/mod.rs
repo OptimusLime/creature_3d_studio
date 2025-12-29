@@ -51,6 +51,8 @@ mod lighting;
 mod lighting_node;
 mod plugin;
 mod prepare;
+mod shadow;
+mod shadow_node;
 
 pub use bloom::*;
 pub use bloom_node::*;
@@ -61,3 +63,5 @@ pub use gbuffer_material::*;
 pub use labels::*;
 pub use lighting::*;
 pub use plugin::*;
+pub use shadow::*;
+pub use shadow_node::*;

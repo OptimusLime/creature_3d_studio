@@ -345,9 +345,9 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 | 9.5 | Test scene - Island | `p9_island` | Floating island with crystals | ✅ Done |
 | 10 | Bloom post-process | `p9_island` | Ping-pong bloom working | ✅ Done |
 | 10.8 | Face shading multipliers | `p9_island` | Minecraft-style face shading | ✅ Done |
-| **11** | **Shadow Mapping** | `p9_island` | Directional shadows | **CURRENT** |
-| 12 | Per-Vertex AO | TBD | Corner darkening | Planned |
-| 13 | Face Culling | TBD | 16x geometry reduction | Planned |
+| 11 | Shadow Mapping | `p9_island` | Directional shadows with PCF | ✅ Done |
+| 12 | Per-Vertex AO | `p9_island` | Minecraft-style corner darkening | ✅ Done |
+| **13** | **Face Culling** | TBD | 16x geometry reduction | **NEXT** |
 | 14 | Greedy Meshing | TBD | Merged faces | Planned |
 | 15 | Multi-Chunk World | TBD | Larger scenes | Planned |
 
@@ -971,6 +971,90 @@ For each face direction (e.g., +Y top faces):
 
 ---
 
+## Phase 11: Shadow Mapping (COMPLETE)
+
+**Goal**: Add directional shadow mapping for the sun light, creating proper cast shadows.
+
+**Status**: ✅ COMPLETE
+
+### Implementation
+
+**Architecture**:
+```
+SHADOW PASS (runs first)                    LIGHTING PASS (updated)
+       │                                           │
+       ▼                                           │
+┌─────────────────┐                               │
+│ Shadow Depth    │  Orthographic from sun       │
+│ Texture         │  2048x2048 Depth32Float      │
+│ (light-space)   │                               │
+└────────┬────────┘                               │
+         │                                         │
+         └────────────────────────────────────────┤
+                                                   ▼
+                                          Sample shadow map
+                                          Compare depths + bias
+                                          PCF 3x3 for soft edges
+```
+
+**Files Created**:
+| File | Purpose |
+|------|---------|
+| `deferred/shadow.rs` | ShadowConfig, ViewShadowTextures, ShadowPipeline |
+| `deferred/shadow_node.rs` | ShadowPassNode ViewNode, ViewShadowUniforms |
+| `shaders/shadow_depth.wgsl` | Depth-only vertex shader for shadow pass |
+
+**Key Features**:
+- 2048x2048 shadow map resolution
+- Orthographic projection from sun direction
+- Slope-scaled depth bias to prevent shadow acne
+- PCF 3x3 filtering for soft shadow edges
+- Shadow only affects sun light (ambient/fill unaffected)
+
+**Verification**: Tree casts shadow on grass, visible shadow patches on terrain.
+
+---
+
+## Phase 12: Per-Vertex Ambient Occlusion (COMPLETE)
+
+**Goal**: Darken corners and edges where blocks meet for visual depth and block separation.
+
+**Status**: ✅ COMPLETE
+
+### Implementation
+
+**Algorithm** (from [0fps.net](https://0fps.net/2013/07/03/ambient-occlusion-for-minecraft-like-worlds/)):
+
+For each vertex of a face, check 3 corner-adjacent voxels:
+- side1: adjacent along one axis of the face
+- side2: adjacent along the other axis
+- corner: diagonally adjacent
+
+```
+AO = 1.0 - (side1 + side2 + corner) * 0.3
+Special case: if both sides solid → AO = 0.0 (fully occluded)
+```
+
+**Files Modified**:
+| File | Changes |
+|------|---------|
+| `voxel.rs` | Added `is_solid()`, `is_neighbor_solid()` helpers |
+| `voxel_mesh.rs` | Added `ATTRIBUTE_VOXEL_AO`, `calculate_vertex_ao()`, `get_ao_offsets()` |
+| `gbuffer_geometry.rs` | Added `ao` field to `GBufferVertex`, updated stride to 44 bytes |
+| `gbuffer.wgsl` | Added `voxel_ao` input, stored in `g_normal.a` |
+| `deferred_lighting.wgsl` | Read AO from `normal_sample.a`, apply as final multiplier |
+
+**Key Features**:
+- Per-vertex AO calculated at mesh generation time (zero runtime cost)
+- Smooth interpolation across faces (GPU hardware interpolates vertex attributes)
+- AO stored in G-buffer normal.a channel
+- Applied as multiplier to all lighting (Minecraft-style)
+- Debug mode 5 shows AO visualization
+
+**Verification**: Corners and edges visibly darker, blocks "pop" with depth.
+
+---
+
 ## Phase 10.8: Minecraft-Style Face Shading (COMPLETE)
 
 **Goal**: Add fixed brightness multipliers per face direction so blocks are distinguishable even on flat surfaces.
@@ -995,18 +1079,18 @@ total_light *= face_multiplier;
 ## Roadmap Summary
 
 ```
-Current State (Phase 10 Complete - Bloom working!)
+Current State (Phase 11 Complete - Shadow Mapping working!)
         │
         ▼
 ┌────────────────────────┐
-│ Phase 11: SHADOWS      │  ◀◀◀ CURRENT PRIORITY
-│   (Critical Visual)    │  Directional shadow mapping
+│ Phase 11: SHADOWS      │  ✅ COMPLETE
+│   (Critical Visual)    │  2048x2048 shadow map, PCF 3x3
 └────────┬───────────────┘
          │
          ▼
 ┌────────────────────────┐
-│ Phase 12: Vertex AO    │  Corner/edge darkening
-│   (Visual Polish)      │  Full Minecraft-style look
+│ Phase 12: Vertex AO    │  ◀◀◀ NEXT PRIORITY
+│   (Visual Polish)      │  Corner/edge darkening
 └────────┬───────────────┘
          │
          ▼
