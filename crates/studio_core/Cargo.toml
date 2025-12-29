@@ -5,5 +5,7 @@ edition = "2021"
 
 [dependencies]
 bevy = { workspace = true, features = ["bevy_render", "bevy_core_pipeline", "bevy_pbr"] }
+bevy_mesh = "0.17"
+bytemuck = { version = "1.14", features = ["derive"] }
 mlua.workspace = true
 wgpu = "26"

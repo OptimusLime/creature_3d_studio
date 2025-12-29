@@ -33,9 +33,14 @@ pub struct ViewGBufferTextures {
     pub normal: CachedTexture,
     /// XYZ = world position, W = linear depth
     pub position: CachedTexture,
+    /// Depth buffer for G-buffer pass
+    pub depth: CachedTexture,
     /// Size of the G-buffer textures
     pub size: Extent3d,
 }
+
+/// Depth texture format for G-buffer pass
+pub const GBUFFER_DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 
 /// G-Buffer texture formats (matching Bonsai)
 pub const GBUFFER_COLOR_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
@@ -91,10 +96,25 @@ impl ViewGBufferTextures {
             },
         );
 
+        let depth = texture_cache.get(
+            render_device,
+            TextureDescriptor {
+                label: Some("gbuffer_depth"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: GBUFFER_DEPTH_FORMAT,
+                usage: TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            },
+        );
+
         Self {
             color,
             normal,
             position,
+            depth,
             size,
         }
     }

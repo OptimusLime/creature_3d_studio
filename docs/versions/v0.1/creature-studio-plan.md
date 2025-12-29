@@ -409,6 +409,61 @@ Phase 8: Tone Mapping + Final
 
 ---
 
+## Phase 8b: Full Custom Deferred Rendering (CURRENT)
+
+**Goal**: Complete the deferred rendering pipeline - render actual geometry to G-buffer, not just clear it.
+
+**Status**: LightingPassNode working. GBufferPassNode clears only. Need to render geometry.
+
+### Architecture
+
+```
+GBufferPassNode (MRT)          LightingPassNode (fullscreen)
+     │                                  │
+     ├─→ gColor (Rgba16Float)  ────────┼─→ Sample & compute lighting
+     ├─→ gNormal (Rgba16Float) ────────┤
+     └─→ gPosition (Rgba32Float) ──────┘
+                                        │
+                                        └─→ ViewTarget (final output)
+```
+
+### Implementation Approach
+
+We need a custom material that outputs to 3 render targets (MRT). Bevy's `Material` trait doesn't support MRT directly. Options:
+
+1. **SpecializedRenderPipeline** - Create custom draw commands for voxel meshes
+2. **Custom RenderCommand** - Hook into Bevy's draw system with MRT output
+3. **Completely custom geometry pass** - Own vertex buffers, own pipeline
+
+**Chosen approach**: Option 1 - SpecializedRenderPipeline with custom RenderCommand.
+
+### Tasks
+
+| ID | Task | Done When | Status |
+|----|------|-----------|--------|
+| 8b.1 | Create `GBufferMaterial` struct with albedo, emission properties | Struct exists | Pending |
+| 8b.2 | Implement `SpecializedRenderPipeline` for G-buffer MRT output | Pipeline queued with 3 color targets | Pending |
+| 8b.3 | Create `gbuffer.wgsl` shader with MRT fragment output | Shader outputs to @location(0,1,2) | Pending |
+| 8b.4 | Implement `RenderCommand` for voxel meshes | Draw commands issued | Pending |
+| 8b.5 | Extract voxel mesh data to render world | Meshes available in GBufferPassNode | Pending |
+| 8b.6 | Render geometry in GBufferPassNode using specialized pipeline | G-buffer contains actual geometry | Pending |
+| 8b.7 | Verify: cubes visible through deferred pipeline | Screenshot shows lit geometry | Pending |
+
+### Key Files to Create/Modify
+
+- `crates/studio_core/src/deferred/gbuffer_material.rs` - GBufferMaterial + pipeline
+- `crates/studio_core/src/deferred/draw.rs` - RenderCommand implementation  
+- `assets/shaders/gbuffer.wgsl` - MRT fragment shader
+- `crates/studio_core/src/deferred/gbuffer_node.rs` - Add geometry rendering
+
+### Reference
+
+- Bevy `bevy_pbr/src/render/mesh.rs` - How Bevy renders meshes
+- Bevy `bevy_pbr/src/deferred/mod.rs` - Bevy's deferred approach
+- Bonsai `shaders/GBuffer.fragmentshader` - G-buffer output format
+
+---
+
 ## Out of Scope
 
 Documented separately in `creature-systems-plan.md` (to be created after Phase 8):
@@ -418,6 +473,5 @@ Documented separately in `creature-systems-plan.md` (to be created after Phase 8
 - Animation system
 - Physics integration
 - Face culling / greedy meshing optimization
-- Deferred rendering / G-buffer
 - OIT transparency
 - SSAO

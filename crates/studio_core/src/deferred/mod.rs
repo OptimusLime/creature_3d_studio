@@ -40,6 +40,8 @@
 //! Reference: bonsai/shaders/gBuffer.fragmentshader, Lighting.fragmentshader
 
 mod gbuffer;
+mod gbuffer_geometry;
+mod gbuffer_material;
 mod gbuffer_node;
 mod labels;
 mod lighting;
@@ -48,6 +50,8 @@ mod plugin;
 mod prepare;
 
 pub use gbuffer::*;
+pub use gbuffer_geometry::*;
+pub use gbuffer_material::*;
 pub use labels::*;
 pub use lighting::*;
 pub use plugin::*;

@@ -3,33 +3,42 @@
 // This shader writes geometry data to multiple render targets (MRT):
 // - location 0: gColor (RGBA16F) - RGB = albedo, A = emission
 // - location 1: gNormal (RGBA16F) - RGB = world-space normal
-// - location 2: gPosition (RGBA16F) - XYZ = world position, W = linear depth
+// - location 2: gPosition (RGBA32F) - XYZ = world position, W = linear depth
 //
 // NO LIGHTING is computed here - that happens in the lighting pass.
 //
-// Reference: bonsai/shaders/gBuffer.fragmentshader
-
-#import bevy_pbr::{
-    mesh_functions,
-    view_transformations::position_world_to_clip,
-    mesh_view_bindings::view,
-}
+// FULLY CUSTOM - no bevy_pbr imports, we handle everything ourselves.
 
 // Near/far clip planes for linear depth calculation
 const NEAR_CLIP: f32 = 0.1;
 const FAR_CLIP: f32 = 1000.0;
 
-// Material uniform
-struct GBufferMaterialUniform {
-    _padding: f32,  // Placeholder, add material properties as needed
+// View uniforms (bind group 0)
+struct ViewUniform {
+    view_proj: mat4x4<f32>,
+    inverse_view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    inverse_view: mat4x4<f32>,
+    projection: mat4x4<f32>,
+    inverse_projection: mat4x4<f32>,
+    world_position: vec3<f32>,
+    viewport: vec4<f32>,  // x, y, width, height
 }
 
-@group(2) @binding(0)
-var<uniform> material: GBufferMaterialUniform;
+@group(0) @binding(0)
+var<uniform> view: ViewUniform;
 
-// Vertex input (same as forward voxel shader)
+// Mesh uniforms (bind group 1)
+struct MeshUniform {
+    world_from_local: mat4x4<f32>,
+    local_from_world: mat4x4<f32>,
+}
+
+@group(1) @binding(0)
+var<uniform> mesh: MeshUniform;
+
+// Vertex input - matches our voxel mesh vertex format
 struct Vertex {
-    @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) voxel_color: vec3<f32>,
@@ -56,22 +65,37 @@ struct FragmentOutput {
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     
-    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
-    let world_position = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
+    // Transform to world space
+    let world_position = mesh.world_from_local * vec4<f32>(vertex.position, 1.0);
     
-    out.clip_position = position_world_to_clip(world_position.xyz);
+    // Transform to clip space
+    out.clip_position = view.view_proj * world_position;
     out.world_position = world_position.xyz;
-    out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    
+    // Transform normal to world space (using inverse transpose for correct normals)
+    // For uniform scaling, we can use the upper-left 3x3 of world_from_local
+    let normal_matrix = mat3x3<f32>(
+        mesh.world_from_local[0].xyz,
+        mesh.world_from_local[1].xyz,
+        mesh.world_from_local[2].xyz
+    );
+    out.world_normal = normalize(normal_matrix * vertex.normal);
+    
+    // Pass through color and emission
     out.color = vertex.voxel_color;
     out.emission = vertex.voxel_emission;
     
     return out;
 }
 
-// Linearize depth from clip-space z to [0,1] range
-// Based on Bonsai's Linearize() function
-fn linearize_depth(clip_z: f32) -> f32 {
-    return (2.0 * NEAR_CLIP) / (FAR_CLIP + NEAR_CLIP - clip_z * (FAR_CLIP - NEAR_CLIP));
+// Linearize depth from clip-space z to linear distance
+// Reverse-Z: near = 1, far = 0, so we need to handle that
+fn linearize_depth(ndc_z: f32) -> f32 {
+    // For reverse-Z with infinite far plane:
+    // linear_depth = near / ndc_z
+    // But we use finite far, so:
+    let z = ndc_z;
+    return (2.0 * NEAR_CLIP * FAR_CLIP) / (FAR_CLIP + NEAR_CLIP - z * (FAR_CLIP - NEAR_CLIP));
 }
 
 @fragment
@@ -79,6 +103,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     var out: FragmentOutput;
     
     // G-Buffer output 0: Color + Emission
+    // Emission is stored as 0-1 normalized value
     out.g_color = vec4<f32>(in.color, in.emission);
     
     // G-Buffer output 1: World-space normal (normalized)
@@ -86,8 +111,9 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     out.g_normal = vec4<f32>(normal, 0.0);
     
     // G-Buffer output 2: World position + linear depth
-    // Linear depth is stored in W for use in fog/SSAO calculations
-    let linear_depth = linearize_depth(in.clip_position.z / in.clip_position.w);
+    // Linear depth is calculated from NDC z for use in fog/lighting
+    let ndc_z = in.clip_position.z / in.clip_position.w;
+    let linear_depth = linearize_depth(ndc_z);
     out.g_position = vec4<f32>(in.world_position, linear_depth);
     
     return out;

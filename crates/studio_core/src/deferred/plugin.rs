@@ -11,6 +11,7 @@ use bevy::render::{
 };
 
 use super::gbuffer::DeferredCamera;
+use super::gbuffer_geometry::{init_gbuffer_geometry_pipeline, update_gbuffer_uniforms};
 use super::gbuffer_node::GBufferPassNode;
 use super::labels::DeferredLabel;
 use super::lighting::DeferredLightingConfig;
@@ -50,13 +51,17 @@ impl Plugin for DeferredRenderingPlugin {
             return;
         };
 
-        // Add prepare systems - init_lighting_pipeline runs first to create the resource
-        // then prepare_gbuffer_textures creates the G-buffer textures
+        // Add prepare systems
+        // - init pipelines runs first to create pipeline resources
+        // - prepare_gbuffer_textures creates the G-buffer textures
+        // - update_gbuffer_uniforms fills uniform buffers each frame
         render_app.add_systems(
             Render,
             (
+                init_gbuffer_geometry_pipeline.in_set(RenderSystems::Prepare),
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
+                update_gbuffer_uniforms.in_set(RenderSystems::PrepareResources),
             ),
         );
 
