@@ -122,10 +122,4 @@ pub fn prepare_deferred_meshes(
         });
     }
 
-    if !pipeline.meshes_to_render.is_empty() {
-        debug!(
-            "Prepared {} meshes for G-buffer rendering",
-            pipeline.meshes_to_render.len()
-        );
-    }
 }

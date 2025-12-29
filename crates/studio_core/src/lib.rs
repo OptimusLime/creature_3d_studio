@@ -30,8 +30,8 @@ pub use voxel::{
     CHUNK_SIZE,
 };
 pub use voxel_mesh::{
-    build_chunk_mesh, VoxelMaterial, VoxelMaterialPlugin, ATTRIBUTE_VOXEL_COLOR,
-    ATTRIBUTE_VOXEL_EMISSION,
+    build_chunk_mesh, VoxelMaterial, VoxelMaterialPlugin, ATTRIBUTE_VOXEL_AO,
+    ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
 };
 
 /// Core plugin for shared functionality.

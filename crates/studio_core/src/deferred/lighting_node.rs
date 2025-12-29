@@ -26,6 +26,7 @@ use bevy::render::{
 
 use super::gbuffer::ViewGBufferTextures;
 use super::point_light::PointLightsBuffer;
+use super::point_light_shadow::ViewPointShadowTextures;
 use super::shadow::ViewShadowTextures;
 use super::shadow_node::ViewShadowUniforms;
 
@@ -43,13 +44,14 @@ impl ViewNode for LightingPassNode {
         &'static ViewGBufferTextures,
         &'static ViewShadowTextures,
         &'static ViewShadowUniforms,
+        &'static ViewPointShadowTextures,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -128,6 +130,48 @@ impl ViewNode for LightingPassNode {
         } else {
             None
         };
+        
+        // Create bind group for point light shadows (group 4)
+        // Uses the 6 face textures from the first shadow-casting light
+        let point_shadow_bind_group = if let Some(shadow_map) = point_shadow_textures.shadow_maps.first() {
+
+            Some(render_context.render_device().create_bind_group(
+                "lighting_point_shadow_bind_group",
+                &lighting_pipeline.point_shadow_layout,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&shadow_map.faces[0].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::TextureView(&shadow_map.faces[1].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::TextureView(&shadow_map.faces[2].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::TextureView(&shadow_map.faces[3].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: BindingResource::TextureView(&shadow_map.faces[4].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 5,
+                        resource: BindingResource::TextureView(&shadow_map.faces[5].default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 6,
+                        resource: BindingResource::Sampler(&lighting_pipeline.point_shadow_sampler),
+                    },
+                ],
+            ))
+        } else {
+            None
+        };
 
         // Begin render pass writing to view target
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -164,6 +208,9 @@ impl ViewNode for LightingPassNode {
         if let Some(ref point_lights_bg) = point_lights_bind_group {
             render_pass.set_bind_group(3, point_lights_bg, &[]);
         }
+        if let Some(ref point_shadow_bg) = point_shadow_bind_group {
+            render_pass.set_bind_group(4, point_shadow_bg, &[]);
+        }
         
         render_pass.draw(0..3, 0..1);
 
@@ -187,6 +234,10 @@ pub struct LightingPipeline {
     pub shadow_uniforms_layout: BindGroupLayout,
     /// Point lights uniform layout (group 3)
     pub point_lights_layout: BindGroupLayout,
+    /// Point light shadow maps layout (group 4) - 6 depth textures for first shadow light
+    pub point_shadow_layout: BindGroupLayout,
+    /// Point shadow comparison sampler
+    pub point_shadow_sampler: Sampler,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -311,6 +362,87 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
+    
+    // Create bind group layout for point light shadows (group 4)
+    // 6 depth textures (one per cube face) + comparison sampler
+    let point_shadow_layout = render_device.create_bind_group_layout(
+        "lighting_point_shadow_layout",
+        &[
+            // Face +X
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Face -X
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Face +Y
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Face -Y
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Face +Z
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Face -Z
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Comparison sampler
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Comparison),
+                count: None,
+            },
+        ],
+    );
 
     // Create G-buffer sampler (point sampling)
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
@@ -328,6 +460,18 @@ pub fn init_lighting_pipeline(
         compare: Some(CompareFunction::LessEqual),
         ..default()
     });
+    
+    // Create point shadow comparison sampler
+    // LessEqual: returns 1.0 (lit) when compare_depth <= shadow_depth
+    // Logic: if our fragment distance is <= closest blocker distance, we're lit
+    // If our distance > blocker distance, something is closer → we're shadowed
+    let point_shadow_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("point_shadow_comparison_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        compare: Some(CompareFunction::LessEqual),
+        ..default()
+    });
 
     // Load shader via asset server
     let shader = asset_server.load("shaders/deferred_lighting.wgsl");
@@ -340,6 +484,7 @@ pub fn init_lighting_pipeline(
             shadow_map_layout.clone(),
             shadow_uniforms_layout.clone(),
             point_lights_layout.clone(),
+            point_shadow_layout.clone(),
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {
@@ -372,8 +517,7 @@ pub fn init_lighting_pipeline(
         shadow_sampler,
         shadow_uniforms_layout,
         point_lights_layout,
+        point_shadow_layout,
+        point_shadow_sampler,
     });
-    
-    info!("LightingPipeline initialized with shadow mapping and point lights support (storage buffer, max {})", 
-          super::point_light::MAX_POINT_LIGHTS);
 }

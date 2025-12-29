@@ -153,14 +153,12 @@ impl ViewNode for GBufferPassNode {
 
                 // Look up the mesh's GPU data
                 let Some(gpu_mesh) = render_meshes.get(mesh_data.mesh_asset_id) else {
-                    warn!("G-buffer: mesh not found in render assets");
                     continue;
                 };
 
                 // Get vertex buffer from allocator
                 let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_data.mesh_asset_id)
                 else {
-                    warn!("G-buffer: vertex buffer not found in allocator");
                     continue;
                 };
 
@@ -174,7 +172,6 @@ impl ViewNode for GBufferPassNode {
                         let Some(index_slice) =
                             mesh_allocator.mesh_index_slice(&mesh_data.mesh_asset_id)
                         else {
-                            warn!("G-buffer: index buffer not found in allocator");
                             continue;
                         };
 
@@ -184,7 +181,6 @@ impl ViewNode for GBufferPassNode {
                             *index_format,
                         );
 
-                        // Draw with element ranges from the slab allocator
                         render_pass.draw_indexed(
                             index_slice.range.start..(index_slice.range.start + count),
                             vertex_slice.range.start as i32,

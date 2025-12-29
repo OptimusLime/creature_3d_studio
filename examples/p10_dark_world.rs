@@ -26,7 +26,7 @@ use std::path::Path;
 use studio_core::{
     build_chunk_mesh, extract_emissive_lights, load_creature_script, DeferredCamera,
     DeferredPointLight, DeferredRenderable, DeferredRenderingPlugin, VoxelMaterial,
-    VoxelMaterialPlugin,
+    VoxelMaterialPlugin, CHUNK_SIZE,
 };
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -109,8 +109,10 @@ fn setup(
     let mesh_handle = meshes.add(mesh);
     let material = materials.add(VoxelMaterial::default());
 
-    // Scene offset - the scene is built at 0-31 but we center it
-    let scene_offset = Vec3::new(-16.0, 0.0, -16.0);
+    // Scene transform - mesh is already centered by build_chunk_mesh()
+    // Just translate Y so ground level (chunk Y=0) is at world Y=0
+    // Ground at chunk Y=0 -> mesh Y=-16 -> world Y=-16+16=0
+    let scene_offset = Vec3::new(0.0, CHUNK_SIZE as f32 / 2.0, 0.0);
 
     // Spawn dark world - centered at origin
     commands.spawn((
@@ -120,12 +122,11 @@ fn setup(
         DeferredRenderable,
     ));
 
-    // Camera - closer and rotated to see more details
-    // Position to see the altar, crystals, and show lighting effects clearly
+    // Camera - pulled back to see the full scene
     commands.spawn((
         Camera3d::default(),
         Tonemapping::TonyMcMapface,
-        Transform::from_xyz(6.0, 6.0, 10.0).looking_at(Vec3::new(-2.0, 2.0, -2.0), Vec3::Y),
+        Transform::from_xyz(20.0, 25.0, 30.0).looking_at(Vec3::new(0.0, 3.0, 0.0), Vec3::Y),
         DeferredCamera,
         MainCamera,
     ));
@@ -165,33 +166,45 @@ fn setup(
         )),
     ));
 
+    // === TEST: Single bright light at center of scene ===
+    // Chunk center is (16, ground_level, 16). After mesh transform: (16-16, y-16, 16-16) = (0, y-16, 0)
+    // After scene_offset (0, 16, 0): (0, y, 0). So light at world (0, 5, 0) is above ground center.
+    commands.spawn((
+        DeferredPointLight {
+            color: Color::srgb(1.0, 0.0, 0.0), // Bright red
+            intensity: 50.0,
+            radius: 15.0,
+        },
+        Transform::from_xyz(0.0, 5.0, 0.0), // Above center
+    ));
+    
     // === AUTO-GENERATED POINT LIGHTS FROM EMISSIVE VOXELS ===
-    // Each emissive voxel creates a point light with MATCHING color
-    // The emissive voxel itself glows (via emission in shader)
-    // The point light illuminates surrounding surfaces with colored light
-    let mut light_count = 0;
+    let mut light_count = 1; // Start at 1 for the test light
     
     for light in &emissive_lights {
-        // Get world position (center of voxel + scene offset)
-        let world_pos = light.world_position([0.0, 0.0, 0.0]);
-        let pos = Vec3::new(world_pos[0], world_pos[1], world_pos[2]) + scene_offset;
+        // mesh_position() returns coordinates matching build_chunk_mesh()
+        let mesh_pos = light.mesh_position();
+        // Apply same scene offset as mesh, plus raise light above the emissive voxel
+        let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2]) 
+            + scene_offset 
+            + Vec3::new(0.0, 2.0, 0.0);
         
         // Create point light with same color as emissive voxel
-        // Use moderate intensity so lights illuminate but don't overpower
-        // Radius determines how far the colored light spreads
-        let intensity = 3.0 * light.emission;  // Scale with emission
-        let radius = 6.0;  // Fixed moderate radius
+        let intensity = 15.0 * light.emission;
+        let radius = 10.0;
+        let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
         
         commands.spawn((
             DeferredPointLight {
-                color: Color::srgb(light.color[0], light.color[1], light.color[2]),
+                color,
                 intensity,
                 radius,
             },
-            Transform::from_translation(pos),
+            Transform::from_translation(world_pos),
         ));
         light_count += 1;
     }
+    println!("");
     
     // Print summary of lights by color
     println!("Dark world scene setup complete.");
@@ -239,10 +252,9 @@ fn capture_and_exit(
             .observe(save_to_disk(SCREENSHOT_PATH));
     }
 
-    // Don't auto-exit - let the user explore the scene
-    // Uncomment below for CI/testing:
-    // if frame_count.0 >= 25 {
-    //     println!("Exiting after {} frames", frame_count.0);
-    //     exit.write(AppExit::Success);
-    // }
+    // Auto-exit for testing
+    if frame_count.0 >= 25 {
+        println!("Exiting after {} frames", frame_count.0);
+        exit.write(AppExit::Success);
+    }
 }

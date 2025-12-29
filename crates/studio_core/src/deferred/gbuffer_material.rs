@@ -207,5 +207,4 @@ pub fn init_gbuffer_pipeline(
     
     let pipeline = GBufferPipeline::new(&render_device, &asset_server);
     commands.insert_resource(pipeline);
-    info!("GBufferPipeline initialized");
 }

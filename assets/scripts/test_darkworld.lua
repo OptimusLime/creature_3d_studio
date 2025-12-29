@@ -12,10 +12,10 @@ print("[darkworld] Creating dark world test scene...")
 -- Colors (RGB 0-255)
 local OBSIDIAN = {20, 15, 25}         -- Dark purple-black rock
 local DARK_STONE = {35, 30, 40}       -- Slightly lighter purple stone
-local PURPLE_CRYSTAL = {180, 50, 220} -- Bright purple
+local PURPLE_CRYSTAL = {120, 40, 220} -- Deep purple (more blue)
 local ORANGE_CRYSTAL = {255, 100, 20} -- Deep orange (less green to survive tone mapping)
 local CYAN_CRYSTAL = {50, 220, 255}   -- Cyan accent
-local MAGENTA_CRYSTAL = {255, 50, 180}-- Hot pink
+local PINK_CRYSTAL = {255, 100, 150}  -- Soft pink (distinct from purple)
 local DARK_METAL = {45, 40, 50}       -- For ruins
 
 -- Helper to place a voxel
@@ -118,12 +118,12 @@ put(26, 4, 5, CYAN_CRYSTAL, 240)
 put(27, 1, 6, CYAN_CRYSTAL, 200)
 voxel_count = voxel_count + 5
 
--- Magenta crystal (back)
-put(10, 1, 26, MAGENTA_CRYSTAL, 230)
-put(10, 2, 26, MAGENTA_CRYSTAL, 230)
-put(10, 3, 26, MAGENTA_CRYSTAL, 230)
-put(11, 1, 27, MAGENTA_CRYSTAL, 200)
-put(11, 2, 27, MAGENTA_CRYSTAL, 200)
+-- Pink crystal (back)
+put(10, 1, 26, PINK_CRYSTAL, 230)
+put(10, 2, 26, PINK_CRYSTAL, 230)
+put(10, 3, 26, PINK_CRYSTAL, 230)
+put(11, 1, 27, PINK_CRYSTAL, 200)
+put(11, 2, 27, PINK_CRYSTAL, 200)
 voxel_count = voxel_count + 5
 
 -- Scattered small glowing stones
@@ -131,7 +131,7 @@ local scattered_glows = {
     {x = 3, y = 1, z = 20, color = ORANGE_CRYSTAL, emission = 150},
     {x = 28, y = 1, z = 22, color = PURPLE_CRYSTAL, emission = 150},
     {x = 22, y = 1, z = 28, color = CYAN_CRYSTAL, emission = 150},
-    {x = 8, y = 1, z = 3, color = MAGENTA_CRYSTAL, emission = 150},
+    {x = 8, y = 1, z = 3, color = PINK_CRYSTAL, emission = 150},
     {x = 25, y = 1, z = 10, color = ORANGE_CRYSTAL, emission = 180},
     {x = 2, y = 1, z = 15, color = PURPLE_CRYSTAL, emission = 160},
 }
@@ -155,4 +155,4 @@ voxel_count = voxel_count + (1*4*5)
 
 print("[darkworld] Created dark world with " .. voxel_count .. " voxels")
 print("[darkworld] Features: altar, pillars, crystals, floating rock, wall")
-print("[darkworld] Glowing sources: orange altar, purple/cyan/magenta crystals")
+print("[darkworld] Glowing sources: orange altar, purple/cyan/pink crystals")

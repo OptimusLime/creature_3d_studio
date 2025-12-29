@@ -20,6 +20,11 @@ use super::labels::DeferredLabel;
 use super::lighting::DeferredLightingConfig;
 use super::lighting_node::{init_lighting_pipeline, LightingPassNode};
 use super::point_light::{extract_point_lights, prepare_point_lights};
+use super::point_light_shadow::{
+    init_point_shadow_pipeline, prepare_point_shadow_bind_groups,
+    prepare_point_shadow_textures, prepare_shadow_casting_lights,
+};
+use super::point_light_shadow_node::PointShadowPassNode;
 use super::prepare::{prepare_gbuffer_textures, prepare_gbuffer_view_uniforms};
 use super::shadow::{init_shadow_pipeline, prepare_shadow_textures, ShadowConfig};
 use super::shadow_node::{prepare_shadow_mesh_bind_groups, prepare_shadow_view_uniforms, ShadowPassNode};
@@ -76,6 +81,7 @@ impl Plugin for DeferredRenderingPlugin {
         // - prepare_bloom_textures creates bloom mip chain textures
         // - prepare_shadow_textures creates shadow map depth texture
         // - prepare_shadow_view_uniforms creates light-space matrices
+        // - prepare_point_shadow_* systems for point light cube shadow maps
         render_app.add_systems(
             Render,
             (
@@ -83,6 +89,7 @@ impl Plugin for DeferredRenderingPlugin {
                 init_lighting_pipeline.in_set(RenderSystems::Prepare),
                 init_bloom_pipeline.in_set(RenderSystems::Prepare),
                 init_shadow_pipeline.in_set(RenderSystems::Prepare),
+                init_point_shadow_pipeline.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
                 prepare_gbuffer_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
@@ -108,15 +115,32 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(prepare_deferred_meshes),
                 prepare_point_lights
                     .in_set(RenderSystems::PrepareResources),
+                // Point light shadow systems
+                prepare_point_shadow_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_point_shadow_pipeline),
+                prepare_shadow_casting_lights
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(prepare_point_lights),
+                prepare_point_shadow_bind_groups
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_point_shadow_pipeline)
+                    .after(prepare_shadow_casting_lights)
+                    .after(prepare_deferred_meshes),
             ),
         );
 
         // Add render graph nodes
         render_app
-            // Shadow pass node (runs first to generate shadow map)
+            // Shadow pass node (runs first to generate directional shadow map)
             .add_render_graph_node::<ViewNodeRunner<ShadowPassNode>>(
                 Core3d,
                 DeferredLabel::ShadowPass,
+            )
+            // Point light shadow pass node (cube shadow maps)
+            .add_render_graph_node::<ViewNodeRunner<PointShadowPassNode>>(
+                Core3d,
+                DeferredLabel::PointShadowPass,
             )
             // G-Buffer pass node
             .add_render_graph_node::<ViewNodeRunner<GBufferPassNode>>(
@@ -135,13 +159,16 @@ impl Plugin for DeferredRenderingPlugin {
             );
 
         // Define render graph edges (execution order)
-        // Shadow pass runs first (before any geometry rendering)
+        // Shadow passes run first, then G-buffer, then connect to MainOpaquePass
+        // This ensures all our custom passes complete before Bevy's standard pipeline continues
         render_app.add_render_graph_edges(
             Core3d,
             (
                 Node3d::StartMainPass,
                 DeferredLabel::ShadowPass,
+                DeferredLabel::PointShadowPass,
                 DeferredLabel::GBufferPass,
+                Node3d::MainOpaquePass,  // Connect our chain to Bevy's chain
             ),
         );
         
@@ -156,6 +183,5 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
 
-        info!("DeferredRenderingPlugin initialized with custom render graph (shadow mapping enabled)");
     }
 }

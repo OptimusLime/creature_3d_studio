@@ -232,8 +232,4 @@ pub fn prepare_point_lights(
     });
     
     commands.insert_resource(PointLightsBuffer { buffer, count });
-    
-    if count > 0 {
-        debug!("Prepared {} point lights for lighting pass (storage buffer)", count);
-    }
 }

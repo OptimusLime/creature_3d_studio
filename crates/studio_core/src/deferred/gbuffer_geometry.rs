@@ -416,7 +416,6 @@ pub fn init_gbuffer_geometry_pipeline(
         meshes_to_render: Vec::new(),
     });
 
-    info!("GBufferGeometryPipeline initialized with test cube");
 }
 
 /// System to update mesh bind group for fallback test cube.

@@ -345,7 +345,6 @@ pub fn init_bloom_pipeline(
         sampler,
     });
 
-    info!("BloomPipeline initialized");
 }
 
 /// Prepare bloom textures for cameras.
@@ -375,10 +374,5 @@ pub fn prepare_bloom_textures(
         let bloom_textures = ViewBloomTextures::new(&render_device, &mut texture_cache, extent);
 
         commands.entity(entity).insert(bloom_textures);
-
-        info!(
-            "Created bloom textures for camera {:?} at {}x{}",
-            entity, size.x, size.y
-        );
     }
 }

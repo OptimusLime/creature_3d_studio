@@ -272,7 +272,6 @@ pub fn init_shadow_pipeline(
         mesh_layout,
     });
     
-    info!("ShadowPipeline initialized ({}x{} shadow map)", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
 }
 
 /// Prepare shadow map textures for cameras.
@@ -286,10 +285,5 @@ pub fn prepare_shadow_textures(
         let shadow_textures = ViewShadowTextures::new(&render_device, &mut texture_cache);
         
         commands.entity(entity).insert(shadow_textures);
-        
-        info!(
-            "Created shadow map texture for camera {:?} ({}x{})",
-            entity, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE
-        );
     }
 }

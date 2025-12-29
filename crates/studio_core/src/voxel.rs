@@ -173,13 +173,16 @@ pub struct EmissiveLight {
 }
 
 impl EmissiveLight {
-    /// Get world position given chunk offset.
-    /// The position is at the center of the voxel (+0.5 offset).
-    pub fn world_position(&self, chunk_offset: [f32; 3]) -> [f32; 3] {
+    /// Get mesh-space position (matches build_chunk_mesh coordinate system).
+    /// The position is at the center of the voxel.
+    /// This applies the same centering offset as build_chunk_mesh() so lights
+    /// align with the mesh geometry.
+    pub fn mesh_position(&self) -> [f32; 3] {
+        let offset = CHUNK_SIZE as f32 / 2.0;
         [
-            self.position.0 as f32 + 0.5 + chunk_offset[0],
-            self.position.1 as f32 + 0.5 + chunk_offset[1],
-            self.position.2 as f32 + 0.5 + chunk_offset[2],
+            self.position.0 as f32 + 0.5 - offset,
+            self.position.1 as f32 + 0.5 - offset,
+            self.position.2 as f32 + 0.5 - offset,
         ]
     }
 }

@@ -58,11 +58,6 @@ pub fn prepare_gbuffer_textures(
         if needs_create {
             let textures = ViewGBufferTextures::new(&render_device, &mut texture_cache, size);
             
-            info!(
-                "Created G-buffer textures for camera {:?} at {}x{}",
-                entity, size.width, size.height
-            );
-            
             commands.entity(entity).insert(textures);
         }
     }
