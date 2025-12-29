@@ -326,7 +326,7 @@ pub fn spawn_framed_camera(
     use crate::deferred::DeferredCamera;
     
     let (min, max) = chunk_world_bounds(chunk, world_offset)?;
-    let framing = compute_camera_framing(min, max, angle, elevation, 1.3);
+    let framing = compute_camera_framing(min, max, angle, elevation, 1.0);
     
     Some(commands.spawn((
         Camera3d::default(),
