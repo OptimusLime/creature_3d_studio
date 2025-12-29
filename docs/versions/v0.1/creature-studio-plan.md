@@ -347,9 +347,12 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 | 10.8 | Face shading multipliers | `p9_island` | Minecraft-style face shading | ✅ Done |
 | 11 | Shadow Mapping | `p9_island` | Directional shadows with PCF | ✅ Done |
 | 12 | Per-Vertex AO | `p9_island` | Minecraft-style corner darkening | ✅ Done |
-| **13** | **Face Culling** | TBD | 16x geometry reduction | **NEXT** |
-| 14 | Greedy Meshing | TBD | Merged faces | Planned |
-| 15 | Multi-Chunk World | TBD | Larger scenes | Planned |
+| 13 | Face Culling | `p14_face_culling` | 87-94% vertex reduction | ✅ Done |
+| 14/15 | Greedy Meshing | `p15_greedy_mesh` | 98%+ for uniform surfaces | ✅ Done |
+| 15b | Point Light Shadows | `p13_point_light_shadow` | Cube shadow maps | ✅ Done |
+| **16** | **Multi-Chunk World** | TBD | VoxelWorld + HashMap | **NEXT** |
+| 17 | Chunk Streaming | TBD | Distance-based load/unload | Planned |
+| 18 | Cross-Chunk Culling | TBD | Border buffers | Planned |
 
 ---
 
@@ -955,19 +958,117 @@ For each face direction (e.g., +Y top faces):
 
 ---
 
-## Phase 15: Multiple Chunks
+## Phase 16: Multiple Chunks (NEXT)
 
 **Goal**: Support a world with multiple chunk positions.
+
+**Reference**: See `docs/research/bonsai-chunk-system.md` for Bonsai's approach.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        VoxelWorld                                │
+│                                                                  │
+│   chunks: HashMap<ChunkPos, VoxelChunk>                         │
+│   chunk_size: 32 (CHUNK_SIZE constant)                          │
+│                                                                  │
+│   ┌─────────┬─────────┬─────────┐                               │
+│   │ (-1,0,0)│ (0,0,0) │ (1,0,0) │   ChunkPos = world coords     │
+│   │  Chunk  │  Chunk  │  Chunk  │   in chunk units              │
+│   └─────────┴─────────┴─────────┘                               │
+│                                                                  │
+│   World Position = ChunkPos * CHUNK_SIZE + LocalPos             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Data Structures
+
+```rust
+/// Position of a chunk in chunk-space coordinates
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ChunkPos {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+/// A world containing multiple chunks
+pub struct VoxelWorld {
+    chunks: HashMap<ChunkPos, VoxelChunk>,
+    chunk_size: usize,  // CHUNK_SIZE (32)
+}
+
+impl VoxelWorld {
+    /// Get chunk at position, if it exists
+    pub fn get_chunk(&self, pos: ChunkPos) -> Option<&VoxelChunk>;
+    
+    /// Get or create chunk at position
+    pub fn get_or_create_chunk(&mut self, pos: ChunkPos) -> &mut VoxelChunk;
+    
+    /// Set voxel at world position (auto-creates chunk if needed)
+    pub fn set_voxel(&mut self, world_pos: IVec3, voxel: Voxel);
+    
+    /// Get voxel at world position
+    pub fn get_voxel(&self, world_pos: IVec3) -> Option<&Voxel>;
+    
+    /// Iterate all chunks
+    pub fn iter_chunks(&self) -> impl Iterator<Item = (ChunkPos, &VoxelChunk)>;
+}
+```
+
+### Coordinate Systems
+
+```
+World Position (i32, i32, i32):
+  - Global voxel coordinates
+  - Range: i32::MIN to i32::MAX
+  - Example: (45, 12, -30)
+
+Chunk Position (ChunkPos):
+  - Which chunk contains the voxel
+  - Computed: world_pos / CHUNK_SIZE (floor division)
+  - Example: (45, 12, -30) / 32 = (1, 0, -1)
+
+Local Position (usize, usize, usize):
+  - Position within chunk (0 to CHUNK_SIZE-1)
+  - Computed: world_pos % CHUNK_SIZE (positive modulo)
+  - Example: (45, 12, -30) % 32 = (13, 12, 2)
+```
 
 ### Tasks
 
 | ID | Task | Done When | Status |
 |----|------|-----------|--------|
-| 15.1 | Create `VoxelWorld` with HashMap<ChunkPos, VoxelChunk> | World struct exists | Pending |
-| 15.2 | Spawn multiple mesh entities for chunks | Each chunk is separate entity | Pending |
-| 15.3 | Position chunks at correct world coordinates | Chunks tile correctly | Pending |
-| 15.4 | Create multi-chunk test scene | 3x3 chunk world | Pending |
-| 15.5 | Verify chunk boundaries render correctly | No seams between chunks | Pending |
+| 16.1 | Create `ChunkPos` struct with Hash, Eq | Can use as HashMap key | Pending |
+| 16.2 | Create `VoxelWorld` with HashMap<ChunkPos, VoxelChunk> | World struct compiles | Pending |
+| 16.3 | Implement coordinate conversion (world ↔ chunk+local) | Unit tests pass | Pending |
+| 16.4 | Implement `set_voxel()` / `get_voxel()` | Can read/write across chunks | Pending |
+| 16.5 | Create `build_world_meshes()` that returns mesh per chunk | Multiple meshes generated | Pending |
+| 16.6 | Update example to spawn mesh entity per chunk | Each chunk rendered separately | Pending |
+| 16.7 | Position chunk meshes at correct world coordinates | Chunks tile seamlessly | Pending |
+| 16.8 | Create `p16_multi_chunk.rs` example with 3x3x1 chunks | 9 chunks visible | Pending |
+| 16.9 | Create `test_multi_chunk.lua` Lua script | Voxels placed across chunk boundaries | Pending |
+
+### Verification
+
+**Test**: `cargo run --example p16_multi_chunk`
+
+**Pass Criteria**:
+1. 9 chunks visible (3x3 grid)
+2. Voxels placed at chunk boundaries appear contiguous
+3. No visual seams between chunks (colors match)
+4. Camera can orbit around entire world
+5. Performance acceptable (should be similar to single large chunk)
+
+### Notes
+
+**Phase 16 does NOT include**:
+- Cross-chunk face culling (seams at boundaries are acceptable for now)
+- Streaming/loading (all chunks loaded upfront)
+- LOD (all chunks at full detail)
+
+These are deferred to Phase 17-18.
 
 ---
 
@@ -1076,50 +1177,50 @@ total_light *= face_multiplier;
 
 ---
 
-## Roadmap Summary - Lighting Focus
+## Roadmap Summary
 
-**Current State**: Dark World scene with dual moons, high-volume point lights (256), and auto-generated point lights from emissive voxels working. Emissive voxels display their actual colors (not white).
+**Current State**: Full deferred rendering pipeline with:
+- Directional shadows (sun/moons)
+- Point light shadows (cube shadow maps)
+- Bloom post-processing
+- Face culling (87-94% vertex reduction)
+- Greedy meshing (98%+ reduction for uniform surfaces)
+- Per-vertex AO
 
-**Completed**:
-- ✅ Phase 13: Point Lights (basic)
-- ✅ Phase 14: High Volume Point Lights (256+ via storage buffer)
-- ✅ Phase 16: Auto-Generate Point Lights from Emissive Voxels
+**Completed Phases**:
+- ✅ Phases 0-12: Core deferred pipeline, shadows, AO, bloom
+- ✅ Phase 13: Face Culling
+- ✅ Phase 14/15: Greedy Meshing
+- ✅ Point Light Shadows (cube shadow maps)
 
 **Next Priority**:
-1. **B. Point Light Shadows** - Lights cast shadows (cube shadow maps)
-2. **D. Multi-Shadow (Moons)** - Both moons cast shadows
-3. **E. Day/Night Cycle** - Time-based moon transitions
-4. **F. Multi-frame Render** - Capture day/night sequence
+1. **Phase 16: Multiple Chunks** - VoxelWorld with HashMap<ChunkPos, VoxelChunk>
+2. **Phase 17: Chunk Streaming** - Distance-based load/unload
+3. **Phase 18: Cross-Chunk Face Culling** - Border buffers for seamless boundaries
 
 ```
-Current State (Phase 14 + 16 Complete!)
+Current State (Greedy Meshing + Point Light Shadows Complete!)
         │
         ▼
 ┌────────────────────────┐
-│ Phase 15: POINT LIGHT  │  ◀◀◀ NEXT PRIORITY  
-│   SHADOWS              │  Cube shadow maps per light
+│ Phase 16: MULTIPLE     │  ◀◀◀ NEXT PRIORITY  
+│   CHUNKS               │  VoxelWorld, HashMap<ChunkPos, Chunk>
 └────────┬───────────────┘
          │
          ▼
 ┌────────────────────────┐
-│ Phase 17: MULTI-SHADOW │
-│   (BOTH MOONS)         │  Second shadow map for orange moon
+│ Phase 17: CHUNK        │
+│   STREAMING            │  Distance-based load/unload
 └────────┬───────────────┘
          │
          ▼
 ┌────────────────────────┐
-│ Phase 18: DAY/NIGHT    │
-│   CYCLE                │  Time-based moon colors, dusk/dawn
+│ Phase 18: CROSS-CHUNK  │
+│   FACE CULLING         │  Border buffers (Bonsai approach)
 └────────┬───────────────┘
          │
          ▼
-┌────────────────────────┐
-│ Phase 19: MULTI-FRAME  │
-│   RENDER               │  Capture day/night sequence
-└────────┬───────────────┘
-         │
-         ▼
-    Future: Face Culling, Greedy Meshing, SSAO...
+    Future: LOD, Day/Night Cycle, Multi-frame Render...
 ```
 
 ### Phase 13: Point Lights (COMPLETE)

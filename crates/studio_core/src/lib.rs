@@ -26,12 +26,13 @@ pub use deferred::{
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
 pub use voxel::{
-    extract_clustered_emissive_lights, extract_emissive_lights, EmissiveLight, Voxel, VoxelChunk,
-    CHUNK_SIZE,
+    extract_clustered_emissive_lights, extract_emissive_lights, world_to_local, ChunkPos,
+    EmissiveLight, Voxel, VoxelChunk, VoxelWorld, CHUNK_SIZE, CHUNK_SIZE_I32,
 };
 pub use voxel_mesh::{
-    build_chunk_mesh, VoxelMaterial, VoxelMaterialPlugin, ATTRIBUTE_VOXEL_AO,
-    ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
+    build_chunk_mesh, build_chunk_mesh_greedy, build_single_chunk_mesh, build_world_meshes,
+    build_world_meshes_with_options, ChunkMesh, VoxelMaterial, VoxelMaterialPlugin,
+    ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
 };
 
 /// Core plugin for shared functionality.

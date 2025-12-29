@@ -187,42 +187,53 @@ impl ViewNode for LightingPassNode {
         
         // Create bind group for point shadow matrices (group 5)
         // Get the shadow casting lights to compute the matrices
-        let point_shadow_matrices_bind_group = if let Some(shadow_lights) = world.get_resource::<ShadowCastingLights>() {
-            if let Some(light) = shadow_lights.lights.first() {
-                // Compute the view-proj matrices for this light
-                let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
-                
-                let uniform = PointShadowMatricesUniform {
-                    face_matrices: [
-                        matrices.view_proj[0].to_cols_array_2d(),
-                        matrices.view_proj[1].to_cols_array_2d(),
-                        matrices.view_proj[2].to_cols_array_2d(),
-                        matrices.view_proj[3].to_cols_array_2d(),
-                        matrices.view_proj[4].to_cols_array_2d(),
-                        matrices.view_proj[5].to_cols_array_2d(),
-                    ],
-                    light_pos_radius: [light.position.x, light.position.y, light.position.z, light.radius],
-                };
-                
-                let buffer = render_context.render_device().create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("point_shadow_matrices_uniform"),
-                    contents: bytemuck::bytes_of(&uniform),
-                    usage: BufferUsages::UNIFORM,
-                });
-                
-                Some(render_context.render_device().create_bind_group(
-                    Some("lighting_point_shadow_matrices_bind_group"),
-                    &lighting_pipeline.point_shadow_matrices_layout,
-                    &[BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
-                    }],
-                ))
+        // ALWAYS create this bind group - use identity matrices if no lights
+        let point_shadow_matrices_bind_group = {
+            let uniform = if let Some(shadow_lights) = world.get_resource::<ShadowCastingLights>() {
+                if let Some(light) = shadow_lights.lights.first() {
+                    // Compute the view-proj matrices for this light
+                    let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
+                    
+                    PointShadowMatricesUniform {
+                        face_matrices: [
+                            matrices.view_proj[0].to_cols_array_2d(),
+                            matrices.view_proj[1].to_cols_array_2d(),
+                            matrices.view_proj[2].to_cols_array_2d(),
+                            matrices.view_proj[3].to_cols_array_2d(),
+                            matrices.view_proj[4].to_cols_array_2d(),
+                            matrices.view_proj[5].to_cols_array_2d(),
+                        ],
+                        light_pos_radius: [light.position.x, light.position.y, light.position.z, light.radius],
+                    }
+                } else {
+                    // No lights - use dummy identity matrices
+                    PointShadowMatricesUniform {
+                        face_matrices: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]; 6],
+                        light_pos_radius: [0.0, 0.0, 0.0, 1.0],
+                    }
+                }
             } else {
-                None
-            }
-        } else {
-            None
+                // No shadow lights resource - use dummy identity matrices
+                PointShadowMatricesUniform {
+                    face_matrices: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]; 6],
+                    light_pos_radius: [0.0, 0.0, 0.0, 1.0],
+                }
+            };
+            
+            let buffer = render_context.render_device().create_buffer_with_data(&BufferInitDescriptor {
+                label: Some("point_shadow_matrices_uniform"),
+                contents: bytemuck::bytes_of(&uniform),
+                usage: BufferUsages::UNIFORM,
+            });
+            
+            render_context.render_device().create_bind_group(
+                Some("lighting_point_shadow_matrices_bind_group"),
+                &lighting_pipeline.point_shadow_matrices_layout,
+                &[BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }],
+            )
         };
 
         // Begin render pass writing to view target
@@ -263,9 +274,7 @@ impl ViewNode for LightingPassNode {
         if let Some(ref point_shadow_bg) = point_shadow_bind_group {
             render_pass.set_bind_group(4, point_shadow_bg, &[]);
         }
-        if let Some(ref point_shadow_matrices_bg) = point_shadow_matrices_bind_group {
-            render_pass.set_bind_group(5, point_shadow_matrices_bg, &[]);
-        }
+        render_pass.set_bind_group(5, &point_shadow_matrices_bind_group, &[]);
         
         render_pass.draw(0..3, 0..1);
 
