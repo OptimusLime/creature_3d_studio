@@ -21,6 +21,7 @@ fn main() {
         .with_world(WorldSource::Builder(Box::new(build_shadow_demo_world)))
         // No point light! We want to see the moons clearly
         .with_emissive_lights(false)
+        .with_greedy_meshing(true) // Re-enabled: SSAO fixes the vertex AO interpolation bug
         .with_moon_config(MoonConfig {
             // Purple moon - coming from LEFT side (positive X)
             // High angle so shadows are clearly visible on ground

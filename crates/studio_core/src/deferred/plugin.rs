@@ -35,6 +35,8 @@ use super::shadow_node::{
     prepare_directional_shadow_uniforms,
     Moon1ShadowPassNode, Moon2ShadowPassNode,
 };
+use super::ssao::{SsaoConfig, init_ssao_kernel, prepare_ssao_textures};
+use super::ssao_node::{init_ssao_pipeline, SsaoPassNode};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -61,6 +63,7 @@ impl Plugin for DeferredRenderingPlugin {
         app.init_resource::<DeferredLightingConfig>();
         app.init_resource::<BloomConfig>();
         app.init_resource::<MoonConfig>();
+        app.init_resource::<SsaoConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -100,6 +103,8 @@ impl Plugin for DeferredRenderingPlugin {
                 init_bloom_pipeline.in_set(RenderSystems::Prepare),
                 init_shadow_pipeline.in_set(RenderSystems::Prepare),
                 init_point_shadow_pipeline.in_set(RenderSystems::Prepare),
+                init_ssao_pipeline.in_set(RenderSystems::Prepare),
+                init_ssao_kernel.in_set(RenderSystems::Prepare),
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
                 prepare_gbuffer_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
@@ -137,6 +142,10 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(init_point_shadow_pipeline)
                     .after(prepare_shadow_casting_lights)
                     .after(prepare_deferred_meshes),
+                // SSAO systems
+                prepare_ssao_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_ssao_pipeline),
             ),
         );
 
@@ -161,6 +170,11 @@ impl Plugin for DeferredRenderingPlugin {
             .add_render_graph_node::<ViewNodeRunner<GBufferPassNode>>(
                 Core3d,
                 DeferredLabel::GBufferPass,
+            )
+            // SSAO pass node (after G-buffer, before lighting)
+            .add_render_graph_node::<ViewNodeRunner<SsaoPassNode>>(
+                Core3d,
+                DeferredLabel::SsaoPass,
             )
             // Lighting pass node
             .add_render_graph_node::<ViewNodeRunner<LightingPassNode>>(
@@ -188,7 +202,17 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // Lighting pass runs after opaque, bloom after lighting, then transparent
+        // SSAO runs after G-buffer, before MainOpaque
+        // Then Lighting runs after opaque, bloom after lighting, then transparent
+        render_app.add_render_graph_edges(
+            Core3d,
+            (
+                DeferredLabel::GBufferPass,
+                DeferredLabel::SsaoPass,
+                Node3d::MainOpaquePass,
+            ),
+        );
+        
         render_app.add_render_graph_edges(
             Core3d,
             (

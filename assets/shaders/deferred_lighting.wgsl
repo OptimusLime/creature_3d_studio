@@ -69,6 +69,11 @@ struct PointShadowMatrices {
 }
 @group(5) @binding(0) var<uniform> point_shadow_matrices: PointShadowMatrices;
 
+// SSAO texture (bind group 6) - screen-space ambient occlusion
+// This replaces per-vertex AO from the G-buffer when enabled
+@group(6) @binding(0) var ssao_texture: texture_2d<f32>;
+@group(6) @binding(1) var ssao_sampler: sampler;
+
 // Point shadow map size (must match POINT_SHADOW_MAP_SIZE in Rust)
 const POINT_SHADOW_MAP_SIZE: f32 = 512.0;
 
@@ -162,6 +167,8 @@ const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
 // 62 = stored depth for selected face (all faces, not just -Y)
 // 63 = raw +X face shadow map
 // 70 = face_multiplier only (discrete bands), 71 = N·L only for moon/sun (R=moon1, G=moon2)
+// 41 = moon1 shadow only, 42 = moon2 shadow only, 43 = both overlap (blue)
+// 100 = SSAO only (raw SSAO texture output)
 const DEBUG_MODE: i32 = 0;
 
 // Calculate point light contribution at a world position.
@@ -543,8 +550,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // NO encoding/decoding needed - just normalize to handle interpolation
     let world_normal = normalize(normal_sample.rgb);
     
-    // Ambient occlusion is stored in normal.a (0 = fully occluded, 1 = fully lit)
-    let ao = normal_sample.a;
+    // Sample SSAO texture (screen-space ambient occlusion)
+    // SSAO provides better quality than vertex AO and works correctly with greedy meshing
+    let ssao_value = textureSample(ssao_texture, ssao_sampler, in.uv).r;
+    
+    // Use SSAO instead of vertex AO (normal_sample.a)
+    // For now, just use SSAO directly. Later we could blend them.
+    let ao = ssao_value;
     
     let world_pos = position_sample.xyz;
     let depth = position_sample.w;
@@ -584,9 +596,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(moon1_shadow, moon2_shadow, 0.0, 1.0);
     }
     
-    // Debug: Show AO only
+    // Debug: Show moon1 shadow only (grayscale)
+    if DEBUG_MODE == 41 {
+        return vec4<f32>(moon1_shadow, moon1_shadow, moon1_shadow, 1.0);
+    }
+    
+    // Debug: Show moon2 shadow only (grayscale)
+    if DEBUG_MODE == 42 {
+        return vec4<f32>(moon2_shadow, moon2_shadow, moon2_shadow, 1.0);
+    }
+    
+    // Debug: Show where BOTH shadows overlap (blue = both shadowed)
+    if DEBUG_MODE == 43 {
+        let both_shadowed = (1.0 - moon1_shadow) * (1.0 - moon2_shadow);
+        return vec4<f32>(moon1_shadow, moon2_shadow, both_shadowed, 1.0);
+    }
+    
+    // Debug: Show AO only (now shows SSAO)
     if DEBUG_MODE == 5 {
         return vec4<f32>(vec3<f32>(ao), 1.0);
+    }
+    
+    // Debug: Show raw SSAO texture (before any blending with vertex AO)
+    if DEBUG_MODE == 100 {
+        return vec4<f32>(vec3<f32>(ssao_value), 1.0);
     }
     
     // Debug: Show world position XZ (scaled to 0-1 range for -20 to +20)

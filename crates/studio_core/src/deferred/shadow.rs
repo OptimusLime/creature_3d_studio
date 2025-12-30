@@ -127,10 +127,34 @@ impl MoonConfig {
     }
     
     /// Calculate light-space view matrix for a given moon direction.
+    /// 
+    /// For orthographic directional shadows, the view matrix must be constructed
+    /// so that objects at different positions perpendicular to the light direction
+    /// map to different UV coordinates in the shadow map.
+    /// 
+    /// The standard look_at with Y-up doesn't work well when the light direction
+    /// is in the XY plane (Z≈0), because it makes the shadow map X axis align
+    /// with world Z, causing world X variations to only affect depth, not UV.
     fn light_view_matrix(&self, direction: Vec3, scene_center: Vec3) -> Mat4 {
         let light_distance = self.shadow_size * 2.0;
         let light_pos = scene_center - direction * light_distance;
-        Mat4::look_at_rh(light_pos, scene_center, Vec3::Y)
+        
+        // Compute a good up vector that keeps shadow coordinates intuitive:
+        // - For lights in the XY plane (Z≈0), use Z as up so that shadow X ≈ world X
+        // - For lights with Z component, use Y as up (standard)
+        let up = if direction.z.abs() < 0.01 {
+            // Light is in XY plane - cross product with Y gives us the right vector
+            // We want right to be along X, so we need up to be along Z
+            if direction.x > 0.0 {
+                Vec3::NEG_Z  // Light from +X, shadow goes to -X, up is -Z
+            } else {
+                Vec3::Z      // Light from -X, shadow goes to +X, up is +Z
+            }
+        } else {
+            Vec3::Y
+        };
+        
+        Mat4::look_at_rh(light_pos, scene_center, up)
     }
     
     /// Calculate orthographic projection matrix for shadows.

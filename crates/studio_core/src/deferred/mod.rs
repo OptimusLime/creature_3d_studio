@@ -56,6 +56,8 @@ mod point_light_shadow_node;
 mod prepare;
 mod shadow;
 mod shadow_node;
+mod ssao;
+mod ssao_node;
 
 pub use bloom::*;
 pub use bloom_node::*;
@@ -71,3 +73,5 @@ pub use point_light_shadow::*;
 pub use point_light_shadow_node::*;
 pub use shadow::*;
 pub use shadow_node::*;
+pub use ssao::*;
+pub use ssao_node::*;

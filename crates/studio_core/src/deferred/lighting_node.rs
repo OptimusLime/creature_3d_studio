@@ -30,6 +30,7 @@ use super::point_light::PointLightsBuffer;
 use super::point_light_shadow::{ViewPointShadowTextures, ShadowCastingLights, CubeFaceMatrices};
 use super::shadow::ViewDirectionalShadowTextures;
 use super::shadow_node::ViewDirectionalShadowUniforms;
+use super::ssao::ViewSsaoTexture;
 
 /// GPU uniform data for point shadow view-projection matrices.
 /// Contains the 6 face matrices needed to sample the cube shadow map correctly.
@@ -57,13 +58,14 @@ impl ViewNode for LightingPassNode {
         &'static ViewDirectionalShadowTextures,
         &'static ViewDirectionalShadowUniforms,
         &'static ViewPointShadowTextures,
+        Option<&'static ViewSsaoTexture>,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures, ssao_texture): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -241,6 +243,24 @@ impl ViewNode for LightingPassNode {
                 }],
             )
         };
+        
+        // Create bind group for SSAO texture (group 6)
+        let ssao_bind_group = ssao_texture.map(|ssao| {
+            render_context.render_device().create_bind_group(
+                "lighting_ssao_bind_group",
+                &lighting_pipeline.ssao_layout,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&ssao.texture.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Sampler(&lighting_pipeline.ssao_sampler),
+                    },
+                ],
+            )
+        });
 
         // Begin render pass writing to view target
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
@@ -281,6 +301,9 @@ impl ViewNode for LightingPassNode {
             render_pass.set_bind_group(4, point_shadow_bg, &[]);
         }
         render_pass.set_bind_group(5, &point_shadow_matrices_bind_group, &[]);
+        if let Some(ref ssao_bg) = ssao_bind_group {
+            render_pass.set_bind_group(6, ssao_bg, &[]);
+        }
         
         render_pass.draw(0..3, 0..1);
 
@@ -310,6 +333,10 @@ pub struct LightingPipeline {
     pub point_shadow_sampler: Sampler,
     /// Point shadow matrices layout (group 5) - view-proj matrices for cube faces
     pub point_shadow_matrices_layout: BindGroupLayout,
+    /// SSAO texture layout (group 6) - screen-space ambient occlusion
+    pub ssao_layout: BindGroupLayout,
+    /// SSAO sampler
+    pub ssao_sampler: Sampler,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -545,6 +572,31 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
+    
+    // Create bind group layout for SSAO texture (group 6)
+    let ssao_layout = render_device.create_bind_group_layout(
+        "lighting_ssao_layout",
+        &[
+            // SSAO texture (R8Unorm)
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // SSAO sampler
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    );
 
     // Create G-buffer sampler (point sampling)
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
@@ -574,6 +626,14 @@ pub fn init_lighting_pipeline(
         compare: Some(CompareFunction::LessEqual),
         ..default()
     });
+    
+    // Create SSAO sampler (linear filtering for smooth AO)
+    let ssao_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("ssao_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
 
     // Load shader via asset server
     let shader = asset_server.load("shaders/deferred_lighting.wgsl");
@@ -589,6 +649,7 @@ pub fn init_lighting_pipeline(
             point_lights_layout.clone(),                 // Group 3: Point lights
             point_shadow_layout.clone(),                 // Group 4: Point shadow faces
             point_shadow_matrices_layout.clone(),        // Group 5: Point shadow matrices
+            ssao_layout.clone(),                         // Group 6: SSAO texture
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {
@@ -624,5 +685,7 @@ pub fn init_lighting_pipeline(
         point_shadow_layout,
         point_shadow_sampler,
         point_shadow_matrices_layout,
+        ssao_layout,
+        ssao_sampler,
     });
 }

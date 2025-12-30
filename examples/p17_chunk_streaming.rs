@@ -48,7 +48,7 @@ fn main() {
             unload_radius: 8,
             max_loads_per_frame: 4,  // Faster loading for screenshot
             max_unloads_per_frame: 4,
-            use_greedy_meshing: true,
+            use_greedy_meshing: true,  // Re-enabled: SSAO fixes the vertex AO interpolation bug
             y_range: Some((-1, 1)),
         })
         .add_systems(Startup, setup)
