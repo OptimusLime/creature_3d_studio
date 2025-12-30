@@ -19,7 +19,7 @@ fn main() {
         .with_shadow_light(Vec3::new(0.0, 5.0, 0.0))
         .with_clear_color(Color::srgb(0.02, 0.01, 0.03))
         .with_camera_angle(45.0, 35.0)
-        .with_zoom(1.8) // Zoom out to see the full scene
+        .with_zoom(0.6) // Zoom in close for detail
         .with_screenshot("screenshots/p10_dark_world.png")
         .run();
 }
