@@ -20,10 +20,11 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 **Current state:** Basic GTAO works but has architectural gaps vs XeGTAO.
 
 **Critical gaps to fix:**
-- No depth MIP chain (XeGTAO uses 5-level)
+- ~~No depth MIP chain (XeGTAO uses 5-level)~~ **DONE**
+- ~~Config not wired through~~ **DONE**
+- Main pass needs to sample from MIP chain (currently uses hardware depth)
 - Wrong denoiser (we use 7x7 blur, XeGTAO uses edge-aware)
-- Wrong quality preset (we use 72 samples, HIGH = 18)
-- Config not wired through (hardcoded in gtao_node.rs)
+- Missing thin occluder compensation
 
 ---
 
@@ -32,8 +33,10 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 | File | Purpose |
 |------|---------|
 | `assets/shaders/gtao.wgsl` | Main GTAO shader |
-| `crates/studio_core/src/deferred/gtao.rs` | Config struct (NOT BEING USED) |
-| `crates/studio_core/src/deferred/gtao_node.rs` | Render node (HARDCODED params L187-195) |
+| `assets/shaders/gtao_depth_prefilter.wgsl` | Depth MIP chain compute shader |
+| `crates/studio_core/src/deferred/gtao.rs` | Config struct (now wired through) |
+| `crates/studio_core/src/deferred/gtao_node.rs` | GTAO render node |
+| `crates/studio_core/src/deferred/gtao_depth_prefilter.rs` | Depth prefilter render node |
 | `assets/shaders/deferred_lighting.wgsl` | Has 7x7 blur (L84-138) - MUST REMOVE |
 | `XeGTAO/Source/Rendering/Shaders/XeGTAO.hlsli` | Reference implementation |
 
@@ -46,7 +49,7 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 | 0 | Document differences | DONE |
 | 0 | Write implementation plan | DONE |
 | 1 | Wire GtaoConfig through | **DONE** |
-| 2 | Implement depth MIP chain | TODO |
+| 2 | Implement depth MIP chain | **DONE** |
 | 3 | Main pass XeGTAO compliance | TODO |
 | 4 | Edge-aware denoiser | TODO |
 | 5 | Edge packing | TODO |
@@ -56,17 +59,17 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 
 ## Next Step
 
-**Phase 2: Implement depth MIP chain**
+**Phase 3: Main pass XeGTAO compliance**
 
-XeGTAO uses a 5-level depth MIP pyramid for efficient sampling at different radii.
+Update main GTAO shader to sample from the depth MIP chain and match XeGTAO behavior.
 
 Tasks:
-1. Create new compute shader `gtao_depth_mip.wgsl` implementing `XeGTAO_PrefilterDepths16x16`
-2. Create `GtaoDepthMipNode` render node
-3. Output 5 MIP levels of linearized viewspace depth
-4. Update main pass to sample from MIP chain
+1. Update get_viewspace_depth() to sample from depth_mip0 instead of hardware depth
+2. Add MIP level selection based on sample distance (XeGTAO_GetDepthMipLevel)
+3. Add thin occluder compensation heuristic
+4. Verify viewspaceZ precision matches fp16 range
 
-Reference: `XeGTAO.hlsli` L617-684 (XeGTAO_PrefilterDepths16x16)
+Reference: `XeGTAO.hlsli` L454-462 (MIP sampling), L475-498 (thin occluder)
 
 Test: `cargo run --example p20_gtao_test`
 
