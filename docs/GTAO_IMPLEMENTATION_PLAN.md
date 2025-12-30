@@ -62,33 +62,55 @@ return depthLinearizeMul / (depthLinearizeAdd - screenDepth);
 - [x] Phase 3: Single slice horizon search
 - [x] Phase 4: Multi-slice integration
 - [x] **CRITICAL FIX: Reverse-Z depth buffer handling**
-- [ ] Phase 5: Quality tuning - **BLOCKED BY NOISE ISSUE**
-- [ ] Phase 6: Spatial denoise
+- [x] **CRITICAL FIX: Full XeGTAO algorithm alignment** (see audit below)
+- [ ] Phase 5: Final polish (proper falloff, snap to pixel center)
+- [x] Phase 6: Spatial denoise (7x7 bilateral blur in deferred_lighting.wgsl)
 
 ---
 
-## KNOWN ISSUE: Excessive Noise
+## XeGTAO Algorithm Alignment Audit
 
-### Problem
-The GTAO output has heavy stippling/grain pattern across all surfaces. Increasing sample count from 9 to 72 samples did NOT materially improve the noise.
+### Audit Date: 2024-12-30
 
-### Hypotheses to Investigate
-1. **Noise texture sampling** - Is the random rotation being applied correctly?
-2. **Half-resolution rendering** - GTAO renders at half res, is upsampling causing aliasing?
-3. **Sample distribution** - Are samples clustered rather than well-distributed?
-4. **Missing denoise pass** - XeGTAO includes edge-aware spatial blur we haven't implemented
+Systematic comparison of our implementation against XeGTAO reference (`XeGTAO/Source/Rendering/Shaders/XeGTAO.hlsli`).
 
-### Current Parameters
-```wgsl
-const SLICE_COUNT: i32 = 6;       // Direction slices
-const STEPS_PER_SLICE: i32 = 6;   // Steps per direction
-// Total: 6 slices × 6 steps × 2 directions = 72 samples
-```
+| # | Component | XeGTAO Line | Our Line | Status |
+|---|-----------|-------------|----------|--------|
+| 1 | R1 quasi-random noise sequence | L419-421 | L271-274 | ✅ ALIGNED |
+| 2 | minS calculation (avoid center pixel) | L335,367 | L217-218 | ✅ ALIGNED |
+| 3 | Small radius fade | L342-343 | L214 | ✅ ALIGNED |
+| 4 | s += minS | L430 | L284 | ✅ ALIGNED |
+| 5 | Slice angle formula (sliceK * PI) | L372-376 | L229-232 | ✅ ALIGNED |
+| 6 | omega sign (cosPhi, -sinPhi) | L377 | L235 | ✅ ALIGNED |
+| 7 | directionVec | L383 | L238 | ✅ ALIGNED |
+| 8 | orthoDirectionVec (3D projection) | L386 | L241 | ✅ ALIGNED |
+| 9 | axisVec (cross product) | L390 | L244 | ✅ ALIGNED |
+| 10 | projectedNormalVec | L396 | L247 | ✅ ALIGNED |
+| 11 | signNorm | L399 | L250 | ✅ ALIGNED |
+| 12 | cosNorm (saturate, div by length) | L403 | L254 | ✅ ALIGNED |
+| 13 | n angle (signNorm * acos) | L406 | L257 | ✅ ALIGNED |
+| 14 | lowHorizonCos (cos(n±PI/2)) | L409-410 | L260 | ✅ ALIGNED |
+| 15 | horizonCos initialization | L413-414 | L263-264 | ✅ ALIGNED |
+| 16 | sampleHorizonVec | L472 | L304 | ✅ ALIGNED |
+| 17 | shc = dot(horizonVec, viewVec) | L488 | L307 | ✅ ALIGNED |
+| 18 | shc lerp with falloff weight | L492 | L310 | ✅ ALIGNED |
+| 19 | horizonCos max update | L505 | L312 | ✅ ALIGNED |
+| 20 | projNormalLen fudge (lerp to 1, 0.05) | L532 | L341 | ✅ ALIGNED |
+| 21 | h0 = -acos(horizonCos1) | L536 | L344 | ✅ ALIGNED |
+| 22 | h1 = acos(horizonCos0) | L537 | L345 | ✅ ALIGNED |
+| 23 | iarc formula (cosNorm, 2h*sin, cos(2h-n)) | L542-543 | L352-353 | ✅ ALIGNED |
+| 24 | localVisibility = projLen * (iarc0+iarc1) | L544 | L356 | ✅ ALIGNED |
+| 25 | visibility /= sliceCount | L556 | L361 | ✅ ALIGNED |
+| 26 | pow(visibility, finalPower) | L557 | L364 | ✅ ALIGNED |
+| 27 | max(0.03, visibility) | L558 | L367 | ✅ ALIGNED |
 
-### Effect Radius
-```rust
-effect_radius: 3.0,  // World units (voxels are 1 unit)
-```
+### Known Differences (Lower Priority)
+
+| # | Component | XeGTAO | Ours | Impact |
+|---|-----------|--------|------|--------|
+| A | Falloff calculation | Precomputed falloffMul/falloffAdd (L315-316, L477) | Simplified `1 - dist/radius` | Minor - affects edge softness |
+| B | Snap to pixel center | round(sampleOffset) (L442) | No rounding | Minor - may cause sub-pixel noise |
+| C | Depth MIP chain | Uses MIP levels for large radii (L438) | Single-level sampling | Minor - affects large radius performance |
 
 ---
 
@@ -107,6 +129,9 @@ examples/
 
 assets/worlds/
 ├── gtao_test.voxworld     # Test scene geometry
+
+XeGTAO/                    # Reference implementation (local copy)
+├── Source/Rendering/Shaders/XeGTAO.hlsli
 ```
 
 ---
@@ -154,9 +179,22 @@ In `deferred_lighting.wgsl`:
 
 ---
 
+## Parameters
+
+```wgsl
+const SLICE_COUNT: i32 = 9;       // Direction slices
+const STEPS_PER_SLICE: i32 = 4;   // Steps per direction
+// Total: 9 slices × 4 steps × 2 directions = 72 samples
+```
+
+```rust
+effect_radius: 3.0,  // World units (voxels are 1 unit)
+```
+
+---
+
 ## Next Steps
 
-1. **Investigate noise source** - Check if noise is from sampling pattern or reconstruction
-2. **Implement proper denoise** - XeGTAO has edge-aware spatial blur
-3. **Verify half-res rendering** - Ensure upsampling isn't causing aliasing
-4. **Compare with XeGTAO reference** - Ensure algorithm matches Intel's implementation
+1. **Implement proper falloff** - Match XeGTAO's falloffMul/falloffAdd precomputation
+2. **Add snap to pixel center** - Round sample offsets for cleaner sampling
+3. **Full re-audit** - Verify all items after fixes

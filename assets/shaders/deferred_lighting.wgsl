@@ -77,8 +77,9 @@ struct PointShadowMatrices {
 // ============================================================================
 // Edge-Aware Bilateral GTAO Blur
 // ============================================================================
-// Performs a 3x3 depth-weighted blur on the GTAO texture to reduce edge noise
+// Performs a 5x5 depth-weighted blur on the GTAO texture to reduce noise
 // while preserving sharp edges at depth discontinuities.
+// GTAO is at half-res, so this blur covers ~2.5 pixels in GTAO space.
 
 fn sample_gtao_with_blur(uv: vec2<f32>, center_depth: f32) -> f32 {
     // Get texture dimensions for pixel offset calculation
@@ -86,52 +87,49 @@ fn sample_gtao_with_blur(uv: vec2<f32>, center_depth: f32) -> f32 {
     let pixel_size = 1.0 / tex_dims;
     
     // Depth threshold for edge detection - relative to center depth
-    // Smaller = sharper edges preserved, larger = more blur
-    let depth_threshold = 0.05 * center_depth + 0.5;
+    // Larger = more blur across depth differences
+    let depth_threshold = 0.08 * center_depth + 1.0;
     
     var total_ao = 0.0;
     var total_weight = 0.0;
     
-    // 3x3 kernel with Gaussian-like weights
-    let kernel_offsets = array<vec2<f32>, 9>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(0.0, -1.0), vec2<f32>(1.0, -1.0),
-        vec2<f32>(-1.0,  0.0), vec2<f32>(0.0,  0.0), vec2<f32>(1.0,  0.0),
-        vec2<f32>(-1.0,  1.0), vec2<f32>(0.0,  1.0), vec2<f32>(1.0,  1.0)
-    );
+    // 7x7 blur kernel for strong denoising
+    // GTAO at half-res means this covers ~3.5 GTAO pixels
+    let kernel_radius = 3;
     
-    // Gaussian kernel weights (sigma ≈ 0.8)
-    let kernel_weights = array<f32, 9>(
-        0.0625, 0.125, 0.0625,
-        0.125,  0.25,  0.125,
-        0.0625, 0.125, 0.0625
-    );
-    
-    for (var i = 0; i < 9; i++) {
-        let sample_uv = uv + kernel_offsets[i] * pixel_size;
-        
-        // Bounds check
-        if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
-            continue;
+    for (var dy = -kernel_radius; dy <= kernel_radius; dy++) {
+        for (var dx = -kernel_radius; dx <= kernel_radius; dx++) {
+            let offset = vec2<f32>(f32(dx), f32(dy));
+            let sample_uv = uv + offset * pixel_size;
+            
+            // Bounds check
+            if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
+                continue;
+            }
+            
+            // Sample AO
+            let ao_sample = textureSample(gtao_texture, gtao_sampler, sample_uv).r;
+            
+            // Sample depth for edge detection
+            let sample_depth = textureSample(gPosition, gbuffer_sampler, sample_uv).w;
+            
+            // Gaussian spatial weight (sigma ≈ 1.5)
+            let dist_sq = f32(dx * dx + dy * dy);
+            let spatial_weight = exp(-dist_sq / 4.5);
+            
+            // Edge-aware weight: reduce weight for depth discontinuities
+            let depth_diff = abs(sample_depth - center_depth);
+            let edge_weight = exp(-depth_diff * depth_diff / (depth_threshold * depth_threshold));
+            
+            // Combined weight
+            let weight = spatial_weight * edge_weight;
+            
+            total_ao += ao_sample * weight;
+            total_weight += weight;
         }
-        
-        // Sample AO
-        let ao_sample = textureSample(gtao_texture, gtao_sampler, sample_uv).r;
-        
-        // Sample depth for edge detection (from position texture)
-        let sample_depth = textureSample(gPosition, gbuffer_sampler, sample_uv).w;
-        
-        // Edge-aware weight: reduce weight for depth discontinuities
-        let depth_diff = abs(sample_depth - center_depth);
-        let edge_weight = exp(-depth_diff * depth_diff / (depth_threshold * depth_threshold));
-        
-        // Combined weight
-        let weight = kernel_weights[i] * edge_weight;
-        
-        total_ao += ao_sample * weight;
-        total_weight += weight;
     }
     
-    // Return weighted average (fallback to center sample if no valid neighbors)
+    // Return weighted average
     if total_weight > 0.001 {
         return total_ao / total_weight;
     } else {

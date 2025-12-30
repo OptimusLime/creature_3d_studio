@@ -37,9 +37,10 @@ struct CameraUniforms {
 // Parameters (can be tuned)
 // ============================================================================
 
-const SLICE_COUNT: i32 = 6;       // Number of direction slices
-const STEPS_PER_SLICE: i32 = 6;   // Steps per slice direction
-// Total samples: 6 slices × 6 steps × 2 directions = 72 samples
+const SLICE_COUNT: i32 = 9;       // Number of direction slices
+const STEPS_PER_SLICE: i32 = 4;   // Steps per slice direction
+// Total samples: 9 slices × 4 steps × 2 directions = 72 samples
+// More slices = better angular coverage, helps with noise
 
 // Debug modes: 0 = normal, 1 = show depth, 2 = show normal.z
 const DEBUG_GTAO: i32 = 0;  // 0 = normal GTAO output
@@ -197,57 +198,96 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     let P = compute_viewspace_position(uv, viewspace_depth);
     let N = get_viewspace_normal(uv);
     
+    // XeGTAO line 287: View direction from pixel to camera (normalized)
+    // In view space, camera is at origin, so viewVec = normalize(-P)
+    let view_vec = normalize(-P);
+    
     // Compute effect radius in screen space
     let world_radius = get_effect_radius() * get_radius_multiplier();
     // Project radius to screen space (approximate)
     let radius_pixels = (world_radius / viewspace_depth) / pixel_size.x * 0.5;
     
-    // Clamp radius
-    let clamped_radius = clamp(radius_pixels, 1.0, 256.0);
+    // Clamp radius to reasonable range
+    let screenspace_radius = clamp(radius_pixels, 1.0, 256.0);
     
-    if clamped_radius < 2.0 {
-        return 1.0;
-    }
+    // XeGTAO L342-343: fade out for small screen radii
+    var visibility = saturate((10.0 - screenspace_radius) / 100.0) * 0.5;
     
-    // Get noise for randomizing slice directions
-    let noise_uv = pixel_pos / 4.0;  // Noise texture tiles every 4 pixels
-    let noise = textureSample(noise_texture, noise_sampler, noise_uv / 8.0);
+    // XeGTAO L335, L367: minimum sample distance to avoid sampling center pixel
+    let pixel_too_close_threshold = 1.3;
+    let min_s = pixel_too_close_threshold / screenspace_radius;
+    
+    // Get noise for randomizing slice directions to avoid banding
+    let noise_uv = pixel_pos / 32.0;
+    let noise = textureSample(noise_texture, noise_sampler, noise_uv);
     let noise_slice = noise.x;
     let noise_sample = noise.y;
     
-    var visibility = 0.0;
-    
     // For each slice direction
     for (var slice = 0; slice < SLICE_COUNT; slice++) {
-        // Compute slice angle with noise offset
-        let slice_angle = (PI / f32(SLICE_COUNT)) * (f32(slice) + noise_slice);
-        let direction = vec2<f32>(cos(slice_angle), sin(slice_angle));
+        // XeGTAO lines 372-374: Compute slice angle with noise offset
+        let slice_k = (f32(slice) + noise_slice) / f32(SLICE_COUNT);
+        let phi = slice_k * PI;
+        let cos_phi = cos(phi);
+        let sin_phi = sin(phi);
         
-        // Orthogonal direction for hemisphere test
-        let ortho_dir = vec3<f32>(direction.y, -direction.x, 0.0);
+        // XeGTAO line 377: omega for screen-space offset (note: -sinPhi for Y)
+        let omega = vec2<f32>(cos_phi, -sin_phi);
         
-        // Project normal onto slice plane (the plane containing view direction and slice direction)
-        // This gives us the "projected normal" in the slice
-        let slice_normal = N - ortho_dir * dot(N, ortho_dir);
-        let slice_normal_len = length(slice_normal);
-        let slice_n = slice_normal / (slice_normal_len + 0.0001);
+        // XeGTAO line 383: direction vector in viewspace (XY plane)
+        let direction_vec = vec3<f32>(cos_phi, sin_phi, 0.0);
         
-        // Angle of normal in the slice (from view direction)
-        let n_angle = fast_acos(clamp(slice_n.z, -1.0, 1.0)) * sign(slice_n.x * direction.x + slice_n.y * direction.y);
+        // XeGTAO line 386: orthoDirectionVec = directionVec - dot(directionVec, viewVec) * viewVec
+        let ortho_direction_vec = direction_vec - dot(direction_vec, view_vec) * view_vec;
         
-        // Initialize horizon angles
-        var horizon_cos = vec2<f32>(-1.0, -1.0);  // cos of horizon angle for +/- directions
+        // XeGTAO line 390: axisVec = normalize(cross(orthoDirectionVec, viewVec))
+        let axis_vec = normalize(cross(ortho_direction_vec, view_vec));
+        
+        // XeGTAO line 396: projectedNormalVec = normal - axisVec * dot(normal, axisVec)
+        let projected_normal_vec = N - axis_vec * dot(N, axis_vec);
+        
+        // XeGTAO line 399: signNorm = sign(dot(orthoDirectionVec, projectedNormalVec))
+        let sign_norm = sign(dot(ortho_direction_vec, projected_normal_vec));
+        
+        // XeGTAO lines 402-403: projectedNormalVecLength and cosNorm
+        let projected_normal_vec_length = length(projected_normal_vec);
+        let cos_norm = saturate(dot(projected_normal_vec, view_vec) / (projected_normal_vec_length + 0.0001));
+        
+        // XeGTAO line 406: n = signNorm * FastACos(cosNorm)
+        let n_angle = sign_norm * fast_acos(cos_norm);
+        
+        // XeGTAO lines 409-410: Low horizon cos values
+        let low_horizon_cos = vec2<f32>(cos(n_angle + PI_HALF), cos(n_angle - PI_HALF));
+        
+        // XeGTAO lines 413-414: Initialize horizon cos with low horizon values
+        var horizon_cos0 = low_horizon_cos.x;
+        var horizon_cos1 = low_horizon_cos.y;
+        
+        // XeGTAO line 380: convert omega to screen units (pixels)
+        let omega_screen = omega * screenspace_radius;
         
         // Sample along the slice in both directions
         for (var step = 0; step < STEPS_PER_SLICE; step++) {
-            // Sample distance with power distribution (more samples closer to center)
-            let step_base = (f32(step) + noise_sample) / f32(STEPS_PER_SLICE);
-            let step_dist = pow(step_base, get_sample_distribution_power());
-            let sample_offset = direction * step_dist * clamped_radius;
+            // XeGTAO L419-421: R1 quasi-random sequence for step noise
+            // Golden ratio conjugate = 0.6180339887498948482
+            let step_base_noise = f32(slice + step * STEPS_PER_SLICE) * 0.6180339887498948482;
+            let step_noise = fract(noise_sample + step_base_noise);
             
-            // Positive direction
+            // XeGTAO L423-424: Sample distance with noise
+            var s = (f32(step) + step_noise) / f32(STEPS_PER_SLICE);
+            
+            // XeGTAO L427: additional distribution modifier
+            s = pow(s, get_sample_distribution_power());
+            
+            // XeGTAO L430: avoid sampling center pixel
+            s = s + min_s;
+            
+            // XeGTAO line 433: sample offset in screen space
+            let sample_offset = s * omega_screen * pixel_size;
+            
+            // Positive direction (XeGTAO lines 458-493)
             {
-                let sample_uv = uv + sample_offset * pixel_size;
+                let sample_uv = uv + sample_offset;
                 if sample_uv.x >= 0.0 && sample_uv.x <= 1.0 && sample_uv.y >= 0.0 && sample_uv.y <= 1.0 {
                     if !is_sky(sample_uv) {
                         let S = get_viewspace_pos(sample_uv);
@@ -255,22 +295,26 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                         let delta_len = length(delta);
                         
                         if delta_len > 0.001 {
-                            // Horizon angle: angle from view direction to sample
-                            let horizon = delta.z / delta_len;
+                            // XeGTAO line 472: sampleHorizonVec = delta / delta_len
+                            let sample_horizon_vec = delta / delta_len;
                             
-                            // Falloff based on distance
+                            // XeGTAO line 488: horizon cos = dot(sampleHorizonVec, viewVec)
+                            let shc = dot(sample_horizon_vec, view_vec);
+                            
+                            // XeGTAO lines 477-478, 492: Falloff and lerp
                             let falloff = saturate(1.0 - delta_len / (world_radius + 0.001));
-                            let weighted_horizon = mix(-1.0, horizon, falloff);
+                            let weighted_shc = mix(low_horizon_cos.x, shc, falloff);
                             
-                            horizon_cos.x = max(horizon_cos.x, weighted_horizon);
+                            // XeGTAO line 505: max update
+                            horizon_cos0 = max(horizon_cos0, weighted_shc);
                         }
                     }
                 }
             }
             
-            // Negative direction
+            // Negative direction (XeGTAO lines 462-464)
             {
-                let sample_uv = uv - sample_offset * pixel_size;
+                let sample_uv = uv - sample_offset;
                 if sample_uv.x >= 0.0 && sample_uv.x <= 1.0 && sample_uv.y >= 0.0 && sample_uv.y <= 1.0 {
                     if !is_sky(sample_uv) {
                         let S = get_viewspace_pos(sample_uv);
@@ -278,38 +322,49 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                         let delta_len = length(delta);
                         
                         if delta_len > 0.001 {
-                            let horizon = delta.z / delta_len;
+                            let sample_horizon_vec = delta / delta_len;
+                            let shc = dot(sample_horizon_vec, view_vec);
                             
                             let falloff = saturate(1.0 - delta_len / (world_radius + 0.001));
-                            let weighted_horizon = mix(-1.0, horizon, falloff);
+                            let weighted_shc = mix(low_horizon_cos.y, shc, falloff);
                             
-                            horizon_cos.y = max(horizon_cos.y, weighted_horizon);
+                            horizon_cos1 = max(horizon_cos1, weighted_shc);
                         }
                     }
                 }
             }
         }
         
-        // Convert horizon cos to angles
-        let horizon_angle_pos = fast_acos(horizon_cos.x);
-        let horizon_angle_neg = -fast_acos(horizon_cos.y);
+        // XeGTAO L531-532: fudge factor for slight overdarkening on high slopes
+        let proj_normal_len_adjusted = mix(projected_normal_vec_length, 1.0, 0.05);
         
-        // Clamp horizon angles to hemisphere around normal
-        let h0 = max(horizon_angle_neg, n_angle - PI_HALF);
-        let h1 = min(horizon_angle_pos, n_angle + PI_HALF);
+        // XeGTAO lines 536-537: Convert horizon cos to angles
+        // IMPORTANT: h0 uses horizonCos1 (negative direction), h1 uses horizonCos0 (positive direction)
+        let h0 = -fast_acos(horizon_cos1);
+        let h1 = fast_acos(horizon_cos0);
         
-        // Compute visibility for this slice
-        // Integration of cos over the visible arc
-        let slice_visibility = (slice_normal_len + cos(n_angle) * 0.5) * 
-                               (h1 - h0 + sin(h0) * cos(h0) - sin(h1) * cos(h1));
+        // XeGTAO lines 542-543: Visibility integration formula
+        // IMPORTANT: Uses cosNorm (the saturated dot product), NOT cos(n_angle)
+        let n = n_angle;
+        let sin_n = sin(n);
         
-        visibility += slice_visibility;
+        let iarc0 = (cos_norm + 2.0 * h0 * sin_n - cos(2.0 * h0 - n)) / 4.0;
+        let iarc1 = (cos_norm + 2.0 * h1 * sin_n - cos(2.0 * h1 - n)) / 4.0;
+        
+        // XeGTAO line 544: localVisibility = projectedNormalVecLength * (iarc0 + iarc1)
+        let local_visibility = proj_normal_len_adjusted * (iarc0 + iarc1);
+        
+        visibility += local_visibility;
     }
     
-    // Normalize by number of slices and apply power
-    visibility = visibility / (f32(SLICE_COUNT) * PI);
-    visibility = saturate(visibility);
+    // XeGTAO line 556: visibility /= sliceCount
+    visibility = visibility / f32(SLICE_COUNT);
+    
+    // XeGTAO line 557: apply power
     visibility = pow(visibility, get_final_value_power());
+    
+    // XeGTAO line 558: disallow total occlusion
+    visibility = max(0.03, visibility);
     
     return visibility;
 }
