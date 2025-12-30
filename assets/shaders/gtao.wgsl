@@ -217,6 +217,14 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     let pixel_too_close_threshold = 1.3;
     let min_s = pixel_too_close_threshold / screenspace_radius;
     
+    // XeGTAO L304-316: Precompute falloff parameters
+    // falloffRange = effectFalloffRange * effectRadius (default effectFalloffRange = 0.615)
+    let falloff_range = get_effect_falloff_range() * world_radius;
+    let falloff_from = world_radius * (1.0 - get_effect_falloff_range());
+    // Optimized: weight = saturate(dist * falloffMul + falloffAdd)
+    let falloff_mul = -1.0 / falloff_range;
+    let falloff_add = falloff_from / falloff_range + 1.0;
+    
     // Get noise for randomizing slice directions to avoid banding
     let noise_uv = pixel_pos / 32.0;
     let noise = textureSample(noise_texture, noise_sampler, noise_uv);
@@ -282,8 +290,11 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
             // XeGTAO L430: avoid sampling center pixel
             s = s + min_s;
             
-            // XeGTAO line 433: sample offset in screen space
-            let sample_offset = s * omega_screen * pixel_size;
+            // XeGTAO line 433: sample offset in screen space (pixels)
+            let sample_offset_pixels = s * omega_screen;
+            
+            // XeGTAO L440-442: Snap to pixel center for more correct direction math
+            let sample_offset = round(sample_offset_pixels) * pixel_size;
             
             // Positive direction (XeGTAO lines 458-493)
             {
@@ -301,9 +312,11 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                             // XeGTAO line 488: horizon cos = dot(sampleHorizonVec, viewVec)
                             let shc = dot(sample_horizon_vec, view_vec);
                             
-                            // XeGTAO lines 477-478, 492: Falloff and lerp
-                            let falloff = saturate(1.0 - delta_len / (world_radius + 0.001));
-                            let weighted_shc = mix(low_horizon_cos.x, shc, falloff);
+                            // XeGTAO L477-478: Falloff weight using precomputed mul/add
+                            let weight = saturate(delta_len * falloff_mul + falloff_add);
+                            
+                            // XeGTAO L492: lerp between low horizon and sample horizon
+                            let weighted_shc = mix(low_horizon_cos.x, shc, weight);
                             
                             // XeGTAO line 505: max update
                             horizon_cos0 = max(horizon_cos0, weighted_shc);
@@ -325,8 +338,11 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                             let sample_horizon_vec = delta / delta_len;
                             let shc = dot(sample_horizon_vec, view_vec);
                             
-                            let falloff = saturate(1.0 - delta_len / (world_radius + 0.001));
-                            let weighted_shc = mix(low_horizon_cos.y, shc, falloff);
+                            // XeGTAO L478: Falloff weight using precomputed mul/add
+                            let weight = saturate(delta_len * falloff_mul + falloff_add);
+                            
+                            // XeGTAO L493: lerp between low horizon and sample horizon
+                            let weighted_shc = mix(low_horizon_cos.y, shc, weight);
                             
                             horizon_cos1 = max(horizon_cos1, weighted_shc);
                         }
