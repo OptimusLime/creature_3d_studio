@@ -4,6 +4,8 @@
 //! using Intel's XeGTAO algorithm - a horizon-based approach that provides
 //! ground-truth quality AO with excellent performance.
 //!
+//! All parameters come from GtaoConfig - NO HARDCODED VALUES.
+//!
 //! Reference: https://github.com/GameTechDev/XeGTAO
 
 use bevy::prelude::*;
@@ -24,11 +26,13 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
-use super::gtao::ViewGtaoTexture;
+use super::gtao::{GtaoConfig, ViewGtaoTexture};
 
 /// GPU uniform for GTAO camera and algorithm parameters.
 /// Layout matches the shader's CameraUniforms struct exactly.
 /// All vec2s packed into vec4s for proper alignment.
+///
+/// All values come from GtaoConfig - NO HARDCODED VALUES in this struct.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GtaoCameraUniform {
@@ -49,8 +53,10 @@ pub struct GtaoCameraUniform {
     /// x = radius_multiplier, y = final_value_power
     /// z = sample_distribution_power, w = thin_occluder_compensation - 16 bytes
     pub params2: [f32; 4],
+    /// x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta - 16 bytes
+    pub params3: [f32; 4],
 }
-// Total: 64*3 + 16*4 = 192 + 64 = 256 bytes
+// Total: 64*3 + 16*5 = 192 + 80 = 272 bytes
 
 /// Render graph node that computes GTAO.
 #[derive(Default)]
@@ -86,6 +92,17 @@ impl ViewNode for GtaoPassNode {
         let Some(noise_texture) = noise_texture else {
             return Ok(());
         };
+
+        // Get GTAO config from render world (extracted from main world)
+        let gtao_config = world
+            .get_resource::<GtaoConfig>()
+            .cloned()
+            .unwrap_or_default();
+
+        // Early out if GTAO is disabled
+        if !gtao_config.enabled {
+            return Ok(());
+        }
 
         // Create bind group for G-buffer textures (group 0)
         let gbuffer_bind_group = render_context.render_device().create_bind_group(
@@ -163,6 +180,7 @@ impl ViewNode for GtaoPassNode {
         let ndc_to_view_mul = [tan_half_fov_x * 2.0, tan_half_fov_y * -2.0];
         let ndc_to_view_add = [tan_half_fov_x * -1.0, tan_half_fov_y * 1.0];
 
+        // All values from GtaoConfig - NO HARDCODED VALUES
         let camera_uniform = GtaoCameraUniform {
             view: view_from_world.to_cols_array_2d(),
             projection: proj_cols,
@@ -181,18 +199,28 @@ impl ViewNode for GtaoPassNode {
                 ndc_to_view_mul[1],
             ],
             // Pack: xy = ndc_to_view_add, z = effect_radius, w = effect_falloff_range
+            // FROM CONFIG - not hardcoded
             ndc_add_and_params1: [
                 ndc_to_view_add[0],
                 ndc_to_view_add[1],
-                3.0,    // effect_radius - world-space (voxels are 1 unit)
-                0.615,  // effect_falloff_range - XeGTAO default
+                gtao_config.effect_radius,
+                gtao_config.effect_falloff_range,
             ],
             // Pack: x = radius_multiplier, y = final_value_power, z = sample_dist_power, w = thin_occluder_comp
+            // FROM CONFIG - not hardcoded
             params2: [
-                1.457,  // radius_multiplier - XeGTAO default
-                2.2,    // final_value_power - XeGTAO default
-                2.0,    // sample_distribution_power - XeGTAO default
-                0.0,    // thin_occluder_compensation - XeGTAO default
+                gtao_config.radius_multiplier,
+                gtao_config.final_value_power,
+                gtao_config.sample_distribution_power,
+                gtao_config.thin_occluder_compensation,
+            ],
+            // Pack: x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta
+            // FROM CONFIG - not hardcoded
+            params3: [
+                gtao_config.slice_count() as f32,
+                gtao_config.steps_per_slice() as f32,
+                gtao_config.depth_mip_sampling_offset,
+                gtao_config.denoise_blur_beta(),
             ],
         };
 

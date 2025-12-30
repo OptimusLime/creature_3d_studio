@@ -6,6 +6,7 @@ use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
 use bevy::prelude::*;
 use bevy::render::{
     extract_component::ExtractComponentPlugin,
+    extract_resource::ExtractResourcePlugin,
     render_graph::{RenderGraphExt, ViewNodeRunner},
     ExtractSchedule, Render, RenderApp, RenderSystems,
 };
@@ -68,6 +69,9 @@ impl Plugin for DeferredRenderingPlugin {
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
         app.add_plugins(ExtractComponentPlugin::<DeferredRenderable>::default());
+        
+        // Extract GtaoConfig resource to render world (for hot-reloading parameters)
+        app.add_plugins(ExtractResourcePlugin::<GtaoConfig>::default());
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {

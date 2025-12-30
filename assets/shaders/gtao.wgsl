@@ -30,17 +30,16 @@ struct CameraUniforms {
     depth_unpack_and_ndc_mul: vec4<f32>,  // xy = depth_unpack_consts, zw = ndc_to_view_mul
     ndc_add_and_params1: vec4<f32>,       // xy = ndc_to_view_add, z = effect_radius, w = effect_falloff_range
     params2: vec4<f32>,                   // x = radius_multiplier, y = final_value_power, z = sample_distribution_power, w = thin_occluder_compensation
+    params3: vec4<f32>,                   // x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta
 }
 @group(2) @binding(0) var<uniform> camera: CameraUniforms;
 
 // ============================================================================
-// Parameters (can be tuned)
+// Parameters
 // ============================================================================
-
-const SLICE_COUNT: i32 = 9;       // Number of direction slices
-const STEPS_PER_SLICE: i32 = 4;   // Steps per slice direction
-// Total samples: 9 slices × 4 steps × 2 directions = 72 samples
-// More slices = better angular coverage, helps with noise
+// ALL parameters now come from uniforms (GtaoConfig) - NO HARDCODED VALUES
+// Slice count and steps per slice are read from params3.xy
+// XeGTAO HIGH preset: 3 slices, 3 steps = 18 samples total
 
 // Debug modes: 0 = normal, 1 = show depth, 2 = show normal.z
 const DEBUG_GTAO: i32 = 0;  // 0 = normal GTAO output
@@ -99,6 +98,26 @@ fn get_final_value_power() -> f32 {
 
 fn get_sample_distribution_power() -> f32 {
     return camera.params2.z;
+}
+
+fn get_thin_occluder_compensation() -> f32 {
+    return camera.params2.w;
+}
+
+fn get_slice_count() -> i32 {
+    return i32(camera.params3.x);
+}
+
+fn get_steps_per_slice() -> i32 {
+    return i32(camera.params3.y);
+}
+
+fn get_depth_mip_sampling_offset() -> f32 {
+    return camera.params3.z;
+}
+
+fn get_denoise_blur_beta() -> f32 {
+    return camera.params3.w;
 }
 
 // Convert NDC depth [0,1] to linear view-space depth
@@ -231,10 +250,14 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     let noise_slice = noise.x;
     let noise_sample = noise.y;
     
+    // Get slice/step counts from config (not hardcoded!)
+    let slice_count = get_slice_count();
+    let steps_per_slice = get_steps_per_slice();
+    
     // For each slice direction
-    for (var slice = 0; slice < SLICE_COUNT; slice++) {
+    for (var slice = 0; slice < slice_count; slice++) {
         // XeGTAO lines 372-374: Compute slice angle with noise offset
-        let slice_k = (f32(slice) + noise_slice) / f32(SLICE_COUNT);
+        let slice_k = (f32(slice) + noise_slice) / f32(slice_count);
         let phi = slice_k * PI;
         let cos_phi = cos(phi);
         let sin_phi = sin(phi);
@@ -275,14 +298,14 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
         let omega_screen = omega * screenspace_radius;
         
         // Sample along the slice in both directions
-        for (var step = 0; step < STEPS_PER_SLICE; step++) {
+        for (var step = 0; step < steps_per_slice; step++) {
             // XeGTAO L419-421: R1 quasi-random sequence for step noise
             // Golden ratio conjugate = 0.6180339887498948482
-            let step_base_noise = f32(slice + step * STEPS_PER_SLICE) * 0.6180339887498948482;
+            let step_base_noise = f32(slice + step * steps_per_slice) * 0.6180339887498948482;
             let step_noise = fract(noise_sample + step_base_noise);
             
             // XeGTAO L423-424: Sample distance with noise
-            var s = (f32(step) + step_noise) / f32(STEPS_PER_SLICE);
+            var s = (f32(step) + step_noise) / f32(steps_per_slice);
             
             // XeGTAO L427: additional distribution modifier
             s = pow(s, get_sample_distribution_power());
@@ -374,7 +397,7 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     }
     
     // XeGTAO line 556: visibility /= sliceCount
-    visibility = visibility / f32(SLICE_COUNT);
+    visibility = visibility / f32(slice_count);
     
     // XeGTAO line 557: apply power
     visibility = pow(visibility, get_final_value_power());
