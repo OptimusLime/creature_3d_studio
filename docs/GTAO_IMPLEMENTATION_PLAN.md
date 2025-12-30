@@ -140,44 +140,45 @@ From XeGTAO.h and usage patterns:
 - No visible noise artifacts
 - Proper falloff at edges
 
-### Phase 4: Implement Edge-Aware Denoiser
+### Phase 4+5: Implement Edge-Aware Denoiser (COMPLETED)
 
 **Goal:** Replace 7x7 bilateral blur with XeGTAO's edge-aware denoiser.
 
-**Tasks:**
-1. Create `gtao_denoise.wgsl` implementing `XeGTAO_Denoise`:
-   - Use packed edges from main pass
-   - Implement `XeGTAO_AddSample` weighted averaging
-   - Support multiple denoise passes (1-3)
-   - Implement `DenoiseBlurBeta` parameter
+**Merged Phase 4 and Phase 5** since edge packing is required for the denoiser.
 
-2. Create `GtaoDenoiseNode` render node:
-   - Input: noisy AO + edges texture
-   - Output: denoised AO
-   - Support 1-3 passes based on config
+**Tasks (all completed):**
+1. ✅ Add edge calculation to main pass: `XeGTAO_CalculateEdges` (L120-129)
+2. ✅ Add edge packing: `XeGTAO_PackEdges` (L132-141)
+3. ✅ Update main GTAO pass to output both AO and packed edges (MRT)
+4. ✅ Create `gtao_denoise.wgsl` implementing `XeGTAO_Denoise` (L734-826):
+   - `unpack_edges` (L686-696)
+   - `add_sample` weighted averaging (L704-710)
+   - Edge symmetry enforcement (L769-770)
+   - AO leaking prevention for 3-4 edges (L772-776)
+   - 3x3 kernel with diagonal weights (L785-788)
+   - `DenoiseBlurBeta` parameter support
+5. ✅ Create `GtaoDenoiseNode` render node (compute shader)
+6. ✅ Remove 7x7 blur from `deferred_lighting.wgsl`
+7. ✅ Update lighting node to use denoised texture
+8. ✅ Wire denoiser into render graph after main GTAO pass
 
-3. Remove 7x7 blur from `deferred_lighting.wgsl`
-
-4. Update pipeline to run denoise passes between GTAO and lighting
+**Files created/modified:**
+- `assets/shaders/gtao.wgsl` - Added edge calc, packing, MRT output
+- `assets/shaders/gtao_denoise.wgsl` - NEW: XeGTAO denoiser compute shader
+- `crates/studio_core/src/deferred/gtao_denoise.rs` - NEW: Denoise render node
+- `crates/studio_core/src/deferred/gtao_node.rs` - MRT output (AO + edges)
+- `crates/studio_core/src/deferred/gtao.rs` - Added ViewGtaoEdgesTexture
+- `crates/studio_core/src/deferred/lighting_node.rs` - Uses ViewGtaoDenoised
+- `crates/studio_core/src/deferred/labels.rs` - Added GtaoDenoise label
+- `crates/studio_core/src/deferred/mod.rs` - Export gtao_denoise
+- `crates/studio_core/src/deferred/plugin.rs` - Wire denoise node into graph
+- `assets/shaders/deferred_lighting.wgsl` - Removed 7x7 blur
 
 **Verification:**
-- Compare denoised output quality to reference
-- No blur across depth discontinuities
-- Clean edges at geometry boundaries
-
-### Phase 5: Implement Edge Packing
-
-**Goal:** Produce packed edge texture like XeGTAO.
-
-**Tasks:**
-1. Add edge calculation to main pass: `XeGTAO_CalculateEdges` (L120-129)
-2. Add edge packing: `XeGTAO_PackEdges` (L132-141)
-3. Output packed edges to separate R8 texture
-4. Update denoiser to use packed edges
-
-**Verification:**
+- ✅ Build succeeds
+- ✅ `cargo run --example p20_gtao_test` runs without errors
 - Edge texture shows depth discontinuities
-- Denoise respects edges
+- Denoise respects edges (no blur across depth boundaries)
 
 ### Phase 6: TAA Noise Index Support
 

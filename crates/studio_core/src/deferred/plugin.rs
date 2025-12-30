@@ -41,6 +41,9 @@ use super::gtao_node::{init_gtao_pipeline, init_gtao_noise_texture, GtaoPassNode
 use super::gtao_depth_prefilter::{
     init_depth_prefilter_pipeline, prepare_depth_mip_textures, DepthPrefilterNode,
 };
+use super::gtao_denoise::{
+    init_gtao_denoise_pipeline, prepare_gtao_denoised_textures, GtaoDenoiseNode,
+};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -114,6 +117,7 @@ impl Plugin for DeferredRenderingPlugin {
                 init_gtao_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_noise_texture.in_set(RenderSystems::Prepare),
                 init_depth_prefilter_pipeline.in_set(RenderSystems::Prepare),
+                init_gtao_denoise_pipeline.in_set(RenderSystems::Prepare),
             ),
         );
         
@@ -177,6 +181,9 @@ impl Plugin for DeferredRenderingPlugin {
                 prepare_depth_mip_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_depth_prefilter_pipeline),
+                prepare_gtao_denoised_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_gtao_denoise_pipeline),
             ),
         );
 
@@ -212,6 +219,11 @@ impl Plugin for DeferredRenderingPlugin {
                 Core3d,
                 DeferredLabel::GtaoPass,
             )
+            // GTAO denoise node (after main GTAO pass)
+            .add_render_graph_node::<ViewNodeRunner<GtaoDenoiseNode>>(
+                Core3d,
+                DeferredLabel::GtaoDenoise,
+            )
             // Lighting pass node
             .add_render_graph_node::<ViewNodeRunner<LightingPassNode>>(
                 Core3d,
@@ -238,7 +250,7 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // GTAO runs after G-buffer: first depth prefilter, then main GTAO pass
+        // GTAO runs after G-buffer: first depth prefilter, then main GTAO pass, then denoise
         // Then Lighting runs after opaque, bloom after lighting, then transparent
         render_app.add_render_graph_edges(
             Core3d,
@@ -246,6 +258,7 @@ impl Plugin for DeferredRenderingPlugin {
                 DeferredLabel::GBufferPass,
                 DeferredLabel::GtaoDepthPrefilter,
                 DeferredLabel::GtaoPass,
+                DeferredLabel::GtaoDenoise,
                 Node3d::MainOpaquePass,
             ),
         );

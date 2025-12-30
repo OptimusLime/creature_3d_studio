@@ -17,14 +17,11 @@
 
 We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/Rust voxel engine. The remit is **100% compliance** with XeGTAO - no "simpler" approaches, no shortcuts.
 
-**Current state:** Basic GTAO works but has architectural gaps vs XeGTAO.
+**Current state:** Phases 1-4 complete. Edge-aware denoiser implemented and working.
 
-**Critical gaps to fix:**
-- ~~No depth MIP chain (XeGTAO uses 5-level)~~ **DONE**
-- ~~Config not wired through~~ **DONE**
-- ~~Main pass needs to sample from MIP chain~~ **DONE**
-- ~~Missing thin occluder compensation~~ **DONE**
-- Wrong denoiser (we use 7x7 blur, XeGTAO uses edge-aware)
+**Remaining work:**
+- Phase 6: TAA noise index support (optional for now)
+- Final audit: line-by-line comparison with XeGTAO.hlsli
 
 ---
 
@@ -32,12 +29,14 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 
 | File | Purpose |
 |------|---------|
-| `assets/shaders/gtao.wgsl` | Main GTAO shader |
+| `assets/shaders/gtao.wgsl` | Main GTAO shader (outputs AO + packed edges) |
 | `assets/shaders/gtao_depth_prefilter.wgsl` | Depth MIP chain compute shader |
-| `crates/studio_core/src/deferred/gtao.rs` | Config struct (now wired through) |
-| `crates/studio_core/src/deferred/gtao_node.rs` | GTAO render node |
-| `crates/studio_core/src/deferred/gtao_depth_prefilter.rs` | Depth prefilter render node |
-| `assets/shaders/deferred_lighting.wgsl` | Has 7x7 blur (L84-138) - MUST REMOVE |
+| `assets/shaders/gtao_denoise.wgsl` | XeGTAO edge-aware denoiser (NEW) |
+| `crates/studio_core/src/deferred/gtao.rs` | Config struct, texture allocation |
+| `crates/studio_core/src/deferred/gtao_node.rs` | Main GTAO render node |
+| `crates/studio_core/src/deferred/gtao_depth_prefilter.rs` | Depth prefilter node |
+| `crates/studio_core/src/deferred/gtao_denoise.rs` | Denoise compute node (NEW) |
+| `assets/shaders/deferred_lighting.wgsl` | Samples denoised GTAO (blur removed) |
 | `XeGTAO/Source/Rendering/Shaders/XeGTAO.hlsli` | Reference implementation |
 
 ---
@@ -46,42 +45,44 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 
 | Phase | Task | Status |
 |-------|------|--------|
-| 0 | Document differences | DONE |
-| 0 | Write implementation plan | DONE |
+| 0 | Document differences | **DONE** |
+| 0 | Write implementation plan | **DONE** |
 | 1 | Wire GtaoConfig through | **DONE** |
 | 2 | Implement depth MIP chain | **DONE** |
 | 3 | Main pass XeGTAO compliance | **DONE** |
-| 4 | Edge-aware denoiser | TODO |
-| 5 | Edge packing | TODO |
-| 6 | TAA noise index | TODO |
+| 4+5 | Edge-aware denoiser + edge packing | **DONE** |
+| 6 | TAA noise index | TODO (optional) |
+
+---
+
+## What Was Done in Phase 4+5
+
+**Merged Phase 4 (denoiser) and Phase 5 (edge packing) since they're interdependent.**
+
+Changes made:
+1. **gtao.wgsl** - Added edge calculation (`calculate_edges`) and packing (`pack_edges`), changed output to MRT (AO + packed edges)
+2. **gtao_node.rs** - Updated to output to two render targets (AO and edges textures)
+3. **gtao_denoise.wgsl** (NEW) - XeGTAO edge-aware denoiser compute shader implementing:
+   - `unpack_edges` (L686-696)
+   - `add_sample` (L704-710)
+   - `main` denoise kernel (L734-826)
+4. **gtao_denoise.rs** (NEW) - Render node for denoiser compute pass
+5. **lighting_node.rs** - Now uses denoised GTAO texture
+6. **deferred_lighting.wgsl** - Removed 7x7 blur, samples denoised texture directly
+7. **labels.rs, mod.rs, plugin.rs** - Wired denoiser into render graph
 
 ---
 
 ## Next Step
 
-**Phase 4: Edge-aware denoiser**
-
-Replace the 7x7 blur in deferred_lighting.wgsl with XeGTAO's edge-aware spatial denoiser.
+**Phase 6: TAA Noise Index Support** (optional - can skip if not using TAA)
 
 Tasks:
-1. Remove 7x7 blur from deferred_lighting.wgsl (L84-138)
-2. Create gtao_denoise.wgsl implementing XeGTAO_Denoise (L734-826)
-3. Add edge packing/unpacking (Phase 5)
-4. Wire denoiser into render graph after main GTAO pass
+1. Add frame counter to render world
+2. Pass `NoiseIndex = frameCounter % 64` to shader
+3. Use Hilbert index for noise variation (optional optimization)
 
-Reference: `XeGTAO.hlsli` L686-826 (denoiser functions)
-
-Test: `cargo run --example p20_gtao_test`
-
----
-
-## Documents to Update on Progress
-
-When you complete work, update these:
-
-1. **`docs/GTAO_IMPLEMENTATION_PLAN.md`** - Mark phases complete, update checklist
-2. **`docs/GTAO_SESSION_CHEATSHEET.md`** (this file) - Update "Current Progress" table
-3. **Git commits** - One per logical change, descriptive messages
+Or alternatively: **Final Audit** - line-by-line comparison with XeGTAO.hlsli
 
 ---
 
@@ -92,15 +93,16 @@ When you complete work, update these:
 cargo run --example p20_gtao_test
 
 # Debug modes in deferred_lighting.wgsl:
-# DEBUG_MODE = 0    Full lighting with GTAO
-# DEBUG_MODE = 100  GTAO with blur
-# DEBUG_MODE = 101  Raw GTAO (no blur) - best for checking quality
+# DEBUG_MODE = 0    Full lighting with denoised GTAO
+# DEBUG_MODE = 100  Show denoised GTAO only
+# DEBUG_MODE = 101  Raw GTAO (center sample, no blur)
 
 # Debug modes in gtao.wgsl:
-# DEBUG_GTAO = 0    Normal output
+# DEBUG_GTAO = 0    Normal output (AO + edges)
 # DEBUG_GTAO = 1    NDC depth
 # DEBUG_GTAO = 2    Normal.z
 # DEBUG_GTAO = 3    Linear depth
+# DEBUG_GTAO = 4    Packed edges visualization
 ```
 
 ---

@@ -17,6 +17,8 @@ pub enum DeferredLabel {
     GtaoDepthPrefilter,
     /// GTAO pass: computes ground-truth ambient occlusion from G-buffer
     GtaoPass,
+    /// GTAO denoise: XeGTAO edge-aware spatial denoiser
+    GtaoDenoise,
     /// Lighting pass: fullscreen quad that computes lighting from G-buffer
     LightingPass,
     /// Bloom pass: post-process bloom effect on HDR output

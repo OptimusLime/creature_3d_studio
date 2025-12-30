@@ -31,6 +31,7 @@ use super::point_light_shadow::{ViewPointShadowTextures, ShadowCastingLights, Cu
 use super::shadow::ViewDirectionalShadowTextures;
 use super::shadow_node::ViewDirectionalShadowUniforms;
 use super::gtao::ViewGtaoTexture;
+use super::gtao_denoise::ViewGtaoDenoised;
 
 /// GPU uniform data for point shadow view-projection matrices.
 /// Contains the 6 face matrices needed to sample the cube shadow map correctly.
@@ -59,13 +60,14 @@ impl ViewNode for LightingPassNode {
         &'static ViewDirectionalShadowUniforms,
         &'static ViewPointShadowTextures,
         Option<&'static ViewGtaoTexture>,
+        Option<&'static ViewGtaoDenoised>,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures, gtao_texture): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures, gtao_texture, gtao_denoised): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -245,9 +247,27 @@ impl ViewNode for LightingPassNode {
         };
         
         // Create bind group for GTAO texture (group 6)
-        let gtao_bind_group = gtao_texture.map(|gtao| {
-            render_context.render_device().create_bind_group(
-                "lighting_gtao_bind_group",
+        // Prefer denoised texture if available, otherwise fall back to raw GTAO
+        let gtao_bind_group = if let Some(denoised) = gtao_denoised {
+            // Use XeGTAO denoised output
+            Some(render_context.render_device().create_bind_group(
+                "lighting_gtao_denoised_bind_group",
+                &lighting_pipeline.gtao_layout,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&denoised.texture.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Sampler(&lighting_pipeline.gtao_sampler),
+                    },
+                ],
+            ))
+        } else if let Some(gtao) = gtao_texture {
+            // Fall back to raw GTAO (shouldn't happen if pipeline is set up correctly)
+            Some(render_context.render_device().create_bind_group(
+                "lighting_gtao_raw_bind_group",
                 &lighting_pipeline.gtao_layout,
                 &[
                     BindGroupEntry {
@@ -259,8 +279,10 @@ impl ViewNode for LightingPassNode {
                         resource: BindingResource::Sampler(&lighting_pipeline.gtao_sampler),
                     },
                 ],
-            )
-        });
+            ))
+        } else {
+            None
+        };
 
         // Begin render pass writing to view target
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {

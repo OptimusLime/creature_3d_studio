@@ -26,7 +26,7 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
-use super::gtao::{GtaoConfig, ViewGtaoTexture};
+use super::gtao::{GtaoConfig, ViewGtaoTexture, ViewGtaoEdgesTexture};
 use super::gtao_depth_prefilter::ViewDepthMipTextures;
 
 /// GPU uniform for GTAO camera and algorithm parameters.
@@ -72,6 +72,7 @@ impl ViewNode for GtaoPassNode {
         &'static ExtractedView,
         &'static ViewGBufferTextures,
         &'static ViewGtaoTexture,
+        &'static ViewGtaoEdgesTexture,
         Option<&'static ViewDepthMipTextures>,
     );
 
@@ -79,7 +80,7 @@ impl ViewNode for GtaoPassNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, view, gbuffer, gtao_texture, depth_mips): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, view, gbuffer, gtao_texture, gtao_edges_texture, depth_mips): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -296,18 +297,32 @@ impl ViewNode for GtaoPassNode {
             )
         });
 
-        // Begin render pass writing to GTAO texture
+        // Begin render pass writing to both GTAO and edges textures (MRT)
+        // XeGTAO outputs both visibility (AO) and packed edges for the denoiser
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("gtao_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: &gtao_texture.texture.default_view,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(wgpu::Color::WHITE), // Default to fully lit (1.0 = no occlusion)
-                    store: StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
+            color_attachments: &[
+                // Location 0: AO visibility
+                Some(RenderPassColorAttachment {
+                    view: &gtao_texture.texture.default_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::WHITE), // Default to fully lit (1.0 = no occlusion)
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+                // Location 1: Packed edges for denoiser
+                Some(RenderPassColorAttachment {
+                    view: &gtao_edges_texture.texture.default_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::WHITE), // Default edges = 1.0 (full connectivity)
+                        store: StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+            ],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -584,11 +599,20 @@ pub fn init_gtao_pipeline(
             shader,
             shader_defs: vec![],
             entry_point: Some("fs_main".into()),
-            targets: vec![Some(ColorTargetState {
-                format: TextureFormat::R8Unorm,
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
+            targets: vec![
+                // Location 0: AO visibility (R8)
+                Some(ColorTargetState {
+                    format: TextureFormat::R8Unorm,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                }),
+                // Location 1: Packed edges (R8)
+                Some(ColorTargetState {
+                    format: TextureFormat::R8Unorm,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                }),
+            ],
         }),
         zero_initialize_workgroup_memory: false,
     });

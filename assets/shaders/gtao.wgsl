@@ -238,18 +238,34 @@ fn is_sky(uv: vec2<f32>) -> bool {
 }
 
 // ============================================================================
-// XeGTAO Edge Detection
+// XeGTAO Edge Detection and Packing (L120-141)
 // ============================================================================
 
+// XeGTAO.hlsli L120-129: Calculate edge values from depth differences
+// Returns vec4(left, right, top, bottom) edge weights in [0,1]
 fn calculate_edges(center_z: f32, left_z: f32, right_z: f32, top_z: f32, bottom_z: f32) -> vec4<f32> {
+    // XeGTAO L122: edgesLRTB = (left, right, top, bottom) - center
     var edges = vec4<f32>(left_z, right_z, top_z, bottom_z) - center_z;
     
+    // XeGTAO L124-125: Slope adjustment to handle gradients
     let slope_lr = (edges.y - edges.x) * 0.5;
     let slope_tb = (edges.w - edges.z) * 0.5;
     let edges_slope_adjusted = edges + vec4<f32>(slope_lr, -slope_lr, slope_tb, -slope_tb);
+    
+    // XeGTAO L127: Take minimum of absolute values
     edges = min(abs(edges), abs(edges_slope_adjusted));
     
+    // XeGTAO L128: Final edge computation - 1.25 - edges/(centerZ * 0.011)
     return saturate(vec4<f32>(1.25) - edges / (center_z * 0.011));
+}
+
+// XeGTAO.hlsli L132-141: Pack 4 edge values into single float
+// 2 bits per edge = 4 gradient values (0, 0.33, 0.66, 1.0)
+fn pack_edges(edges_lrtb: vec4<f32>) -> f32 {
+    // XeGTAO L139: Round to 3 levels (0, 1, 2) then encode
+    let edges_rounded = round(saturate(edges_lrtb) * 2.9);
+    // XeGTAO L140: Dot product encoding - 64/255, 16/255, 4/255, 1/255
+    return dot(edges_rounded, vec4<f32>(64.0 / 255.0, 16.0 / 255.0, 4.0 / 255.0, 1.0 / 255.0));
 }
 
 // ============================================================================
@@ -505,35 +521,101 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
 }
 
 // ============================================================================
-// Fragment Shader
+// Fragment Shader - Outputs AO and packed edges for XeGTAO denoiser
 // ============================================================================
 
+// Output struct for MRT: AO in location 0, packed edges in location 1
+struct FragmentOutput {
+    @location(0) ao: f32,
+    @location(1) edges: f32,
+}
+
+// Compute edges from depth samples around current pixel
+fn compute_packed_edges(uv: vec2<f32>) -> f32 {
+    let pixel_size = camera.screen_size.zw;
+    
+    // Sample viewspace depth at center and 4 neighbors
+    let center_z = get_viewspace_depth(uv);
+    let left_z = get_viewspace_depth(uv + vec2<f32>(-pixel_size.x, 0.0));
+    let right_z = get_viewspace_depth(uv + vec2<f32>(pixel_size.x, 0.0));
+    let top_z = get_viewspace_depth(uv + vec2<f32>(0.0, -pixel_size.y));
+    let bottom_z = get_viewspace_depth(uv + vec2<f32>(0.0, pixel_size.y));
+    
+    // Calculate and pack edges
+    let edges = calculate_edges(center_z, left_z, right_z, top_z, bottom_z);
+    return pack_edges(edges);
+}
+
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) f32 {
+fn fs_main(in: VertexOutput) -> FragmentOutput {
+    var output: FragmentOutput;
+    
     // Debug: show reconstructed depth
     if DEBUG_GTAO == 1 {
-        if is_sky(in.uv) { return 0.0; }
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
         // First, show raw NDC depth to verify sampling works
         let ndc_depth = textureSample(depth_texture, gbuffer_sampler, in.uv);
         // For reverse-Z, near=1, far=0, so multiply by 1000 to see small values
-        return clamp(ndc_depth * 100.0, 0.0, 1.0);
+        output.ao = clamp(ndc_depth * 100.0, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
     }
     
     // Debug: show linear depth
     if DEBUG_GTAO == 3 {
-        if is_sky(in.uv) { return 0.0; }
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
         let depth = get_viewspace_depth(in.uv);
         // Normalize depth for visualization (assuming 0-100 range)
-        return clamp(depth / 50.0, 0.0, 1.0);
+        output.ao = clamp(depth / 50.0, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
     }
     
     // Debug: show normal.z (should be mostly positive for upward-facing surfaces)
     if DEBUG_GTAO == 2 {
-        if is_sky(in.uv) { return 0.0; }
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
         let N = get_viewspace_normal(in.uv);
-        return N.z * 0.5 + 0.5;
+        output.ao = N.z * 0.5 + 0.5;
+        output.edges = 0.0;
+        return output;
     }
     
+    // Debug mode 4: show packed edges as grayscale
+    if DEBUG_GTAO == 4 {
+        if is_sky(in.uv) { 
+            output.ao = 1.0;
+            output.edges = 1.0;
+            return output;
+        }
+        let packed = compute_packed_edges(in.uv);
+        output.ao = packed;
+        output.edges = packed;
+        return output;
+    }
+    
+    // Normal GTAO computation
     let pixel_pos = in.uv * camera.screen_size.xy;
-    return compute_gtao(in.uv, pixel_pos);
+    output.ao = compute_gtao(in.uv, pixel_pos);
+    
+    // Compute packed edges for denoiser (XeGTAO.hlsli L120-141)
+    // Sky pixels get full edges (no blur across sky boundary)
+    if is_sky(in.uv) {
+        output.edges = 1.0; // Full edges = no blending
+    } else {
+        output.edges = compute_packed_edges(in.uv);
+    }
+    
+    return output;
 }
