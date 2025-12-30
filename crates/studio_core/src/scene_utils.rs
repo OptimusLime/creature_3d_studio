@@ -516,6 +516,7 @@ pub fn spawn_world_with_lights_config(
 // ============================================================================
 
 /// Standard camera configurations for common viewing angles.
+#[derive(Clone, Copy, Debug)]
 pub struct CameraPreset {
     pub position: Vec3,
     pub look_at: Vec3,

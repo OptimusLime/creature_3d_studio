@@ -10,6 +10,7 @@
 //! - **Chunk Position** (`ChunkPos`): Which chunk contains the voxel (world / CHUNK_SIZE)
 //! - **Local Position** (`usize, usize, usize`): Position within chunk (0 to CHUNK_SIZE-1)
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Size of a voxel chunk in each dimension.
@@ -24,7 +25,7 @@ pub const CHUNK_SIZE_I32: i32 = CHUNK_SIZE as i32;
 /// Emission is stored as a u8 (0-255) where 0 means no emission
 /// and 255 means full emission. Emissive voxels will bypass normal
 /// lighting in the deferred renderer (like Bonsai).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Voxel {
     /// RGB color components (0-255 each)
     pub color: [u8; 3],
@@ -66,7 +67,7 @@ impl Voxel {
     }
 }
 
-/// A 16³ chunk of voxels.
+/// A 32³ chunk of voxels.
 ///
 /// Uses a dense array with Option<Voxel> for each cell.
 /// Empty cells are None, filled cells contain the voxel data.
@@ -74,6 +75,39 @@ impl Voxel {
 pub struct VoxelChunk {
     /// Dense storage: index = x + y * CHUNK_SIZE + z * CHUNK_SIZE²
     voxels: Box<[Option<Voxel>; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE]>,
+}
+
+// Custom serialization for VoxelChunk - only serialize non-empty voxels
+impl Serialize for VoxelChunk {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as a list of (index, voxel) pairs for non-empty voxels
+        let sparse: Vec<(usize, Voxel)> = self
+            .voxels
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|voxel| (i, voxel)))
+            .collect();
+        sparse.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for VoxelChunk {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let sparse: Vec<(usize, Voxel)> = Vec::deserialize(deserializer)?;
+        let mut chunk = VoxelChunk::new();
+        for (i, voxel) in sparse {
+            if i < CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE {
+                chunk.voxels[i] = Some(voxel);
+            }
+        }
+        Ok(chunk)
+    }
 }
 
 impl Default for VoxelChunk {
@@ -358,7 +392,7 @@ pub fn extract_clustered_emissive_lights(
 /// - World (0, 0, 0) to (31, 31, 31) → ChunkPos(0, 0, 0)
 /// - World (32, 0, 0) to (63, 31, 31) → ChunkPos(1, 0, 0)
 /// - World (-1, 0, 0) → ChunkPos(-1, 0, 0)
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
 pub struct ChunkPos {
     pub x: i32,
     pub y: i32,
@@ -476,6 +510,36 @@ pub fn world_to_local(world_x: i32, world_y: i32, world_z: i32) -> (usize, usize
 #[derive(Debug, Clone, Default)]
 pub struct VoxelWorld {
     chunks: HashMap<ChunkPos, VoxelChunk>,
+}
+
+// Custom serialization for VoxelWorld - convert to Vec for JSON compatibility
+impl Serialize for VoxelWorld {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as list of (pos, chunk) pairs for JSON compatibility
+        let chunks: Vec<(ChunkPos, &VoxelChunk)> = self
+            .chunks
+            .iter()
+            .map(|(pos, chunk)| (*pos, chunk))
+            .collect();
+        chunks.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for VoxelWorld {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let chunks: Vec<(ChunkPos, VoxelChunk)> = Vec::deserialize(deserializer)?;
+        let mut world = VoxelWorld::new();
+        for (pos, chunk) in chunks {
+            world.chunks.insert(pos, chunk);
+        }
+        Ok(world)
+    }
 }
 
 impl VoxelWorld {

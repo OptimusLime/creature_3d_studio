@@ -6,6 +6,7 @@
 //! - Voxel data structures for creature modeling
 //! - Deferred rendering pipeline (Bonsai-style)
 //! - Chunk streaming for infinite worlds
+//! - World save/load functionality
 //! - Common types used across crates
 //! - Configuration management
 //! - Shared utilities
@@ -20,6 +21,8 @@ pub mod scene_utils;
 pub mod screenshot;
 pub mod voxel;
 pub mod voxel_mesh;
+pub mod voxel_world_plugin;
+pub mod world_io;
 
 pub use creature_script::{execute_creature_script, load_creature_script};
 pub use deferred::{
@@ -49,6 +52,13 @@ pub use scene_utils::{
     spawn_chunk, spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
     spawn_point_light, spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming,
     CameraPreset, EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
+};
+pub use world_io::{
+    load_world, load_world_binary, load_world_json, save_world, save_world_binary,
+    save_world_json, world_file_info, WorldFileInfo, WorldFormat, WorldIoError, WorldIoResult,
+};
+pub use voxel_world_plugin::{
+    CameraConfig, ScreenshotConfig, VoxelWorldApp, VoxelWorldConfig, WorldSource,
 };
 
 /// Core plugin for shared functionality.
