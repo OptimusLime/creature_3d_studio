@@ -58,6 +58,7 @@ mod shadow;
 mod shadow_node;
 mod gtao;
 mod gtao_node;
+mod gtao_depth_prefilter;
 
 pub use bloom::*;
 pub use bloom_node::*;
@@ -75,3 +76,4 @@ pub use shadow::*;
 pub use shadow_node::*;
 pub use gtao::*;
 pub use gtao_node::*;
+pub use gtao_depth_prefilter::*;

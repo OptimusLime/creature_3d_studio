@@ -27,6 +27,7 @@ use bevy::render::{
 
 use super::gbuffer::ViewGBufferTextures;
 use super::gtao::{GtaoConfig, ViewGtaoTexture};
+use super::gtao_depth_prefilter::ViewDepthMipTextures;
 
 /// GPU uniform for GTAO camera and algorithm parameters.
 /// Layout matches the shader's CameraUniforms struct exactly.
@@ -68,13 +69,14 @@ impl ViewNode for GtaoPassNode {
         &'static ExtractedView,
         &'static ViewGBufferTextures,
         &'static ViewGtaoTexture,
+        Option<&'static ViewDepthMipTextures>,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, view, gbuffer, gtao_texture): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, view, gbuffer, gtao_texture, depth_mips): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -242,6 +244,40 @@ impl ViewNode for GtaoPassNode {
             }],
         );
 
+        // Create depth MIP bind group if available (group 3)
+        let depth_mip_bind_group = depth_mips.map(|mips| {
+            render_context.render_device().create_bind_group(
+                "gtao_depth_mip_bind_group",
+                &gtao_pipeline.depth_mip_layout,
+                &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&mips.mip0.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::TextureView(&mips.mip1.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: BindingResource::TextureView(&mips.mip2.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::TextureView(&mips.mip3.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: BindingResource::TextureView(&mips.mip4.default_view),
+                    },
+                    BindGroupEntry {
+                        binding: 5,
+                        resource: BindingResource::Sampler(&gtao_pipeline.depth_mip_sampler),
+                    },
+                ],
+            )
+        });
+
         // Begin render pass writing to GTAO texture
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
             label: Some("gtao_pass"),
@@ -274,6 +310,9 @@ impl ViewNode for GtaoPassNode {
         render_pass.set_bind_group(0, &gbuffer_bind_group, &[]);
         render_pass.set_bind_group(1, &noise_bind_group, &[]);
         render_pass.set_bind_group(2, &camera_bind_group, &[]);
+        if let Some(ref depth_mip_bg) = depth_mip_bind_group {
+            render_pass.set_bind_group(3, depth_mip_bg, &[]);
+        }
         render_pass.draw(0..3, 0..1);
 
         Ok(())
@@ -294,6 +333,10 @@ pub struct GtaoPipeline {
     pub noise_sampler: Sampler,
     /// Camera matrices layout (group 2)
     pub camera_layout: BindGroupLayout,
+    /// Depth MIP chain layout (group 3) - optional, for XeGTAO MIP sampling
+    pub depth_mip_layout: BindGroupLayout,
+    /// Depth MIP sampler (linear filtering for MIP sampling)
+    pub depth_mip_sampler: Sampler,
 }
 
 /// Noise texture for GTAO slice direction randomization.
@@ -403,6 +446,75 @@ pub fn init_gtao_pipeline(
         }],
     );
 
+    // Group 3: Depth MIP chain (5 levels of pre-filtered viewspace depth)
+    let depth_mip_layout = render_device.create_bind_group_layout(
+        "gtao_depth_mip_layout",
+        &[
+            // MIP 0 (full resolution)
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // MIP 1 (half resolution)
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // MIP 2 (quarter resolution)
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // MIP 3 (1/8 resolution)
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // MIP 4 (1/16 resolution)
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Depth MIP sampler
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    );
+
     // Create samplers
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
         label: Some("gtao_gbuffer_sampler"),
@@ -420,6 +532,14 @@ pub fn init_gtao_pipeline(
         ..default()
     });
 
+    // Depth MIP sampler - uses linear filtering for smooth MIP sampling
+    let depth_mip_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("gtao_depth_mip_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
+
     // Load shader
     let shader = asset_server.load("shaders/gtao.wgsl");
 
@@ -430,6 +550,7 @@ pub fn init_gtao_pipeline(
             gbuffer_layout.clone(),
             noise_layout.clone(),
             camera_layout.clone(),
+            depth_mip_layout.clone(),
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {
@@ -461,6 +582,8 @@ pub fn init_gtao_pipeline(
         noise_layout,
         noise_sampler,
         camera_layout,
+        depth_mip_layout,
+        depth_mip_sampler,
     });
 }
 

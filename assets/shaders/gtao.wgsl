@@ -21,6 +21,15 @@ const PI_HALF: f32 = 1.5707963267948966;
 
 // Group 2: Camera uniforms
 // IMPORTANT: Layout must match Rust GtaoCameraUniform exactly!
+
+// Group 3: Depth MIP chain (pre-filtered viewspace depth)
+// These textures contain linearized viewspace depth at different MIP levels
+@group(3) @binding(0) var depth_mip0: texture_2d<f32>;  // Full resolution
+@group(3) @binding(1) var depth_mip1: texture_2d<f32>;  // Half resolution
+@group(3) @binding(2) var depth_mip2: texture_2d<f32>;  // Quarter resolution
+@group(3) @binding(3) var depth_mip3: texture_2d<f32>;  // 1/8 resolution
+@group(3) @binding(4) var depth_mip4: texture_2d<f32>;  // 1/16 resolution
+@group(3) @binding(5) var depth_mip_sampler: sampler;
 struct CameraUniforms {
     view: mat4x4<f32>,               // 64 bytes
     projection: mat4x4<f32>,         // 64 bytes

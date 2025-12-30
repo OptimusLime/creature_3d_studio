@@ -38,6 +38,9 @@ use super::shadow_node::{
 };
 use super::gtao::{GtaoConfig, prepare_gtao_textures};
 use super::gtao_node::{init_gtao_pipeline, init_gtao_noise_texture, GtaoPassNode};
+use super::gtao_depth_prefilter::{
+    init_depth_prefilter_pipeline, prepare_depth_mip_textures, DepthPrefilterNode,
+};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -110,6 +113,7 @@ impl Plugin for DeferredRenderingPlugin {
                 init_point_shadow_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_noise_texture.in_set(RenderSystems::Prepare),
+                init_depth_prefilter_pipeline.in_set(RenderSystems::Prepare),
             ),
         );
         
@@ -170,6 +174,9 @@ impl Plugin for DeferredRenderingPlugin {
                 prepare_gtao_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_gtao_pipeline),
+                prepare_depth_mip_textures
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_depth_prefilter_pipeline),
             ),
         );
 
@@ -195,7 +202,12 @@ impl Plugin for DeferredRenderingPlugin {
                 Core3d,
                 DeferredLabel::GBufferPass,
             )
-            // GTAO pass node (after G-buffer, before lighting)
+            // GTAO depth prefilter (generates depth MIP chain)
+            .add_render_graph_node::<ViewNodeRunner<DepthPrefilterNode>>(
+                Core3d,
+                DeferredLabel::GtaoDepthPrefilter,
+            )
+            // GTAO pass node (after G-buffer and depth prefilter, before lighting)
             .add_render_graph_node::<ViewNodeRunner<GtaoPassNode>>(
                 Core3d,
                 DeferredLabel::GtaoPass,
@@ -226,12 +238,13 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // GTAO runs after G-buffer, before MainOpaque
+        // GTAO runs after G-buffer: first depth prefilter, then main GTAO pass
         // Then Lighting runs after opaque, bloom after lighting, then transparent
         render_app.add_render_graph_edges(
             Core3d,
             (
                 DeferredLabel::GBufferPass,
+                DeferredLabel::GtaoDepthPrefilter,
                 DeferredLabel::GtaoPass,
                 Node3d::MainOpaquePass,
             ),

@@ -13,6 +13,8 @@ pub enum DeferredLabel {
     PointShadowPass,
     /// G-Buffer pass: renders geometry to MRT (color, normal, position)
     GBufferPass,
+    /// GTAO depth prefilter: generates 5-level depth MIP pyramid for GTAO
+    GtaoDepthPrefilter,
     /// GTAO pass: computes ground-truth ambient occlusion from G-buffer
     GtaoPass,
     /// Lighting pass: fullscreen quad that computes lighting from G-buffer
