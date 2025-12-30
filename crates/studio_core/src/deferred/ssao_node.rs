@@ -43,8 +43,21 @@ pub struct SsaoCameraUniform {
     pub inv_projection: [[f32; 4]; 4],
     /// Screen dimensions (width, height, 1/width, 1/height)
     pub screen_size: [f32; 4],
-    /// SSAO parameters (radius, bias, intensity, unused)
-    pub params: [f32; 4],
+    /// XeGTAO parameters 1:
+    /// x: EffectRadius (World space radius)
+    /// y: EffectFalloffRange (0.0 to 1.0)
+    /// z: RadiusMultiplier (0.3 to 3.0, default 1.457)
+    /// w: SampleDistributionPower (1.0 to 3.0, default 2.0)
+    pub params1: [f32; 4],
+    /// XeGTAO parameters 2:
+    /// x: ThinOccluderCompensation (0.0 to 0.7, default 0.0)
+    /// y: FinalValuePower (0.5 to 5.0, default 2.2)
+    /// z: DepthMIPSamplingOffset (default 3.3)
+    /// w: Unused
+    pub params2: [f32; 4],
+    /// Camera TanHalfFOV (x, y) - for View Z reconstruction
+    pub tan_half_fov: [f32; 2],
+    pub padding: [f32; 2],
 }
 
 /// Render graph node that computes SSAO.
@@ -177,12 +190,24 @@ impl ViewNode for SsaoPassNode {
                 1.0 / half_screen_size.x as f32,
                 1.0 / half_screen_size.y as f32,
             ],
-            params: [
-                3.0,  // radius - world space units for sampling and range check
-                0.05, // bias - prevents self-occlusion
-                4.0,  // intensity - cranked up for visible effect
-                0.0,  // unused
+            // XeGTAO Defaults
+            params1: [
+                0.5,   // EffectRadius (World space)
+                0.615, // EffectFalloffRange (Default)
+                1.457, // RadiusMultiplier (Default)
+                2.0,   // SampleDistributionPower (Default)
             ],
+            params2: [
+                0.0,   // ThinOccluderCompensation (Default)
+                2.2,   // FinalValuePower (Default)
+                3.30,  // DepthMIPSamplingOffset (Default)
+                0.0,   // Unused
+            ],
+            tan_half_fov: [
+                1.0 / projection.x_axis.x,
+                1.0 / projection.y_axis.y,
+            ],
+            padding: [0.0; 2],
         };
 
         let camera_buffer =
