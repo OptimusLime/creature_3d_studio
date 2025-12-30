@@ -41,17 +41,42 @@ fn main() {
     }
 
     // Configure debug screenshots for systematic verification
+    // 
+    // IMPORTANT: GTAO debug modes write to the GTAO texture, which is then sampled
+    // by the lighting shader. To SEE the GTAO debug output, we must ALSO set
+    // lighting_debug_mode = 5 (AO only) so the lighting shader passes through
+    // the GTAO texture values directly.
     let debug_config = DebugScreenshotConfig::new("screenshots/gtao_test")
         .with_base_wait_frames(15) // Wait for scene to stabilize
         // Normal render - final output with GTAO
         .with_capture("render", DebugCapture::default())
-        // GTAO intermediates
-        .with_capture("ao_only", DebugCapture::lighting_debug(5))
-        .with_capture("gtao_depth", DebugCapture::gtao_debug(11).with_name("gtao_depth"))
-        .with_capture("gtao_normal", DebugCapture::gtao_debug(20).with_name("gtao_normal"))
-        .with_capture("gtao_edges", DebugCapture::gtao_debug(40).with_name("gtao_edges"))
-        .with_capture("gtao_radius", DebugCapture::gtao_debug(30).with_name("gtao_radius"))
-        // G-buffer debug
+        // GTAO intermediates - set BOTH gtao debug mode AND lighting=5 to view raw output
+        .with_capture("ao_only", DebugCapture::lighting_debug(5))  // Normal GTAO (mode 0) viewed as grayscale
+        .with_capture("gtao_depth", DebugCapture {
+            name: "gtao_depth".to_string(),
+            gtao_debug_mode: 11,      // Linear viewspace depth
+            lighting_debug_mode: 5,   // Pass through as grayscale
+            wait_frames: 5,
+        })
+        .with_capture("gtao_normal", DebugCapture {
+            name: "gtao_normal".to_string(),
+            gtao_debug_mode: 20,      // View-space normal.z
+            lighting_debug_mode: 5,   // Pass through as grayscale
+            wait_frames: 5,
+        })
+        .with_capture("gtao_edges", DebugCapture {
+            name: "gtao_edges".to_string(),
+            gtao_debug_mode: 40,      // Packed edges
+            lighting_debug_mode: 5,   // Pass through as grayscale
+            wait_frames: 5,
+        })
+        .with_capture("gtao_radius", DebugCapture {
+            name: "gtao_radius".to_string(),
+            gtao_debug_mode: 30,      // Screenspace radius
+            lighting_debug_mode: 5,   // Pass through as grayscale
+            wait_frames: 5,
+        })
+        // G-buffer debug (uses lighting debug modes directly)
         .with_capture("gbuffer_normals", DebugCapture::lighting_debug(1))
         .with_capture("gbuffer_depth", DebugCapture::lighting_debug(2));
 

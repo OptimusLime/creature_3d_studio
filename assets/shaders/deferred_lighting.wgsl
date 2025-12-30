@@ -174,7 +174,7 @@ const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
 // ============================================================================
 // Debug Mode - controlled via uniform for runtime switching
 // ============================================================================
-// Debug modes are now passed via uniform from Rust code.
+// Debug modes are passed via uniform from Rust code (shadow_uniforms.shadow_softness.z).
 // This allows runtime debug switching without shader recompilation.
 //
 // Available modes:
@@ -183,13 +183,14 @@ const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
 //   2 = G-buffer depth (linear, normalized)
 //   3 = Albedo only (no lighting)
 //   4 = Shadow factor (R=moon1, G=moon2)
-//   5 = GTAO (ambient occlusion)
+//   5 = GTAO (ambient occlusion) - RAW OUTPUT, no lighting
 //   6 = Point lights only
 //   7 = World position XZ
-//
-// NOTE: debug_mode is read from a uniform - see LightingDebugUniform
-// For now, we use a constant until the uniform is wired through.
-const DEBUG_MODE: i32 = 0;
+
+// Debug mode accessor - reads from shadow_uniforms.shadow_softness.z
+fn get_debug_mode() -> i32 {
+    return i32(shadow_uniforms.shadow_softness.z);
+}
 
 // Calculate point light contribution at a world position.
 // Uses smooth falloff and N·L for realistic colored lighting.
@@ -514,22 +515,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ao = sample_gtao(in.uv);
     
     // =========================================================================
-    // Debug outputs - controlled via DEBUG_MODE constant
+    // Debug outputs - controlled via uniform (shadow_uniforms.shadow_softness.z)
     // =========================================================================
     
+    // Get debug mode from uniform
+    let debug_mode = get_debug_mode();
+    
     // Mode 1: G-buffer normals (world space, remapped 0-1)
-    if DEBUG_MODE == 1 {
+    if debug_mode == 1 {
         return vec4<f32>(world_normal * 0.5 + 0.5, 1.0);
     }
     
     // Mode 2: G-buffer depth (linear, normalized)
-    if DEBUG_MODE == 2 {
+    if debug_mode == 2 {
         let d = clamp(depth / 50.0, 0.0, 1.0);
         return vec4<f32>(d, d, d, 1.0);
     }
     
     // Mode 3: Albedo only (no lighting)
-    if DEBUG_MODE == 3 {
+    if debug_mode == 3 {
         return vec4<f32>(albedo, 1.0);
     }
     
@@ -544,17 +548,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let shadow_factor = moon1_shadow;
     
     // Mode 4: Shadow factor (R=moon1, G=moon2)
-    if DEBUG_MODE == 4 {
+    if debug_mode == 4 {
         return vec4<f32>(moon1_shadow, moon2_shadow, 0.0, 1.0);
     }
     
-    // Mode 5: GTAO (ambient occlusion)
-    if DEBUG_MODE == 5 {
+    // Mode 5: GTAO (ambient occlusion) - RAW GTAO OUTPUT
+    if debug_mode == 5 {
         return vec4<f32>(vec3<f32>(ao), 1.0);
     }
     
     // Mode 7: World position XZ
-    if DEBUG_MODE == 7 {
+    if debug_mode == 7 {
         let x_norm = (world_pos.x + 20.0) / 40.0;
         let z_norm = (world_pos.z + 20.0) / 40.0;
         return vec4<f32>(x_norm, 0.0, z_norm, 1.0);
@@ -564,7 +568,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let point_light_contribution = calculate_all_point_lights(world_pos, world_normal);
     
     // Mode 6: Point lights only
-    if DEBUG_MODE == 6 {
+    if debug_mode == 6 {
         return vec4<f32>(point_light_contribution, 1.0);
     }
     

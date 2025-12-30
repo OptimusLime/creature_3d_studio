@@ -28,6 +28,7 @@ use bevy::render::{
 use super::gbuffer::ViewGBufferTextures;
 use super::gtao::{GtaoConfig, ViewGtaoTexture, ViewGtaoEdgesTexture};
 use super::gtao_depth_prefilter::ViewDepthMipTextures;
+use crate::debug_screenshot::DebugModes;
 
 /// GPU uniform for GTAO camera and algorithm parameters.
 /// Layout matches the shader's CameraUniforms struct exactly.
@@ -57,8 +58,9 @@ pub struct GtaoCameraUniform {
     /// x = sample_distribution_power, y = thin_occluder_compensation
     /// z = depth_mip_sampling_offset, w = denoise_blur_beta - 16 bytes
     pub params2: [f32; 4],
-    /// x = slice_count, y = steps_per_slice, z = noise_index (frame % 64), w = unused - 16 bytes
+    /// x = slice_count, y = steps_per_slice, z = noise_index (frame % 64), w = debug_mode - 16 bytes
     /// noise_index is used for TAA temporal noise variation (XeGTAO.h L82, L196)
+    /// debug_mode controls shader debug visualization (0 = normal, 10+ = debug modes)
     pub params3: [f32; 4],
 }
 // Total: 64*3 + 16*6 = 192 + 96 = 288 bytes
@@ -207,6 +209,12 @@ impl ViewNode for GtaoPassNode {
             ndc_to_view_mul[1] * pixel_size[1],
         ];
 
+        // Get debug mode from render world (extracted from main world)
+        let debug_modes = world
+            .get_resource::<DebugModes>()
+            .cloned()
+            .unwrap_or_default();
+
         // All values from GtaoConfig - NO HARDCODED VALUES
         let camera_uniform = GtaoCameraUniform {
             view: view_from_world.to_cols_array_2d(),
@@ -249,9 +257,10 @@ impl ViewNode for GtaoPassNode {
                 gtao_config.depth_mip_sampling_offset,
                 gtao_config.denoise_blur_beta(),
             ],
-            // Pack: x = slice_count, y = steps_per_slice, z = noise_index, w = unused
+            // Pack: x = slice_count, y = steps_per_slice, z = noise_index, w = debug_mode
             // FROM CONFIG - not hardcoded
             // noise_index = frameCounter % 64 for TAA (XeGTAO.h L196)
+            // debug_mode = from DebugModes resource for runtime debug switching
             params3: [
                 gtao_config.slice_count() as f32,
                 gtao_config.steps_per_slice() as f32,
@@ -267,7 +276,7 @@ impl ViewNode for GtaoPassNode {
                         0.0
                     }
                 },
-                0.0,
+                debug_modes.gtao_debug_mode as f32,
             ],
         };
 

@@ -289,6 +289,7 @@ pub fn prepare_directional_shadow_uniforms(
     render_device: Res<RenderDevice>,
     moon_config: Option<Res<MoonConfig>>,
     shadow_pipeline: Option<Res<ShadowPipeline>>,
+    debug_modes: Option<Res<crate::debug_screenshot::DebugModes>>,
     cameras: Query<Entity, With<super::DeferredCamera>>,
 ) {
     let Some(moon_config) = moon_config else {
@@ -300,8 +301,13 @@ pub fn prepare_directional_shadow_uniforms(
     
     let scene_center = Vec3::ZERO;
     
-    // Create full uniforms for lighting pass
-    let uniforms = DirectionalShadowUniforms::from_config(&moon_config, scene_center);
+    // Get lighting debug mode from DebugModes resource (extracted from main world)
+    let lighting_debug_mode = debug_modes
+        .map(|dm| dm.lighting_debug_mode)
+        .unwrap_or(0);
+    
+    // Create full uniforms for lighting pass (includes debug mode in shadow_softness.z)
+    let uniforms = DirectionalShadowUniforms::from_config(&moon_config, scene_center, lighting_debug_mode);
     
     // Create individual view uniforms for each moon's shadow pass
     let moon1_uniform = ShadowViewUniform {

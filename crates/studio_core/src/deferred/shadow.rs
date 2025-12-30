@@ -261,13 +261,13 @@ pub struct DirectionalShadowUniforms {
     pub moon2_direction: [f32; 4],
     /// Moon 2 color (rgb) + intensity (a).
     pub moon2_color_intensity: [f32; 4],
-    /// Shadow softness: x = directional, y = point, zw = unused.
+    /// Shadow softness: x = directional, y = point, z = lighting_debug_mode, w = unused.
     pub shadow_softness: [f32; 4],
 }
 
 impl DirectionalShadowUniforms {
-    /// Create uniforms from MoonConfig.
-    pub fn from_config(config: &MoonConfig, scene_center: Vec3) -> Self {
+    /// Create uniforms from MoonConfig with debug mode.
+    pub fn from_config(config: &MoonConfig, scene_center: Vec3, lighting_debug_mode: i32) -> Self {
         Self {
             moon1_view_proj: config.moon1_view_projection(scene_center).to_cols_array_2d(),
             moon2_view_proj: config.moon2_view_projection(scene_center).to_cols_array_2d(),
@@ -275,7 +275,7 @@ impl DirectionalShadowUniforms {
             moon1_color_intensity: [config.moon1_color.x, config.moon1_color.y, config.moon1_color.z, config.moon1_intensity],
             moon2_direction: [config.moon2_direction.x, config.moon2_direction.y, config.moon2_direction.z, 0.0],
             moon2_color_intensity: [config.moon2_color.x, config.moon2_color.y, config.moon2_color.z, config.moon2_intensity],
-            shadow_softness: [config.directional_shadow_softness, config.point_shadow_softness, 0.0, 0.0],
+            shadow_softness: [config.directional_shadow_softness, config.point_shadow_softness, lighting_debug_mode as f32, 0.0],
         }
     }
 }

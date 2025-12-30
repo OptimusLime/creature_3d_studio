@@ -64,7 +64,7 @@ struct CameraUniforms {
 // ============================================================================
 // Debug Mode - controlled via uniform for runtime switching
 // ============================================================================
-// Debug modes are now passed via uniform from Rust code (params3.w).
+// Debug modes are passed via uniform from Rust code (params3.w).
 // This allows runtime debug switching without shader recompilation.
 //
 // Available modes:
@@ -77,9 +77,11 @@ struct CameraUniforms {
 //  20 = View-space normal.z
 //  30 = Screenspace radius (normalized)
 //  40 = Packed edges visualization
-//
-// NOTE: For now using constant. Will wire through params3.w for runtime control.
-const DEBUG_GTAO: i32 = 0;
+
+// Debug mode accessor - reads from params3.w uniform
+fn get_debug_mode() -> i32 {
+    return i32(camera.params3.w);
+}
 
 // ============================================================================
 // Vertex Shader
@@ -645,12 +647,15 @@ fn compute_packed_edges(uv: vec2<f32>) -> f32 {
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
     
+    // Get debug mode from uniform
+    let debug_mode = get_debug_mode();
+    
     // =========================================================================
-    // Debug outputs - controlled via DEBUG_GTAO constant
+    // Debug outputs - controlled via uniform (params3.w)
     // =========================================================================
     
     // Mode 10: NDC depth (raw hardware depth, scaled for visibility)
-    if DEBUG_GTAO == 10 {
+    if debug_mode == 10 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
@@ -663,7 +668,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     }
     
     // Mode 11: Linear viewspace depth (normalized to 0-50 range)
-    if DEBUG_GTAO == 11 {
+    if debug_mode == 11 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
@@ -676,13 +681,13 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     }
     
     // Mode 12-15: Depth MIP levels 0-3
-    if DEBUG_GTAO >= 12 && DEBUG_GTAO <= 15 {
+    if debug_mode >= 12 && debug_mode <= 15 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
             return output;
         }
-        let mip = f32(DEBUG_GTAO - 12);
+        let mip = f32(debug_mode - 12);
         let depth = sample_viewspace_depth_mip(in.uv, mip);
         output.ao = clamp(depth / 50.0, 0.0, 1.0);
         output.edges = 0.0;
@@ -690,7 +695,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     }
     
     // Mode 20: View-space normal.z (camera-facing = bright)
-    if DEBUG_GTAO == 20 {
+    if debug_mode == 20 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
@@ -703,7 +708,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     }
     
     // Mode 30: Screenspace radius (normalized)
-    if DEBUG_GTAO == 30 {
+    if debug_mode == 30 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
@@ -720,7 +725,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     }
     
     // Mode 40: Packed edges visualization
-    if DEBUG_GTAO == 40 {
+    if debug_mode == 40 {
         if is_sky(in.uv) { 
             output.ao = 1.0;
             output.edges = 1.0;

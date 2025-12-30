@@ -44,6 +44,7 @@ use super::gtao_depth_prefilter::{
 use super::gtao_denoise::{
     init_gtao_denoise_pipeline, prepare_gtao_denoised_textures, GtaoDenoiseNode,
 };
+use crate::debug_screenshot::DebugModes;
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -71,6 +72,7 @@ impl Plugin for DeferredRenderingPlugin {
         app.init_resource::<BloomConfig>();
         app.init_resource::<MoonConfig>();
         app.init_resource::<GtaoConfig>();
+        app.init_resource::<DebugModes>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -78,6 +80,9 @@ impl Plugin for DeferredRenderingPlugin {
         
         // Extract GtaoConfig resource to render world (for hot-reloading parameters)
         app.add_plugins(ExtractResourcePlugin::<GtaoConfig>::default());
+        
+        // Extract DebugModes resource to render world (for runtime debug mode switching)
+        app.add_plugins(ExtractResourcePlugin::<DebugModes>::default());
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {

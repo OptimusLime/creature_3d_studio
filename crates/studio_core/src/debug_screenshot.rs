@@ -22,6 +22,7 @@
 //! ```
 
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResource;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
 
@@ -220,9 +221,14 @@ impl DebugScreenshotState {
 }
 
 /// Resource for current debug mode (extracted to render world).
-#[derive(Resource, Clone, Default)]
+/// 
+/// This resource controls shader debug modes at runtime without recompilation.
+/// It is extracted to the render world and passed to shaders via uniforms.
+#[derive(Resource, Clone, Default, ExtractResource)]
 pub struct DebugModes {
+    /// GTAO shader debug mode (0 = normal, 10+ = various debug visualizations)
     pub gtao_debug_mode: i32,
+    /// Lighting shader debug mode (0 = normal, 1-7 = various debug visualizations)
     pub lighting_debug_mode: i32,
 }
 
