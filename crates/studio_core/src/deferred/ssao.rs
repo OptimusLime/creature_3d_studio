@@ -103,6 +103,7 @@ pub struct ViewSsaoTexture {
 }
 
 /// System to prepare SSAO textures for each view.
+/// Renders at HALF resolution like Bonsai - upsampling naturally smooths noise.
 pub fn prepare_ssao_textures(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -114,14 +115,18 @@ pub fn prepare_ssao_textures(
             continue;
         };
 
-        // Create SSAO output texture (single channel, R8)
+        // HALF RESOLUTION like Bonsai - upsampling acts as a natural blur
+        let half_width = (size.x / 2).max(1);
+        let half_height = (size.y / 2).max(1);
+
+        // Create SSAO output texture (single channel, R8) at half resolution
         let ssao_texture = texture_cache.get(
             &render_device,
             TextureDescriptor {
                 label: Some("ssao_texture"),
                 size: Extent3d {
-                    width: size.x,
-                    height: size.y,
+                    width: half_width,
+                    height: half_height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,

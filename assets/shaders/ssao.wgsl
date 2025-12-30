@@ -71,7 +71,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     
     // Get SSAO parameters
     let radius = camera.params.x;
-    let bias = camera.params.y;
+    let base_bias = camera.params.y;
     let intensity = camera.params.z;
     
     // Sample G-buffer
@@ -89,9 +89,13 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     let view_position = (camera.view * vec4<f32>(world_position, 1.0)).xyz;
     let view_normal = normalize((camera.view * vec4<f32>(world_normal, 0.0)).xyz);
     
+    // Depth-proportional bias like Bonsai: bias = depth * 0.0005
+    // This prevents artifacts at varying distances
+    let bias = base_bias + abs(view_position.z) * 0.0005;
+    
     // Sample noise texture - contains random rotation vectors in XY plane
     // Tile across the screen for variation
-    let noise_scale = camera.screen_size.xy / 4.0;
+    let noise_scale = camera.screen_size.xy / 32.0;
     let noise_uv = uv * noise_scale;
     let noise_raw = textureSample(noise_texture, noise_sampler, noise_uv).xyz;
     // Decode from [0,1] to [-1,1]
@@ -158,22 +162,22 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
         // Transform sampled world position to view space
         let sampled_view_pos = (camera.view * vec4<f32>(sampled_world_pos, 1.0)).xyz;
         
-        // Get view-space Z (depth along camera axis, negative in view space)
-        // More negative = further from camera
-        let sample_expected_z = sample_view_pos.z;
+        // Compare Z values in view space
+        // sample_view_pos = where our hemisphere sample ended up
+        // sampled_view_pos = actual geometry at that screen position
+        //
+        // If actual geometry Z > sample Z (less negative = closer to camera),
+        // then there's something blocking that sample direction
+        let sample_z = sample_view_pos.z;
         let actual_z = sampled_view_pos.z;
         
-        // Range check: only consider occlusion within the radius
-        // |sample_expected_z - actual_z| should be < radius
-        let range_check = smoothstep(0.0, 1.0, radius / (abs(sample_expected_z - actual_z) + 0.001));
+        // Range check to avoid counting distant geometry
+        let z_diff = actual_z - sample_z;
         
-        // Occlusion check:
-        // If actual geometry is IN FRONT of our sample (closer to camera),
-        // then that geometry occludes this sample direction.
-        // In view space, closer = less negative Z (or more positive in our convention)
-        // actual_z >= sample_expected_z + bias means actual geometry is in front
-        if actual_z >= sample_expected_z + bias {
-            occlusion += range_check;
+        // Occlusion: actual geometry is closer to camera (higher Z) than sample point
+        // AND within a reasonable range (not a depth discontinuity)
+        if z_diff > bias && z_diff < radius {
+            occlusion += 1.0;
         }
     }
     
@@ -183,10 +187,7 @@ fn fs_main(in: VertexOutput) -> @location(0) f32 {
     // Apply intensity and invert (1.0 = fully lit, 0.0 = fully occluded)
     let ao = saturate(1.0 - occlusion * intensity);
     
-    // Apply power curve for slightly stronger contrast
-    let ao_curved = pow(ao, 1.2);
-    
-    return ao_curved;
+    return ao;
 }
 
 // ============================================================================

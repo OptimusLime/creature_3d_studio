@@ -156,24 +156,31 @@ impl ViewNode for SsaoPassNode {
         // Inverse projection for reconstructing view positions from depth
         let inv_projection = projection.inverse();
 
-        let screen_size = camera
+        let full_screen_size = camera
             .physical_viewport_size
             .unwrap_or(UVec2::new(1920, 1080));
+        
+        // SSAO renders at half resolution like Bonsai
+        let half_screen_size = UVec2::new(
+            (full_screen_size.x / 2).max(1),
+            (full_screen_size.y / 2).max(1),
+        );
 
         let camera_uniform = SsaoCameraUniform {
             view: view_from_world.to_cols_array_2d(),
             projection: projection.to_cols_array_2d(),
             inv_projection: inv_projection.to_cols_array_2d(),
+            // Use half resolution for SSAO pass
             screen_size: [
-                screen_size.x as f32,
-                screen_size.y as f32,
-                1.0 / screen_size.x as f32,
-                1.0 / screen_size.y as f32,
+                half_screen_size.x as f32,
+                half_screen_size.y as f32,
+                1.0 / half_screen_size.x as f32,
+                1.0 / half_screen_size.y as f32,
             ],
             params: [
-                1.5,  // radius - world space units (increased)
-                0.01, // bias - prevents self-occlusion (reduced)
-                2.5,  // intensity (increased)
+                3.0,  // radius - world space units for sampling and range check
+                0.05, // bias - prevents self-occlusion
+                4.0,  // intensity - cranked up for visible effect
                 0.0,  // unused
             ],
         };
@@ -213,10 +220,15 @@ impl ViewNode for SsaoPassNode {
             occlusion_query_set: None,
         });
 
-        // Set viewport
-        if let Some(viewport) = &camera.viewport {
-            render_pass.set_camera_viewport(viewport);
-        }
+        // Set viewport to half resolution
+        render_pass.set_viewport(
+            0.0,
+            0.0,
+            half_screen_size.x as f32,
+            half_screen_size.y as f32,
+            0.0,
+            1.0,
+        );
 
         // Draw fullscreen triangle
         render_pass.set_render_pipeline(pipeline);
@@ -413,7 +425,11 @@ pub fn init_ssao_pipeline(
     });
 }
 
-/// System to create the 4x4 noise texture with random rotation vectors.
+/// Noise texture size for kernel rotation randomization
+const NOISE_TEXTURE_SIZE: u32 = 32;
+
+/// System to create the noise texture with random rotation vectors.
+/// Using 32x32 (like Bonsai) instead of 4x4 to reduce visible tiling patterns.
 pub fn init_ssao_noise_texture(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -427,12 +443,14 @@ pub fn init_ssao_noise_texture(
     use rand::prelude::*;
     let mut rng = rand::thread_rng();
 
-    // Generate 4x4 noise texture with random tangent-space rotation vectors
+    // Generate 32x32 noise texture with random tangent-space rotation vectors
     // Each pixel stores a random vector in the XY plane (Z=0) for rotating the sample kernel
-    let mut noise_data = Vec::with_capacity(4 * 4 * 4); // RGBA8
+    // Bonsai uses 32x32 which tiles every 32 pixels instead of every 4 - much less noticeable
+    let pixel_count = (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE) as usize;
+    let mut noise_data = Vec::with_capacity(pixel_count * 4); // RGBA8
 
-    for _ in 0..(4 * 4) {
-        // Random angle for rotation
+    for _ in 0..pixel_count {
+        // Random angle for rotation (matching Bonsai's approach)
         let angle: f32 = rng.gen::<f32>() * std::f32::consts::TAU;
         let x = angle.cos();
         let y = angle.sin();
@@ -448,8 +466,8 @@ pub fn init_ssao_noise_texture(
     let texture = render_device.create_texture(&TextureDescriptor {
         label: Some("ssao_noise_texture"),
         size: Extent3d {
-            width: 4,
-            height: 4,
+            width: NOISE_TEXTURE_SIZE,
+            height: NOISE_TEXTURE_SIZE,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -471,12 +489,12 @@ pub fn init_ssao_noise_texture(
         &noise_data,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(4 * 4), // 4 bytes per pixel, 4 pixels per row
-            rows_per_image: Some(4),
+            bytes_per_row: Some(4 * NOISE_TEXTURE_SIZE), // 4 bytes per pixel
+            rows_per_image: Some(NOISE_TEXTURE_SIZE),
         },
         wgpu::Extent3d {
-            width: 4,
-            height: 4,
+            width: NOISE_TEXTURE_SIZE,
+            height: NOISE_TEXTURE_SIZE,
             depth_or_array_layers: 1,
         },
     );

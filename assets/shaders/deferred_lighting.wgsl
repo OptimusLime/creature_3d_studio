@@ -558,10 +558,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var ao_sum: f32 = 0.0;
     var weight_sum: f32 = 0.0;
     
-    // 3x3 blur kernel
-    for (var y: i32 = -1; y <= 1; y++) {
-        for (var x: i32 = -1; x <= 1; x++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size * 2.0;
+    // 9x9 bilateral blur - aggressive smoothing for noisy SSAO
+    // This is necessary because 64 samples isn't enough for clean results
+    for (var y: i32 = -4; y <= 4; y++) {
+        for (var x: i32 = -4; x <= 4; x++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
             let sample_uv = in.uv + offset;
             
             // Sample SSAO
@@ -572,12 +573,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let sample_depth = sample_pos.w;
             
             // Bilateral weight: reduce influence of samples at different depths
+            // Use a gentler falloff to allow more smoothing while still respecting edges
             let depth_diff = abs(center_depth - sample_depth);
-            let depth_weight = exp(-depth_diff * 5.0);
+            let depth_weight = exp(-depth_diff * 0.5);
             
-            // Distance weight (center samples weighted more)
-            let dist = length(vec2<f32>(f32(x), f32(y)));
-            let dist_weight = 1.0 / (1.0 + dist);
+            // Gaussian distance weight - sigma ~3 pixels
+            let dist_sq = f32(x * x + y * y);
+            let dist_weight = exp(-dist_sq / 18.0);
             
             let weight = depth_weight * dist_weight;
             ao_sum += sample_ao * weight;
