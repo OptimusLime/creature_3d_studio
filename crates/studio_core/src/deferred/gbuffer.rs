@@ -105,7 +105,8 @@ impl ViewGBufferTextures {
                 sample_count: 1,
                 dimension: TextureDimension::D2,
                 format: GBUFFER_DEPTH_FORMAT,
-                usage: TextureUsages::RENDER_ATTACHMENT,
+                // TEXTURE_BINDING needed for GTAO to sample the hardware depth buffer
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             },
         );

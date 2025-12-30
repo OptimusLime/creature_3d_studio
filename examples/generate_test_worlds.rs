@@ -32,6 +32,9 @@ fn main() {
     // 7. Cross-chunk culling test scene
     generate_cross_chunk_test();
 
+    // 8. GTAO test scene (for XeGTAO verification)
+    generate_gtao_test();
+
     println!("\nAll test worlds generated!");
 }
 
@@ -295,4 +298,99 @@ fn generate_cross_chunk_test() {
 
     save_world(&world, "assets/worlds/cross_chunk_test.voxworld").expect("Failed to save");
     println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+}
+
+/// Generate GTAO test scene with specific geometries for AO verification.
+/// 
+/// Test geometries:
+/// 1. Flat ground plane - should have NO false occlusion (AO ~1.0)
+/// 2. 90-degree corner - should have proper corner darkening (AO ~0.3-0.5)
+/// 3. Stairs/steps - should show smooth gradient without banding
+/// 4. Floating cube - tests contact shadows
+/// 5. Thin pillar - tests thin occluder handling
+fn generate_gtao_test() {
+    println!("Generating: gtao_test.voxworld");
+    let mut world = VoxelWorld::new();
+
+    let white = Voxel::solid(220, 220, 220);  // Near-white for clear AO visibility
+    let gray = Voxel::solid(180, 180, 180);
+
+    // =========================================================================
+    // 1. FLAT GROUND PLANE (16x16 at y=0)
+    // Purpose: Verify no false occlusion on flat surfaces
+    // Expected AO: ~1.0 (fully lit, no occlusion)
+    // =========================================================================
+    for x in 0..16 {
+        for z in 0..16 {
+            world.set_voxel(x, 0, z, white);
+        }
+    }
+
+    // =========================================================================
+    // 2. 90-DEGREE CORNER (at x=0, z=0)
+    // Purpose: Verify proper corner darkening
+    // Expected AO: ~0.3-0.5 in the corner crease
+    // =========================================================================
+    // Back wall (along X axis)
+    for x in 0..8 {
+        for y in 1..6 {
+            world.set_voxel(x, y, 0, gray);
+        }
+    }
+    // Side wall (along Z axis)  
+    for z in 1..8 {
+        for y in 1..6 {
+            world.set_voxel(0, y, z, gray);
+        }
+    }
+
+    // =========================================================================
+    // 3. STAIRS/STEPS (at x=10-14, z=0-4)
+    // Purpose: Verify smooth AO gradient without banding
+    // Expected: Each step should have slightly different AO, smooth transition
+    // =========================================================================
+    for step in 0..5 {
+        let y = step + 1;
+        for x in 10..15 {
+            for z in 0..(5 - step) {
+                world.set_voxel(x, y as i32, z, white);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4. FLOATING CUBE (at x=4-6, y=3-5, z=8-10)
+    // Purpose: Test contact shadows underneath
+    // Expected: Ground beneath cube should show occlusion
+    // =========================================================================
+    for x in 4..7 {
+        for y in 3..6 {
+            for z in 8..11 {
+                world.set_voxel(x, y, z, gray);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 5. THIN PILLAR (single column at x=12, z=12)
+    // Purpose: Test thin occluder handling
+    // Expected: Should not over-darken surrounding area
+    // =========================================================================
+    for y in 1..8 {
+        world.set_voxel(12, y, 12, gray);
+    }
+
+    // =========================================================================
+    // 6. AMBIENT LIGHT (emissive voxel for scene illumination)
+    // =========================================================================
+    world.set_voxel(8, 10, 8, Voxel::emissive(255, 250, 240)); // Warm white light
+
+    save_world(&world, "assets/worlds/gtao_test.voxworld").expect("Failed to save");
+    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!("  Test geometries:");
+    println!("    1. Flat ground (0-15, 0, 0-15) - expect AO ~1.0");
+    println!("    2. Corner (0,0 walls) - expect AO ~0.3-0.5 in crease");
+    println!("    3. Stairs (10-14, 1-5, 0-4) - expect smooth gradient");
+    println!("    4. Floating cube (4-6, 3-5, 8-10) - expect shadow below");
+    println!("    5. Thin pillar (12, 1-7, 12) - expect minimal over-darkening");
 }

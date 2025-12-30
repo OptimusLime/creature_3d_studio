@@ -138,10 +138,61 @@ The example camera is placed too far back. The streaming distances are reasonabl
 
 ---
 
-## Issue 4: Emissive "Light Beams" Rendering Issue
+## Issue 4: Point Light Shadow Spurious Artifacts (TEMPORARILY DISABLED)
+
+**Severity:** MEDIUM (feature disabled as workaround)  
+**Affected Examples:** p20_gtao_test, any scene with point light shadows in Dark World mode
+
+### Symptoms
+- Pink/magenta patches appear on surfaces (ground, walls) in Dark World mode
+- The pink appears where point light shadows INCORRECTLY shadow areas that should be lit
+- Debug mode 61 shows red (shadowed) areas where no occluders exist
+- Debug mode 102 shows stored_depth < compare_depth in spurious shadow areas
+
+### Root Cause Analysis
+The point light shadow map is rendered correctly (debug 34 shows valid depth values), but the shadow SAMPLING in the lighting pass returns incorrect results. Specifically:
+- The shadow map stores `distance / radius` as linear depth
+- Sampling uses the same view_proj matrices as rendering
+- Yet certain areas return shadow (stored_depth < compare_depth) when they should be lit
+
+### Debugging Done
+1. Verified shadow depth shader writes correct values
+2. Verified view_proj matrices are identical between render and sample
+3. Verified light position and radius are consistent
+4. Tried direction-based UV (made it worse)
+5. Tried increasing bias (no effect)
+6. Tried single sample instead of Poisson (no effect)
+7. Debug 102 shows stored depth is TOO LOW in problem areas
+
+### Current Workaround
+Point light shadows are DISABLED in `deferred_lighting.wgsl`:
+```wgsl
+// First light casts shadows
+// NOTE: Point light shadows are temporarily disabled due to spurious shadow artifacts.
+if i == 0u {
+    let shadow = 1.0;  // Disabled - was: calculate_point_shadow(...)
+```
+
+### Potential Causes to Investigate
+1. **Timing issue**: Shadow map from previous frame being sampled
+2. **Matrix mismatch**: Subtle difference in how matrices are computed between render and sample
+3. **Depth format issue**: Depth32Float handling when writing custom frag_depth
+4. **UV precision**: Float precision issues in UV calculation at certain positions
+
+### Files to Review
+- `assets/shaders/point_shadow_depth.wgsl` - Shadow rendering
+- `assets/shaders/deferred_lighting.wgsl` - Shadow sampling (calculate_point_shadow)
+- `crates/studio_core/src/deferred/point_light_shadow.rs` - Shadow map setup
+- `crates/studio_core/src/deferred/lighting_node.rs` - Matrix uniform setup
+
+---
+
+## Issue 5: Emissive "Light Beams" Rendering Issue
 
 **Severity:** LOW (cosmetic)  
 **Affected Examples:** p16_multi_chunk
+
+(Renumbered from Issue 4)
 
 ### Symptoms
 - Emissive voxels show strange elongated "beam" effects
@@ -158,9 +209,10 @@ Lower priority - fix AO and shadows first.
 ## Priority Order
 
 1. **AO Artifacts** - Most visible, affects all multi-chunk scenes
-2. **Point Light Shadows** - Core visual feature not working
-3. **Camera Distance** - Quick fix, improves examples
-4. **Light Beams** - Cosmetic, can wait
+2. **Point Light Shadow Multi-Chunk** - Core visual feature not working in large scenes
+3. **Point Light Shadow Artifacts** - Causes pink patches, currently disabled
+4. **Camera Distance** - Quick fix, improves examples
+5. **Light Beams** - Cosmetic, can wait
 
 ---
 

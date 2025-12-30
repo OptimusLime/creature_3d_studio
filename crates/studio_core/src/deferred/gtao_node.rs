@@ -1,7 +1,10 @@
-//! SSAO render graph node.
+//! GTAO (Ground Truth Ambient Occlusion) render graph node.
 //!
-//! This node performs a fullscreen pass that computes screen-space ambient occlusion
-//! using hemisphere sampling in view-space, following the standard SSAO algorithm.
+//! This node performs a fullscreen pass that computes ambient occlusion
+//! using Intel's XeGTAO algorithm - a horizon-based approach that provides
+//! ground-truth quality AO with excellent performance.
+//!
+//! Reference: https://github.com/GameTechDev/XeGTAO
 
 use bevy::prelude::*;
 use bevy::render::{
@@ -21,78 +24,62 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
-use super::ssao::{SsaoKernel, ViewSsaoTexture};
+use super::gtao::ViewGtaoTexture;
 
-/// GPU uniform for SSAO kernel samples (64 samples for quality).
+/// GPU uniform for GTAO camera and algorithm parameters.
+/// Layout matches the shader's CameraUniforms struct exactly.
+/// All vec2s packed into vec4s for proper alignment.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct SsaoKernelUniform {
-    /// 64 hemisphere sample directions (vec4 for alignment, only xyz used)
-    pub samples: [[f32; 4]; 64],
-}
-
-/// GPU uniform for camera matrices needed for proper view-space SSAO.
-#[repr(C)]
-#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct SsaoCameraUniform {
-    /// View matrix (world to view space)
+pub struct GtaoCameraUniform {
+    /// View matrix (world to view space) - 64 bytes
     pub view: [[f32; 4]; 4],
-    /// Projection matrix (view to clip space)
+    /// Projection matrix (view to clip space) - 64 bytes
     pub projection: [[f32; 4]; 4],
-    /// Inverse projection matrix (clip to view space) - for depth reconstruction
+    /// Inverse projection matrix (clip to view space) - 64 bytes
     pub inv_projection: [[f32; 4]; 4],
-    /// Screen dimensions (width, height, 1/width, 1/height)
+    /// Screen dimensions (width, height, 1/width, 1/height) - 16 bytes
     pub screen_size: [f32; 4],
-    /// XeGTAO parameters 1:
-    /// x: EffectRadius (World space radius)
-    /// y: EffectFalloffRange (0.0 to 1.0)
-    /// z: RadiusMultiplier (0.3 to 3.0, default 1.457)
-    /// w: SampleDistributionPower (1.0 to 3.0, default 2.0)
-    pub params1: [f32; 4],
-    /// XeGTAO parameters 2:
-    /// x: ThinOccluderCompensation (0.0 to 0.7, default 0.0)
-    /// y: FinalValuePower (0.5 to 5.0, default 2.2)
-    /// z: DepthMIPSamplingOffset (default 3.3)
-    /// w: Unused
+    /// xy = depth_unpack_consts (depthLinearizeMul, depthLinearizeAdd)
+    /// zw = ndc_to_view_mul - 16 bytes
+    pub depth_unpack_and_ndc_mul: [f32; 4],
+    /// xy = ndc_to_view_add
+    /// z = effect_radius, w = effect_falloff_range - 16 bytes
+    pub ndc_add_and_params1: [f32; 4],
+    /// x = radius_multiplier, y = final_value_power
+    /// z = sample_distribution_power, w = thin_occluder_compensation - 16 bytes
     pub params2: [f32; 4],
-    /// Camera TanHalfFOV (x, y) - for View Z reconstruction
-    pub tan_half_fov: [f32; 2],
-    pub padding: [f32; 2],
 }
+// Total: 64*3 + 16*4 = 192 + 64 = 256 bytes
 
-/// Render graph node that computes SSAO.
+/// Render graph node that computes GTAO.
 #[derive(Default)]
-pub struct SsaoPassNode;
+pub struct GtaoPassNode;
 
-impl ViewNode for SsaoPassNode {
+impl ViewNode for GtaoPassNode {
     type ViewQuery = (
         &'static ExtractedCamera,
         &'static ExtractedView,
         &'static ViewGBufferTextures,
-        &'static ViewSsaoTexture,
+        &'static ViewGtaoTexture,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, view, gbuffer, ssao_texture): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, view, gbuffer, gtao_texture): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
-        let ssao_pipeline = world.get_resource::<SsaoPipeline>();
-        let ssao_kernel = world.get_resource::<SsaoKernel>();
-        let noise_texture = world.get_resource::<SsaoNoiseTexture>();
+        let gtao_pipeline = world.get_resource::<GtaoPipeline>();
+        let noise_texture = world.get_resource::<GtaoNoiseTexture>();
 
-        let Some(ssao_pipeline) = ssao_pipeline else {
+        let Some(gtao_pipeline) = gtao_pipeline else {
             return Ok(());
         };
 
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(ssao_pipeline.pipeline_id) else {
-            return Ok(());
-        };
-
-        let Some(ssao_kernel) = ssao_kernel else {
+        let Some(pipeline) = pipeline_cache.get_render_pipeline(gtao_pipeline.pipeline_id) else {
             return Ok(());
         };
 
@@ -102,8 +89,8 @@ impl ViewNode for SsaoPassNode {
 
         // Create bind group for G-buffer textures (group 0)
         let gbuffer_bind_group = render_context.render_device().create_bind_group(
-            "ssao_gbuffer_bind_group",
-            &ssao_pipeline.gbuffer_layout,
+            "gtao_gbuffer_bind_group",
+            &gtao_pipeline.gbuffer_layout,
             &[
                 BindGroupEntry {
                     binding: 0,
@@ -115,127 +102,126 @@ impl ViewNode for SsaoPassNode {
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: BindingResource::Sampler(&ssao_pipeline.gbuffer_sampler),
+                    resource: BindingResource::Sampler(&gtao_pipeline.gbuffer_sampler),
+                },
+                // Hardware depth buffer for proper GTAO depth reconstruction
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&gbuffer.depth.default_view),
                 },
             ],
         );
 
-        // Create kernel uniform buffer with 64 samples
-        let mut kernel_data = SsaoKernelUniform {
-            samples: [[0.0; 4]; 64],
-        };
-        for (i, sample) in ssao_kernel.samples.iter().enumerate().take(64) {
-            kernel_data.samples[i] = *sample;
-        }
-
-        let kernel_buffer =
-            render_context
-                .render_device()
-                .create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("ssao_kernel_buffer"),
-                    contents: bytemuck::bytes_of(&kernel_data),
-                    usage: BufferUsages::UNIFORM,
-                });
-
-        // Create kernel + noise bind group (group 1)
-        let kernel_bind_group = render_context.render_device().create_bind_group(
-            "ssao_kernel_bind_group",
-            &ssao_pipeline.kernel_layout,
+        // Create noise bind group (group 1)
+        let noise_bind_group = render_context.render_device().create_bind_group(
+            "gtao_noise_bind_group",
+            &gtao_pipeline.noise_layout,
             &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: kernel_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: BindingResource::TextureView(&noise_texture.view),
                 },
                 BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::Sampler(&ssao_pipeline.noise_sampler),
+                    binding: 1,
+                    resource: BindingResource::Sampler(&gtao_pipeline.noise_sampler),
                 },
             ],
         );
 
         // Compute matrices
-        // view.world_from_view is the camera's GlobalTransform (world position/rotation)
-        // We need view_from_world (the inverse) to transform world coords to view space
         let world_from_view = view.world_from_view.to_matrix();
         let view_from_world = world_from_view.inverse();
-
-        // Projection matrix
         let projection = view.clip_from_view;
-
-        // Inverse projection for reconstructing view positions from depth
         let inv_projection = projection.inverse();
 
         let full_screen_size = camera
             .physical_viewport_size
             .unwrap_or(UVec2::new(1920, 1080));
         
-        // SSAO renders at half resolution like Bonsai
+        // GTAO renders at half resolution
         let half_screen_size = UVec2::new(
             (full_screen_size.x / 2).max(1),
             (full_screen_size.y / 2).max(1),
         );
 
-        let camera_uniform = SsaoCameraUniform {
+        // Bevy uses INFINITE REVERSE-Z projection!
+        // For reverse-Z: near maps to depth=1, far maps to depth=0
+        // To get linear depth: linear_z = near / ndc_depth
+        let proj_cols = projection.to_cols_array_2d();
+        let near = proj_cols[3][2];  // Near plane value from projection matrix
+        
+        // Encoding for shader: linear_z = mul / (add + ndc_depth)
+        let depth_linearize_mul = near;
+        let depth_linearize_add = 0.0001;  // Small epsilon to prevent div by zero
+
+        // XeGTAO NDC to view-space constants
+        let tan_half_fov_y = 1.0 / proj_cols[1][1];  // 1/proj[1][1]
+        let tan_half_fov_x = 1.0 / proj_cols[0][0];  // 1/proj[0][0]
+        
+        // NDCToViewMul = { tanHalfFOVX * 2.0, tanHalfFOVY * -2.0 }
+        // NDCToViewAdd = { tanHalfFOVX * -1.0, tanHalfFOVY * 1.0 }
+        let ndc_to_view_mul = [tan_half_fov_x * 2.0, tan_half_fov_y * -2.0];
+        let ndc_to_view_add = [tan_half_fov_x * -1.0, tan_half_fov_y * 1.0];
+
+        let camera_uniform = GtaoCameraUniform {
             view: view_from_world.to_cols_array_2d(),
-            projection: projection.to_cols_array_2d(),
+            projection: proj_cols,
             inv_projection: inv_projection.to_cols_array_2d(),
-            // Use half resolution for SSAO pass
             screen_size: [
                 half_screen_size.x as f32,
                 half_screen_size.y as f32,
                 1.0 / half_screen_size.x as f32,
                 1.0 / half_screen_size.y as f32,
             ],
-            // XeGTAO Defaults
-            params1: [
-                0.5,   // EffectRadius (World space)
-                0.615, // EffectFalloffRange (Default)
-                1.457, // RadiusMultiplier (Default)
-                2.0,   // SampleDistributionPower (Default)
+            // Pack: xy = depth_unpack_consts, zw = ndc_to_view_mul
+            depth_unpack_and_ndc_mul: [
+                depth_linearize_mul,
+                depth_linearize_add,
+                ndc_to_view_mul[0],
+                ndc_to_view_mul[1],
             ],
+            // Pack: xy = ndc_to_view_add, z = effect_radius, w = effect_falloff_range
+            ndc_add_and_params1: [
+                ndc_to_view_add[0],
+                ndc_to_view_add[1],
+                3.0,    // effect_radius - world-space (voxels are 1 unit)
+                0.615,  // effect_falloff_range - XeGTAO default
+            ],
+            // Pack: x = radius_multiplier, y = final_value_power, z = sample_dist_power, w = thin_occluder_comp
             params2: [
-                0.0,   // ThinOccluderCompensation (Default)
-                2.2,   // FinalValuePower (Default)
-                3.30,  // DepthMIPSamplingOffset (Default)
-                0.0,   // Unused
+                1.457,  // radius_multiplier - XeGTAO default
+                2.2,    // final_value_power - XeGTAO default
+                2.0,    // sample_distribution_power - XeGTAO default
+                0.0,    // thin_occluder_compensation - XeGTAO default
             ],
-            tan_half_fov: [
-                1.0 / projection.x_axis.x,
-                1.0 / projection.y_axis.y,
-            ],
-            padding: [0.0; 2],
         };
 
         let camera_buffer =
             render_context
                 .render_device()
                 .create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("ssao_camera_buffer"),
+                    label: Some("gtao_camera_buffer"),
                     contents: bytemuck::bytes_of(&camera_uniform),
                     usage: BufferUsages::UNIFORM,
                 });
 
         let camera_bind_group = render_context.render_device().create_bind_group(
-            "ssao_camera_bind_group",
-            &ssao_pipeline.camera_layout,
+            "gtao_camera_bind_group",
+            &gtao_pipeline.camera_layout,
             &[BindGroupEntry {
                 binding: 0,
                 resource: camera_buffer.as_entire_binding(),
             }],
         );
 
-        // Begin render pass writing to SSAO texture
+        // Begin render pass writing to GTAO texture
         let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
-            label: Some("ssao_pass"),
+            label: Some("gtao_pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
-                view: &ssao_texture.texture.default_view,
+                view: &gtao_texture.texture.default_view,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(wgpu::Color::WHITE), // Default to fully lit
+                    load: LoadOp::Clear(wgpu::Color::WHITE), // Default to fully lit (1.0 = no occlusion)
                     store: StoreOp::Store,
                 },
                 depth_slice: None,
@@ -258,7 +244,7 @@ impl ViewNode for SsaoPassNode {
         // Draw fullscreen triangle
         render_pass.set_render_pipeline(pipeline);
         render_pass.set_bind_group(0, &gbuffer_bind_group, &[]);
-        render_pass.set_bind_group(1, &kernel_bind_group, &[]);
+        render_pass.set_bind_group(1, &noise_bind_group, &[]);
         render_pass.set_bind_group(2, &camera_bind_group, &[]);
         render_pass.draw(0..3, 0..1);
 
@@ -266,45 +252,45 @@ impl ViewNode for SsaoPassNode {
     }
 }
 
-/// Pipeline resources for SSAO.
+/// Pipeline resources for GTAO.
 #[derive(Resource)]
-pub struct SsaoPipeline {
+pub struct GtaoPipeline {
     pub pipeline_id: CachedRenderPipelineId,
     /// G-buffer textures layout (group 0)
     pub gbuffer_layout: BindGroupLayout,
     /// G-buffer sampler
     pub gbuffer_sampler: Sampler,
-    /// Kernel and noise layout (group 1)
-    pub kernel_layout: BindGroupLayout,
+    /// Noise texture layout (group 1)
+    pub noise_layout: BindGroupLayout,
     /// Noise sampler (repeating)
     pub noise_sampler: Sampler,
     /// Camera matrices layout (group 2)
     pub camera_layout: BindGroupLayout,
 }
 
-/// 4x4 noise texture containing random rotation vectors for SSAO.
+/// Noise texture for GTAO slice direction randomization.
 #[derive(Resource)]
-pub struct SsaoNoiseTexture {
+pub struct GtaoNoiseTexture {
     #[allow(dead_code)]
     pub texture: bevy::render::render_resource::Texture,
     pub view: bevy::render::render_resource::TextureView,
 }
 
-/// System to initialize the SSAO pipeline.
-pub fn init_ssao_pipeline(
+/// System to initialize the GTAO pipeline.
+pub fn init_gtao_pipeline(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     asset_server: Res<AssetServer>,
-    existing: Option<Res<SsaoPipeline>>,
+    existing: Option<Res<GtaoPipeline>>,
 ) {
     if existing.is_some() {
         return;
     }
 
-    // Group 0: G-buffer textures (normal, position, sampler)
+    // Group 0: G-buffer textures (normal, position, depth, sampler)
     let gbuffer_layout = render_device.create_bind_group_layout(
-        "ssao_gbuffer_layout",
+        "gtao_gbuffer_layout",
         &[
             // Normal texture
             BindGroupLayoutEntry {
@@ -317,7 +303,7 @@ pub fn init_ssao_pipeline(
                 },
                 count: None,
             },
-            // Position texture
+            // Position texture (still needed for world-space normal transform)
             BindGroupLayoutEntry {
                 binding: 1,
                 visibility: ShaderStages::FRAGMENT,
@@ -328,34 +314,34 @@ pub fn init_ssao_pipeline(
                 },
                 count: None,
             },
-            // Sampler
+            // Sampler for float textures
             BindGroupLayoutEntry {
                 binding: 2,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
                 count: None,
             },
-        ],
-    );
-
-    // Group 1: Kernel samples and noise texture
-    let kernel_layout = render_device.create_bind_group_layout(
-        "ssao_kernel_layout",
-        &[
-            // Kernel uniform buffer (64 samples)
+            // Hardware depth buffer (Depth32Float) - for proper GTAO depth reconstruction
             BindGroupLayoutEntry {
-                binding: 0,
+                binding: 3,
                 visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Depth,
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
                 },
                 count: None,
             },
-            // Noise texture (4x4)
+        ],
+    );
+
+    // Group 1: Noise texture
+    let noise_layout = render_device.create_bind_group_layout(
+        "gtao_noise_layout",
+        &[
+            // Noise texture
             BindGroupLayoutEntry {
-                binding: 1,
+                binding: 0,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Texture {
                     sample_type: TextureSampleType::Float { filterable: true },
@@ -366,7 +352,7 @@ pub fn init_ssao_pipeline(
             },
             // Noise sampler
             BindGroupLayoutEntry {
-                binding: 2,
+                binding: 1,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Sampler(SamplerBindingType::Filtering),
                 count: None,
@@ -376,7 +362,7 @@ pub fn init_ssao_pipeline(
 
     // Group 2: Camera matrices
     let camera_layout = render_device.create_bind_group_layout(
-        "ssao_camera_layout",
+        "gtao_camera_layout",
         &[BindGroupLayoutEntry {
             binding: 0,
             visibility: ShaderStages::FRAGMENT,
@@ -391,14 +377,14 @@ pub fn init_ssao_pipeline(
 
     // Create samplers
     let gbuffer_sampler = render_device.create_sampler(&SamplerDescriptor {
-        label: Some("ssao_gbuffer_sampler"),
+        label: Some("gtao_gbuffer_sampler"),
         mag_filter: FilterMode::Nearest,
         min_filter: FilterMode::Nearest,
         ..default()
     });
 
     let noise_sampler = render_device.create_sampler(&SamplerDescriptor {
-        label: Some("ssao_noise_sampler"),
+        label: Some("gtao_noise_sampler"),
         mag_filter: FilterMode::Nearest,
         min_filter: FilterMode::Nearest,
         address_mode_u: bevy::render::render_resource::AddressMode::Repeat,
@@ -407,14 +393,14 @@ pub fn init_ssao_pipeline(
     });
 
     // Load shader
-    let shader = asset_server.load("shaders/ssao.wgsl");
+    let shader = asset_server.load("shaders/gtao.wgsl");
 
     // Queue pipeline creation
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-        label: Some("ssao_pipeline".into()),
+        label: Some("gtao_pipeline".into()),
         layout: vec![
             gbuffer_layout.clone(),
-            kernel_layout.clone(),
+            noise_layout.clone(),
             camera_layout.clone(),
         ],
         push_constant_ranges: vec![],
@@ -440,26 +426,25 @@ pub fn init_ssao_pipeline(
         zero_initialize_workgroup_memory: false,
     });
 
-    commands.insert_resource(SsaoPipeline {
+    commands.insert_resource(GtaoPipeline {
         pipeline_id,
         gbuffer_layout,
         gbuffer_sampler,
-        kernel_layout,
+        noise_layout,
         noise_sampler,
         camera_layout,
     });
 }
 
-/// Noise texture size for kernel rotation randomization
+/// Noise texture size for slice direction randomization
 const NOISE_TEXTURE_SIZE: u32 = 32;
 
-/// System to create the noise texture with random rotation vectors.
-/// Using 32x32 (like Bonsai) instead of 4x4 to reduce visible tiling patterns.
-pub fn init_ssao_noise_texture(
+/// System to create the noise texture with random direction vectors.
+pub fn init_gtao_noise_texture(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
-    existing: Option<Res<SsaoNoiseTexture>>,
+    existing: Option<Res<GtaoNoiseTexture>>,
 ) {
     if existing.is_some() {
         return;
@@ -468,28 +453,27 @@ pub fn init_ssao_noise_texture(
     use rand::prelude::*;
     let mut rng = rand::thread_rng();
 
-    // Generate 32x32 noise texture with random tangent-space rotation vectors
-    // Each pixel stores a random vector in the XY plane (Z=0) for rotating the sample kernel
-    // Bonsai uses 32x32 which tiles every 32 pixels instead of every 4 - much less noticeable
+    // Generate 32x32 noise texture with random angles for slice direction rotation
     let pixel_count = (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE) as usize;
     let mut noise_data = Vec::with_capacity(pixel_count * 4); // RGBA8
 
     for _ in 0..pixel_count {
-        // Random angle for rotation (matching Bonsai's approach)
-        let angle: f32 = rng.gen::<f32>() * std::f32::consts::TAU;
-        let x = angle.cos();
-        let y = angle.sin();
+        // Two independent random values in [0, 1] for:
+        // R: Slice direction offset (rotates which directions we sample)
+        // G: Sample step offset (jitters sample positions along slice)
+        let slice_noise: f32 = rng.gen();   // [0, 1]
+        let sample_noise: f32 = rng.gen();  // [0, 1]
 
-        // Store as RGBA8 normalized: [-1,1] -> [0,255]
-        noise_data.push(((x * 0.5 + 0.5) * 255.0) as u8);
-        noise_data.push(((y * 0.5 + 0.5) * 255.0) as u8);
-        noise_data.push(128); // Z = 0
+        // Store as RGBA8: [0,1] -> [0,255]
+        noise_data.push((slice_noise * 255.0) as u8);
+        noise_data.push((sample_noise * 255.0) as u8);
+        noise_data.push(128); // Z unused
         noise_data.push(255); // A = 1
     }
 
     // Create the texture
     let texture = render_device.create_texture(&TextureDescriptor {
-        label: Some("ssao_noise_texture"),
+        label: Some("gtao_noise_texture"),
         size: Extent3d {
             width: NOISE_TEXTURE_SIZE,
             height: NOISE_TEXTURE_SIZE,
@@ -503,7 +487,7 @@ pub fn init_ssao_noise_texture(
         view_formats: &[],
     });
 
-    // Write data to texture using wgpu's write_texture
+    // Write data to texture
     render_queue.0.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
@@ -514,7 +498,7 @@ pub fn init_ssao_noise_texture(
         &noise_data,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(4 * NOISE_TEXTURE_SIZE), // 4 bytes per pixel
+            bytes_per_row: Some(4 * NOISE_TEXTURE_SIZE),
             rows_per_image: Some(NOISE_TEXTURE_SIZE),
         },
         wgpu::Extent3d {
@@ -527,5 +511,5 @@ pub fn init_ssao_noise_texture(
     // Create texture view
     let view = texture.create_view(&bevy::render::render_resource::TextureViewDescriptor::default());
 
-    commands.insert_resource(SsaoNoiseTexture { texture, view });
+    commands.insert_resource(GtaoNoiseTexture { texture, view });
 }

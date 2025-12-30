@@ -1,0 +1,352 @@
+# How We Work
+
+This document describes our collaboration process for building features, fixing bugs, and shipping quality code.
+
+## Core Principles
+
+### 1. Incremental Building with Verification
+
+We build in **phases**. Each phase has **subtasks**. Both phases and tasks are **verifiably complete**.
+
+- No vague items like "implemented screen" or "finished feature"
+- Use **SMART principles** (Specific, Measurable, Achievable, Relevant, Time-bound)
+- Emphasis on **Specific** and **Measurable**: at the end, we can say definitively "this is done"
+
+### 2. Verification is a First-Class Citizen
+
+Verification **designs** our phases. If we cannot easily verify at the end of a phase that it's done, the phase is improperly designed.
+
+- Each phase must have an **end-of-phase verification** that guarantees the work is done
+- If verification is complicated (e.g., requires a big test script and lots of steps), that defeats the purpose
+- If it's hard to verify, it's a bad phase
+- If we need artifacts to make verification easier (e.g., a test harness), those are **dependencies** and belong in earlier phases
+- The harness may start empty, then we build it up and complexify over time
+
+### 3. Complexity Over Time, Not Upfront
+
+Prefer **end-to-end pipelines** that demonstrate the full path through the code early. Then complexify those pipelines over time.
+
+**Facade Pattern Approach:**
+1. Design the API and functions
+2. Initial implementations may return trivial values (e.g., constant 0.5 AO, placeholder)
+3. Validate the pipeline setup works
+4. Verify the pipeline behaves as expected
+5. Later fill in details with heuristics or increasingly complex logic
+
+**Critical guarantee:** Phases build on each other. Verification means we know at the end of the phase that the work was done, completed, and verified absolutely correct. We will **not** proceed through multiple phases only to discover in phase 3 that phase 1 was incomplete or incorrect.
+
+### 4. Tasks Must Be Specific and Measurable
+
+Tasks are verifiable, specific, and measurable.
+
+**Bad:** "implement GTAO algorithm"  
+**Good:** "modify `assets/shaders/gtao.wgsl` to output view-space depth as grayscale, verify near=dark far=bright"
+
+When listing files:
+- List specific file paths
+- Specify exact names
+- Include the directory structure
+
+### 5. Naming Principles
+
+Follow the principles from *Naming Things* by Tom Benner.
+
+- Names (variables, files, images, folders/directories) **convey documentation**
+- We document as we go through clear, informative naming
+- Names should be:
+  - **Descriptive:** what it is or does
+  - **Consistent:** same concepts use same naming patterns
+  - **Discoverable:** easy to find via search
+  - **Unambiguous:** one meaning only
+
+---
+
+## Hypothesis-Driven Debugging
+
+When something doesn't work, we do NOT abandon it. We do NOT substitute simpler alternatives. We follow a systematic process:
+
+### The Hypothesis Loop
+
+1. **Observe**: What exactly is happening? (e.g., "output is all white", "values are NaN")
+2. **Hypothesize**: Form a specific, testable hypothesis about WHY
+3. **Design Test**: Create a minimal test that validates or invalidates the hypothesis
+4. **Execute**: Run the test
+5. **Analyze**: What did we learn?
+6. **Iterate**: If hypothesis was wrong, form new hypothesis. If right, fix the issue.
+
+### What We Never Do
+
+- **Never abandon a task** because it's hard or doesn't work immediately
+- **Never substitute a "simpler" approach** without explicit user approval
+- **Never skip verification steps** to move faster
+- **Never assume something works** without testing
+- **Never work on tangential issues** when the core task is incomplete
+
+### Debugging Graphics/Shaders
+
+For rendering work, use these verification techniques:
+
+1. **Constant Output Test**: Output a known constant (e.g., `return 0.5;`) to verify the pipeline runs
+2. **Value Visualization**: Output intermediate values as colors (depth as grayscale, normals as RGB, UV as RG)
+3. **Boundary Tests**: Test edge cases explicitly (UV = 0, UV = 1, depth = near, depth = far)
+4. **Reference Comparison**: If porting from reference, verify intermediate values match at each step
+5. **Incremental Buildup**: Start with constant output, add ONE variable at a time, verify each addition
+
+### Example: Debugging GTAO
+
+**Wrong approach:**
+1. Port entire GTAO algorithm
+2. Output is all white
+3. "It doesn't work, let's try simpler SSAO instead" ❌
+
+**Correct approach:**
+1. Output is all white
+2. **Hypothesis 1**: View-space position reconstruction is wrong
+3. **Test**: Output `view_pos.z / far_plane` as grayscale
+4. **Result**: All black → position reconstruction IS broken
+5. **Hypothesis 2**: The view matrix is identity/wrong
+6. **Test**: Output `view_matrix[0][0]` as brightness
+7. **Result**: Value is 1.0 → matrix might be identity
+8. **Fix**: Check uniform binding, find it's not being set
+9. **Verify**: Now depth gradient shows correctly
+10. **Continue** to next component
+
+Each step produces evidence. We don't guess. We don't give up.
+
+---
+
+## Workflow: Feature Development
+
+### Step 1: Create a Plan Document
+
+Before any code, create a Markdown file in `docs/` describing the plan:
+
+```markdown
+# [Feature Name] Plan
+
+## Summary
+One paragraph describing what we're building.
+
+## Context & Motivation  
+Why are we building this? What problem does it solve?
+
+## Naming Conventions for This PR
+- File naming patterns we'll follow
+- Component naming patterns
+- Variable/function naming patterns
+
+## Phases
+
+### Phase 1: [Phase Name]
+**Outcome:** [What will be true when this phase is complete]  
+**Verification:** [How we prove it's done - must be simple and clear]
+
+Tasks:
+1. [Specific task with file path]
+2. [Specific task with file path]
+...
+
+### Phase 2: [Phase Name]
+...
+
+## Full Outcome Across All Phases
+Summary of what the completed feature looks like.
+
+## Directory Structure (Anticipated)
+```
+crates/studio_core/src/deferred/
+├── gtao.rs
+├── gtao_node.rs
+...
+```
+
+## How to Review
+Order of operations for reviewing this PR.
+```
+
+### Step 2: Create Feature Branch and Draft PR
+
+Once the plan exists:
+
+1. Create a feature branch: `git checkout -b feature/[descriptive-name]`
+2. Commit the plan document
+3. Push and open a **draft PR**
+4. Fill in the PR description using `.github/PULL_REQUEST_TEMPLATE.md` **exactly**:
+   - Do not leave anything out
+   - Do not check items that aren't accurate (honesty over 100%)
+   - If a section (e.g., screenshots) is empty, **do not remove it** - all sections must remain
+
+### Step 3: Execute Phases
+
+For each phase:
+1. Work through tasks sequentially
+2. Mark tasks complete as you go (not batched at the end)
+3. At phase end, perform verification
+4. Only proceed to next phase after verification passes
+5. **If verification fails**: Enter hypothesis-driven debugging loop. Do not skip ahead.
+
+### Step 4: Complete PR
+
+1. Mark PR as ready for review
+2. Update PR description with any changes from the plan
+3. Ensure all checklist items are accurate
+
+---
+
+## Workflow: Bug Fixes
+
+### Step 1: Document the Bug
+
+Create a brief plan or note:
+- What is the bug?
+- How to reproduce it?
+- What is the expected behavior?
+
+### Step 2: Create Branch and PR
+
+1. Create branch: `git checkout -b fix/[descriptive-name]`
+2. Open draft PR with:
+   - Bug description
+   - Reproduction steps
+   - Root cause analysis (once identified)
+   - Fix approach
+
+### Step 3: Implement Fix
+
+1. Write failing test (if applicable)
+2. Implement fix
+3. Verify fix resolves the issue
+4. Verify no regressions
+
+### Step 4: Complete PR
+
+Same as feature development.
+
+---
+
+## Workflow: Refactoring
+
+### Step 1: Document the Refactor
+
+In `docs/refactor_roadmap/` or similar:
+- Current state
+- Target state
+- Why the refactor matters
+- Risk assessment
+
+### Step 2: Phase the Work
+
+Break into small, verifiable phases:
+- Each phase leaves codebase in working state
+- Each phase has clear verification
+- Prefer many small PRs over one large PR
+
+### Step 3: Execute
+
+Same phase execution process as features.
+
+---
+
+## PR Checklist Standards
+
+From `.github/PULL_REQUEST_TEMPLATE.md`:
+
+### Testing
+- [ ] I manually tested the new behavior (Mandatory)
+- [ ] I added or updated automated tests where appropriate
+- [ ] All tests (new and existing) pass locally
+
+### Documentation
+- [ ] I updated relevant docs if behavior changed
+- [ ] I added or updated docstrings/comments for important functions
+
+### Design Thoughtfulness
+- [ ] I thought through the design before coding
+- [ ] For major changes, I documented or had a design discussion
+
+### Clarity & Structure
+- [ ] Names, structure, and code flow are understandable and consistent
+- [ ] Code is concise without sacrificing clarity
+- [ ] Responsibilities are properly encapsulated
+
+### Maintainability
+- [ ] This PR leaves the codebase better than it found it
+- [ ] The design supports future changes
+- [ ] Removed code smells: unnecessary complexity, duplication, dead code
+
+---
+
+## Verification Examples
+
+### Good Verification
+- "Run `cargo run --example p20_gtao_test`, output shows depth gradient (near=dark, far=bright)"
+- "Set DEBUG_MODE=1 in gtao.wgsl, normals display as RGB where +X=red, +Y=green, +Z=blue"
+- "Corner geometry shows AO value 0.3-0.6, flat ground shows AO > 0.95"
+
+### Bad Verification
+- "GTAO works correctly" (not specific)
+- "Test the feature" (not measurable)
+- "Verify AO looks good" (not actionable)
+
+---
+
+## Realistic and Honest Evaluation
+
+**CRITICAL: We evaluate outputs objectively, not hopefully.**
+
+When reviewing visual output (screenshots, renders, etc.):
+
+### What We Do
+- **Look for defects FIRST**: Noise, artifacts, banding, incorrect values, missing effects
+- **Compare against quality standards**: Is this production-ready? Or is it "kinda working"?
+- **Be specific about problems**: "Patchy noise in flat areas", "AO missing from corners", "Visible banding at edges"
+- **Use reference comparisons**: What SHOULD this look like? Compare to reference implementations or known-good outputs
+- **Quantify when possible**: "AO values range 0.8-1.0 when they should be 0.3-0.7 in corners"
+
+### What We NEVER Do
+- **Wishful interpretation**: "The AO is subtle but working" when it's clearly broken
+- **Hopeful evaluation**: Seeing what we want to see instead of what's actually there
+- **Premature celebration**: Declaring success because something renders without crashing
+- **Ignoring obvious defects**: Glossing over noise, artifacts, or incorrect behavior
+- **Moving on too fast**: Proceeding to "tuning" when the fundamental algorithm is wrong
+
+### Quality Gate Questions
+
+Before marking any visual feature complete, answer honestly:
+
+1. **Is this production quality?** Would you ship this in a game?
+2. **Are there visible artifacts?** Noise, banding, patches, discontinuities?
+3. **Does it match the reference?** If porting an algorithm, does output match?
+4. **Would a user notice problems?** Not "can you see it if you look hard" but "is it obviously wrong"?
+
+If ANY answer is negative, the task is NOT DONE. Return to debugging.
+
+### Example: Evaluating GTAO Output
+
+**Wrong evaluation:**
+"GTAO is working! Corners are darker and flat surfaces are bright."
+
+**Correct evaluation:**
+"GTAO output shows:
+- PROBLEMS: Visible patchy noise across flat surfaces, AO appears splotchy not smooth
+- PROBLEMS: Corner darkening is inconsistent - some corners dark, others not
+- PROBLEMS: Half-resolution artifacts visible as blocky patterns
+- VERDICT: Algorithm fundamentally working but quality is unacceptable. Need to:
+  1. Increase sample count or add denoising
+  2. Check noise texture is sampling correctly
+  3. Verify falloff parameters"
+
+---
+
+## Summary
+
+1. **Plan first** - Create a plan document before coding
+2. **Phase the work** - Break into verifiable phases
+3. **Verify constantly** - Each phase ends with verification
+4. **Debug systematically** - Hypothesis → Test → Analyze → Iterate
+5. **Never abandon** - If stuck, debug; don't substitute
+6. **Name clearly** - Names are documentation
+7. **Be specific** - File paths, exact names, measurable outcomes
+8. **Stay honest** - PR checklists reflect reality, not aspirations
+9. **Evaluate objectively** - See what IS, not what you HOPE to see
+10. **Quality gates** - "Does it work?" is not the same as "Is it good enough?"

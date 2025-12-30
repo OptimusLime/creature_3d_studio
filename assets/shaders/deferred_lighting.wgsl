@@ -69,10 +69,75 @@ struct PointShadowMatrices {
 }
 @group(5) @binding(0) var<uniform> point_shadow_matrices: PointShadowMatrices;
 
-// SSAO texture (bind group 6) - screen-space ambient occlusion
+// GTAO texture (bind group 6) - screen-space ambient occlusion
 // This replaces per-vertex AO from the G-buffer when enabled
-@group(6) @binding(0) var ssao_texture: texture_2d<f32>;
-@group(6) @binding(1) var ssao_sampler: sampler;
+@group(6) @binding(0) var gtao_texture: texture_2d<f32>;
+@group(6) @binding(1) var gtao_sampler: sampler;
+
+// ============================================================================
+// Edge-Aware Bilateral GTAO Blur
+// ============================================================================
+// Performs a 3x3 depth-weighted blur on the GTAO texture to reduce edge noise
+// while preserving sharp edges at depth discontinuities.
+
+fn sample_gtao_with_blur(uv: vec2<f32>, center_depth: f32) -> f32 {
+    // Get texture dimensions for pixel offset calculation
+    let tex_dims = vec2<f32>(textureDimensions(gtao_texture));
+    let pixel_size = 1.0 / tex_dims;
+    
+    // Depth threshold for edge detection - relative to center depth
+    // Smaller = sharper edges preserved, larger = more blur
+    let depth_threshold = 0.05 * center_depth + 0.5;
+    
+    var total_ao = 0.0;
+    var total_weight = 0.0;
+    
+    // 3x3 kernel with Gaussian-like weights
+    let kernel_offsets = array<vec2<f32>, 9>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(0.0, -1.0), vec2<f32>(1.0, -1.0),
+        vec2<f32>(-1.0,  0.0), vec2<f32>(0.0,  0.0), vec2<f32>(1.0,  0.0),
+        vec2<f32>(-1.0,  1.0), vec2<f32>(0.0,  1.0), vec2<f32>(1.0,  1.0)
+    );
+    
+    // Gaussian kernel weights (sigma ≈ 0.8)
+    let kernel_weights = array<f32, 9>(
+        0.0625, 0.125, 0.0625,
+        0.125,  0.25,  0.125,
+        0.0625, 0.125, 0.0625
+    );
+    
+    for (var i = 0; i < 9; i++) {
+        let sample_uv = uv + kernel_offsets[i] * pixel_size;
+        
+        // Bounds check
+        if sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0 {
+            continue;
+        }
+        
+        // Sample AO
+        let ao_sample = textureSample(gtao_texture, gtao_sampler, sample_uv).r;
+        
+        // Sample depth for edge detection (from position texture)
+        let sample_depth = textureSample(gPosition, gbuffer_sampler, sample_uv).w;
+        
+        // Edge-aware weight: reduce weight for depth discontinuities
+        let depth_diff = abs(sample_depth - center_depth);
+        let edge_weight = exp(-depth_diff * depth_diff / (depth_threshold * depth_threshold));
+        
+        // Combined weight
+        let weight = kernel_weights[i] * edge_weight;
+        
+        total_ao += ao_sample * weight;
+        total_weight += weight;
+    }
+    
+    // Return weighted average (fallback to center sample if no valid neighbors)
+    if total_weight > 0.001 {
+        return total_ao / total_weight;
+    } else {
+        return textureSample(gtao_texture, gtao_sampler, uv).r;
+    }
+}
 
 // Point shadow map size (must match POINT_SHADOW_MAP_SIZE in Rust)
 const POINT_SHADOW_MAP_SIZE: f32 = 512.0;
@@ -168,7 +233,8 @@ const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
 // 63 = raw +X face shadow map
 // 70 = face_multiplier only (discrete bands), 71 = N·L only for moon/sun (R=moon1, G=moon2)
 // 41 = moon1 shadow only, 42 = moon2 shadow only, 43 = both overlap (blue)
-// 100 = SSAO only (raw SSAO texture output)
+// 100 = GTAO only (raw GTAO texture output)
+// 101 = GTAO raw center sample (no blur)
 const DEBUG_MODE: i32 = 0;
 
 // Calculate point light contribution at a world position.
@@ -230,8 +296,12 @@ fn calculate_all_point_lights(world_pos: vec3<f32>, world_normal: vec3<f32>) -> 
         let light = point_lights.lights[i];
         
         // First light casts shadows
+        // NOTE: Point light shadows are temporarily disabled due to spurious shadow artifacts.
+        // The shadow map rendering and sampling have a mismatch causing incorrect shadows
+        // in areas that should be lit. This creates pink patches in Dark World mode.
+        // TODO: Fix point light shadow sampling - see POINT_LIGHT_SHADOW_DEBUG.md
         if i == 0u {
-            let shadow = calculate_point_shadow(light.position.xyz, world_pos, light.radius_padding.x);
+            let shadow = 1.0;  // Disabled - was: calculate_point_shadow(...)
             total += calculate_point_light_with_shadow(light, world_pos, world_normal, shadow);
         } else {
             total += calculate_point_light(light, world_pos, world_normal);
@@ -442,6 +512,12 @@ fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f3
     // NDC to UV: x [-1,1] -> [0,1], y [-1,1] -> [1,0] (flip Y for texture coords)
     let face_uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
     
+    // Check if UV is valid - if outside [0,1] range, we're at the edge of the cube face
+    // and shouldn't cast shadow (return lit)
+    if face_uv.x < 0.0 || face_uv.x > 1.0 || face_uv.y < 0.0 || face_uv.y > 1.0 {
+        return 1.0;
+    }
+    
     // Depth comparison: we store linear distance/radius
     // Bias to prevent self-shadowing (shadow acne)
     let compare_depth = (distance / shadow_radius) - 0.05;
@@ -454,7 +530,8 @@ fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f3
     var shadow_sum = 0.0;
     for (var i = 0; i < 16; i++) {
         let offset = POISSON_DISK[i] * radius_scale;
-        let sample_uv = face_uv + offset;
+        // Clamp UV to valid range to avoid sampling garbage at edges
+        let sample_uv = clamp(face_uv + offset, vec2<f32>(0.001), vec2<f32>(0.999));
         shadow_sum += sample_point_shadow_face(face_idx, sample_uv, compare_depth);
     }
     
@@ -550,47 +627,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // NO encoding/decoding needed - just normalize to handle interpolation
     let world_normal = normalize(normal_sample.rgb);
     
-    // Sample SSAO texture with simple 3x3 blur to reduce noise
-    // This is a bilateral blur that respects depth discontinuities
-    let texel_size = vec2<f32>(1.0 / 1920.0, 1.0 / 1080.0); // TODO: pass actual screen size
-    let center_depth = position_sample.w;
-    
-    var ao_sum: f32 = 0.0;
-    var weight_sum: f32 = 0.0;
-    
-    // 9x9 bilateral blur - aggressive smoothing for noisy SSAO
-    // This is necessary because 64 samples isn't enough for clean results
-    for (var y: i32 = -4; y <= 4; y++) {
-        for (var x: i32 = -4; x <= 4; x++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            let sample_uv = in.uv + offset;
-            
-            // Sample SSAO
-            let sample_ao = textureSample(ssao_texture, ssao_sampler, sample_uv).r;
-            
-            // Sample depth for bilateral weight
-            let sample_pos = textureSample(gPosition, gbuffer_sampler, sample_uv);
-            let sample_depth = sample_pos.w;
-            
-            // Bilateral weight: reduce influence of samples at different depths
-            // Use a gentler falloff to allow more smoothing while still respecting edges
-            let depth_diff = abs(center_depth - sample_depth);
-            let depth_weight = exp(-depth_diff * 0.5);
-            
-            // Gaussian distance weight - sigma ~3 pixels
-            let dist_sq = f32(x * x + y * y);
-            let dist_weight = exp(-dist_sq / 18.0);
-            
-            let weight = depth_weight * dist_weight;
-            ao_sum += sample_ao * weight;
-            weight_sum += weight;
-        }
-    }
-    
-    let ao = select(ao_sum / weight_sum, 1.0, weight_sum < 0.001);
-    
     let world_pos = position_sample.xyz;
     let depth = position_sample.w;
+    
+    // Sample GTAO with edge-aware bilateral blur
+    // This reduces noise at edges while preserving depth discontinuities
+    let ao = sample_gtao_with_blur(in.uv, depth);
     
     // Debug: Show g-buffer normal as color (remap -1,1 to 0,1 for visualization)
     if DEBUG_MODE == 1 {
@@ -643,14 +685,122 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(moon1_shadow, moon2_shadow, both_shadowed, 1.0);
     }
     
-    // Debug: Show AO only (now shows SSAO)
+    // Debug: Show AO only (now shows GTAO)
     if DEBUG_MODE == 5 {
         return vec4<f32>(vec3<f32>(ao), 1.0);
     }
     
-    // Debug: Show raw SSAO texture (after blur)
+    // Debug: Show raw GTAO texture (after blur)
     if DEBUG_MODE == 100 {
         return vec4<f32>(vec3<f32>(ao), 1.0);
+    }
+    
+    // Debug: Show raw GTAO center sample (no blur) - to debug GTAO output directly
+    if DEBUG_MODE == 101 {
+        let raw_ao = textureSample(gtao_texture, gtao_sampler, in.uv).r;
+        // Check for NaN or invalid values
+        if (raw_ao != raw_ao) { // NaN check
+            return vec4<f32>(1.0, 0.0, 1.0, 1.0); // Magenta = NaN
+        }
+        if (raw_ao < 0.0) {
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0); // Red = negative
+        }
+        if (raw_ao > 1.0) {
+            return vec4<f32>(0.0, 0.0, 1.0, 1.0); // Blue = > 1.0
+        }
+        return vec4<f32>(vec3<f32>(raw_ao), 1.0);
+    }
+    
+    // Debug 102: Detailed point shadow breakdown
+    // R = stored_depth, G = compare_depth, B = shadow result
+    // Helps diagnose why spurious shadows appear
+    if DEBUG_MODE == 102 {
+        if point_lights.count.x > 0u {
+            let shadow_light_pos = point_shadow_matrices.light_pos_radius.xyz;
+            let shadow_radius = point_shadow_matrices.light_pos_radius.w;
+            let light_to_frag = world_pos - shadow_light_pos;
+            let distance = length(light_to_frag);
+            
+            if distance > shadow_radius {
+                return vec4<f32>(0.0, 1.0, 0.0, 1.0); // Green = outside radius
+            }
+            
+            let abs_vec = abs(light_to_frag);
+            var face_idx: i32;
+            if abs_vec.x >= abs_vec.y && abs_vec.x >= abs_vec.z {
+                face_idx = select(1, 0, light_to_frag.x > 0.0);
+            } else if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z {
+                face_idx = select(3, 2, light_to_frag.y > 0.0);
+            } else {
+                face_idx = select(5, 4, light_to_frag.z > 0.0);
+            }
+            
+            let view_proj = point_shadow_matrices.face_matrices[face_idx];
+            let clip = view_proj * vec4<f32>(world_pos, 1.0);
+            let ndc = clip.xyz / clip.w;
+            let face_uv = vec2<f32>((ndc.x + 1.0) * 0.5, (1.0 - ndc.y) * 0.5);
+            
+            // Check UV bounds
+            if face_uv.x < 0.0 || face_uv.x > 1.0 || face_uv.y < 0.0 || face_uv.y > 1.0 {
+                return vec4<f32>(1.0, 1.0, 0.0, 1.0); // Yellow = UV out of bounds
+            }
+            
+            let tex_coord = vec2<i32>(face_uv * 512.0);
+            var stored_depth: f32;
+            switch face_idx {
+                case 0: { stored_depth = textureLoad(point_shadow_face_px, tex_coord, 0); }
+                case 1: { stored_depth = textureLoad(point_shadow_face_nx, tex_coord, 0); }
+                case 2: { stored_depth = textureLoad(point_shadow_face_py, tex_coord, 0); }
+                case 3: { stored_depth = textureLoad(point_shadow_face_ny, tex_coord, 0); }
+                case 4: { stored_depth = textureLoad(point_shadow_face_pz, tex_coord, 0); }
+                case 5: { stored_depth = textureLoad(point_shadow_face_nz, tex_coord, 0); }
+                default: { stored_depth = 1.0; }
+            }
+            
+            let compare_depth = distance / shadow_radius;
+            
+            // R = stored (darker = closer geometry in shadow map)
+            // G = compare (darker = we're closer to light)
+            // B = 0.5 if near boundary (|stored - compare| < 0.1)
+            let near_boundary = select(0.0, 0.5, abs(stored_depth - compare_depth) < 0.1);
+            return vec4<f32>(stored_depth, compare_depth, near_boundary, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 1.0, 1.0); // Blue = no lights
+    }
+    
+    // Debug 103: Check clip.w and NDC validity
+    if DEBUG_MODE == 103 {
+        if point_lights.count.x > 0u {
+            let shadow_light_pos = point_shadow_matrices.light_pos_radius.xyz;
+            let shadow_radius = point_shadow_matrices.light_pos_radius.w;
+            let light_to_frag = world_pos - shadow_light_pos;
+            let distance = length(light_to_frag);
+            
+            if distance > shadow_radius {
+                return vec4<f32>(0.5, 0.5, 0.5, 1.0); // Gray = outside radius
+            }
+            
+            let abs_vec = abs(light_to_frag);
+            var face_idx: i32;
+            if abs_vec.x >= abs_vec.y && abs_vec.x >= abs_vec.z {
+                face_idx = select(1, 0, light_to_frag.x > 0.0);
+            } else if abs_vec.y >= abs_vec.x && abs_vec.y >= abs_vec.z {
+                face_idx = select(3, 2, light_to_frag.y > 0.0);
+            } else {
+                face_idx = select(5, 4, light_to_frag.z > 0.0);
+            }
+            
+            let view_proj = point_shadow_matrices.face_matrices[face_idx];
+            let clip = view_proj * vec4<f32>(world_pos, 1.0);
+            
+            // R = clip.w (should be positive for points in front of camera)
+            // G = clip.z / clip.w (NDC z, should be in [0,1] for valid depth)
+            // B = face_idx / 6
+            let ndc_z = clip.z / clip.w;
+            let clip_w_norm = clamp(clip.w / shadow_radius, 0.0, 1.0);
+            return vec4<f32>(clip_w_norm, clamp(ndc_z, 0.0, 1.0), f32(face_idx) / 5.0, 1.0);
+        }
+        return vec4<f32>(0.0, 0.0, 1.0, 1.0);
     }
     
     // Debug: Show world position XZ (scaled to 0-1 range for -20 to +20)

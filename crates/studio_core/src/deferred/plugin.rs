@@ -35,8 +35,8 @@ use super::shadow_node::{
     prepare_directional_shadow_uniforms,
     Moon1ShadowPassNode, Moon2ShadowPassNode,
 };
-use super::ssao::{SsaoConfig, init_ssao_kernel, prepare_ssao_textures};
-use super::ssao_node::{init_ssao_pipeline, init_ssao_noise_texture, SsaoPassNode};
+use super::gtao::{GtaoConfig, prepare_gtao_textures};
+use super::gtao_node::{init_gtao_pipeline, init_gtao_noise_texture, GtaoPassNode};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -63,7 +63,7 @@ impl Plugin for DeferredRenderingPlugin {
         app.init_resource::<DeferredLightingConfig>();
         app.init_resource::<BloomConfig>();
         app.init_resource::<MoonConfig>();
-        app.init_resource::<SsaoConfig>();
+        app.init_resource::<GtaoConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -104,9 +104,8 @@ impl Plugin for DeferredRenderingPlugin {
                 init_bloom_pipeline.in_set(RenderSystems::Prepare),
                 init_shadow_pipeline.in_set(RenderSystems::Prepare),
                 init_point_shadow_pipeline.in_set(RenderSystems::Prepare),
-                init_ssao_pipeline.in_set(RenderSystems::Prepare),
-                init_ssao_kernel.in_set(RenderSystems::Prepare),
-                init_ssao_noise_texture.in_set(RenderSystems::Prepare),
+                init_gtao_pipeline.in_set(RenderSystems::Prepare),
+                init_gtao_noise_texture.in_set(RenderSystems::Prepare),
             ),
         );
         
@@ -164,9 +163,9 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(init_point_shadow_pipeline)
                     .after(prepare_shadow_casting_lights)
                     .after(prepare_deferred_meshes),
-                prepare_ssao_textures
+                prepare_gtao_textures
                     .in_set(RenderSystems::PrepareResources)
-                    .after(init_ssao_pipeline),
+                    .after(init_gtao_pipeline),
             ),
         );
 
@@ -192,10 +191,10 @@ impl Plugin for DeferredRenderingPlugin {
                 Core3d,
                 DeferredLabel::GBufferPass,
             )
-            // SSAO pass node (after G-buffer, before lighting)
-            .add_render_graph_node::<ViewNodeRunner<SsaoPassNode>>(
+            // GTAO pass node (after G-buffer, before lighting)
+            .add_render_graph_node::<ViewNodeRunner<GtaoPassNode>>(
                 Core3d,
-                DeferredLabel::SsaoPass,
+                DeferredLabel::GtaoPass,
             )
             // Lighting pass node
             .add_render_graph_node::<ViewNodeRunner<LightingPassNode>>(
@@ -223,13 +222,13 @@ impl Plugin for DeferredRenderingPlugin {
             ),
         );
         
-        // SSAO runs after G-buffer, before MainOpaque
+        // GTAO runs after G-buffer, before MainOpaque
         // Then Lighting runs after opaque, bloom after lighting, then transparent
         render_app.add_render_graph_edges(
             Core3d,
             (
                 DeferredLabel::GBufferPass,
-                DeferredLabel::SsaoPass,
+                DeferredLabel::GtaoPass,
                 Node3d::MainOpaquePass,
             ),
         );

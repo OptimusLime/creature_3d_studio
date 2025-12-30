@@ -13,8 +13,8 @@ pub enum DeferredLabel {
     PointShadowPass,
     /// G-Buffer pass: renders geometry to MRT (color, normal, position)
     GBufferPass,
-    /// SSAO pass: computes screen-space ambient occlusion from G-buffer
-    SsaoPass,
+    /// GTAO pass: computes ground-truth ambient occlusion from G-buffer
+    GtaoPass,
     /// Lighting pass: fullscreen quad that computes lighting from G-buffer
     LightingPass,
     /// Bloom pass: post-process bloom effect on HDR output
