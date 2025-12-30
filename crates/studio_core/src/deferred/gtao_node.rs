@@ -51,13 +51,16 @@ pub struct GtaoCameraUniform {
     /// xy = ndc_to_view_add
     /// z = effect_radius, w = effect_falloff_range - 16 bytes
     pub ndc_add_and_params1: [f32; 4],
-    /// x = radius_multiplier, y = final_value_power
-    /// z = sample_distribution_power, w = thin_occluder_compensation - 16 bytes
+    /// xy = ndc_to_view_mul_x_pixel_size (XeGTAO L70: NDCToViewMul * ViewportPixelSize)
+    /// z = radius_multiplier, w = final_value_power - 16 bytes
+    pub ndc_mul_pixel_and_params: [f32; 4],
+    /// x = sample_distribution_power, y = thin_occluder_compensation
+    /// z = depth_mip_sampling_offset, w = denoise_blur_beta - 16 bytes
     pub params2: [f32; 4],
-    /// x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta - 16 bytes
+    /// x = slice_count, y = steps_per_slice, z = unused, w = unused - 16 bytes
     pub params3: [f32; 4],
 }
-// Total: 64*3 + 16*5 = 192 + 80 = 272 bytes
+// Total: 64*3 + 16*6 = 192 + 96 = 288 bytes
 
 /// Render graph node that computes GTAO.
 #[derive(Default)]
@@ -173,7 +176,7 @@ impl ViewNode for GtaoPassNode {
         let depth_linearize_mul = near;
         let depth_linearize_add = 0.0001;  // Small epsilon to prevent div by zero
 
-        // XeGTAO NDC to view-space constants
+        // XeGTAO NDC to view-space constants (XeGTAO.h L177-184)
         let tan_half_fov_y = 1.0 / proj_cols[1][1];  // 1/proj[1][1]
         let tan_half_fov_x = 1.0 / proj_cols[0][0];  // 1/proj[0][0]
         
@@ -181,6 +184,13 @@ impl ViewNode for GtaoPassNode {
         // NDCToViewAdd = { tanHalfFOVX * -1.0, tanHalfFOVY * 1.0 }
         let ndc_to_view_mul = [tan_half_fov_x * 2.0, tan_half_fov_y * -2.0];
         let ndc_to_view_add = [tan_half_fov_x * -1.0, tan_half_fov_y * 1.0];
+        
+        // XeGTAO.h L184: NDCToViewMul_x_PixelSize = NDCToViewMul * ViewportPixelSize
+        let pixel_size = [1.0 / half_screen_size.x as f32, 1.0 / half_screen_size.y as f32];
+        let ndc_to_view_mul_x_pixel_size = [
+            ndc_to_view_mul[0] * pixel_size[0],
+            ndc_to_view_mul[1] * pixel_size[1],
+        ];
 
         // All values from GtaoConfig - NO HARDCODED VALUES
         let camera_uniform = GtaoCameraUniform {
@@ -190,8 +200,8 @@ impl ViewNode for GtaoPassNode {
             screen_size: [
                 half_screen_size.x as f32,
                 half_screen_size.y as f32,
-                1.0 / half_screen_size.x as f32,
-                1.0 / half_screen_size.y as f32,
+                pixel_size[0],
+                pixel_size[1],
             ],
             // Pack: xy = depth_unpack_consts, zw = ndc_to_view_mul
             depth_unpack_and_ndc_mul: [
@@ -208,21 +218,29 @@ impl ViewNode for GtaoPassNode {
                 gtao_config.effect_radius,
                 gtao_config.effect_falloff_range,
             ],
-            // Pack: x = radius_multiplier, y = final_value_power, z = sample_dist_power, w = thin_occluder_comp
-            // FROM CONFIG - not hardcoded
-            params2: [
+            // Pack: xy = ndc_to_view_mul_x_pixel_size, z = radius_multiplier, w = final_value_power
+            // XeGTAO.h L70, L184 for NDCToViewMul_x_PixelSize
+            ndc_mul_pixel_and_params: [
+                ndc_to_view_mul_x_pixel_size[0],
+                ndc_to_view_mul_x_pixel_size[1],
                 gtao_config.radius_multiplier,
                 gtao_config.final_value_power,
+            ],
+            // Pack: x = sample_dist_power, y = thin_occluder_comp, z = depth_mip_offset, w = denoise_blur_beta
+            // FROM CONFIG - not hardcoded
+            params2: [
                 gtao_config.sample_distribution_power,
                 gtao_config.thin_occluder_compensation,
+                gtao_config.depth_mip_sampling_offset,
+                gtao_config.denoise_blur_beta(),
             ],
-            // Pack: x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta
+            // Pack: x = slice_count, y = steps_per_slice, z = unused, w = unused
             // FROM CONFIG - not hardcoded
             params3: [
                 gtao_config.slice_count() as f32,
                 gtao_config.steps_per_slice() as f32,
-                gtao_config.depth_mip_sampling_offset,
-                gtao_config.denoise_blur_beta(),
+                0.0,
+                0.0,
             ],
         };
 

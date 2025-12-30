@@ -34,12 +34,13 @@ struct CameraUniforms {
     view: mat4x4<f32>,               // 64 bytes
     projection: mat4x4<f32>,         // 64 bytes
     inv_projection: mat4x4<f32>,     // 64 bytes
-    screen_size: vec4<f32>,          // 16 bytes - xy = size, zw = 1/size
+    screen_size: vec4<f32>,          // 16 bytes - xy = size, zw = 1/size (pixel_size)
     // Pack vec2s into vec4s for alignment
     depth_unpack_and_ndc_mul: vec4<f32>,  // xy = depth_unpack_consts, zw = ndc_to_view_mul
     ndc_add_and_params1: vec4<f32>,       // xy = ndc_to_view_add, z = effect_radius, w = effect_falloff_range
-    params2: vec4<f32>,                   // x = radius_multiplier, y = final_value_power, z = sample_distribution_power, w = thin_occluder_compensation
-    params3: vec4<f32>,                   // x = slice_count, y = steps_per_slice, z = depth_mip_sampling_offset, w = denoise_blur_beta
+    ndc_mul_pixel_and_params: vec4<f32>,  // xy = ndc_to_view_mul_x_pixel_size (XeGTAO L184), z = radius_multiplier, w = final_value_power
+    params2: vec4<f32>,                   // x = sample_distribution_power, y = thin_occluder_compensation, z = depth_mip_sampling_offset, w = denoise_blur_beta
+    params3: vec4<f32>,                   // x = slice_count, y = steps_per_slice, z = unused, w = unused
 }
 @group(2) @binding(0) var<uniform> camera: CameraUniforms;
 
@@ -97,19 +98,32 @@ fn get_effect_falloff_range() -> f32 {
     return camera.ndc_add_and_params1.w;
 }
 
+// XeGTAO.h L184: NDCToViewMul * ViewportPixelSize - for screenspace radius calc
+fn get_ndc_to_view_mul_x_pixel_size() -> vec2<f32> {
+    return camera.ndc_mul_pixel_and_params.xy;
+}
+
 fn get_radius_multiplier() -> f32 {
-    return camera.params2.x;
+    return camera.ndc_mul_pixel_and_params.z;
 }
 
 fn get_final_value_power() -> f32 {
-    return camera.params2.y;
+    return camera.ndc_mul_pixel_and_params.w;
 }
 
 fn get_sample_distribution_power() -> f32 {
-    return camera.params2.z;
+    return camera.params2.x;
 }
 
 fn get_thin_occluder_compensation() -> f32 {
+    return camera.params2.y;
+}
+
+fn get_depth_mip_sampling_offset() -> f32 {
+    return camera.params2.z;
+}
+
+fn get_denoise_blur_beta() -> f32 {
     return camera.params2.w;
 }
 
@@ -119,14 +133,6 @@ fn get_slice_count() -> i32 {
 
 fn get_steps_per_slice() -> i32 {
     return i32(camera.params3.y);
-}
-
-fn get_depth_mip_sampling_offset() -> f32 {
-    return camera.params3.z;
-}
-
-fn get_denoise_blur_beta() -> f32 {
-    return camera.params3.w;
 }
 
 // Convert NDC depth [0,1] to linear view-space depth
@@ -155,13 +161,64 @@ fn compute_viewspace_position(screen_uv: vec2<f32>, viewspace_depth: f32) -> vec
     return pos;
 }
 
-// Sample depth at UV and convert to viewspace depth
+// Sample depth at UV and convert to viewspace depth (from hardware depth buffer)
 fn get_viewspace_depth(uv: vec2<f32>) -> f32 {
     let ndc_depth = textureSample(depth_texture, gbuffer_sampler, uv);
     return screen_space_to_viewspace_depth(ndc_depth);
 }
 
-// Get view-space position at UV
+// XeGTAO L438: Sample viewspace depth from MIP chain with MIP level selection
+// mip_level should be computed as: clamp(log2(sampleOffsetLength) - depthMIPSamplingOffset, 0, 4)
+// The depth MIP chain contains pre-linearized viewspace depth (no conversion needed)
+fn sample_viewspace_depth_mip(uv: vec2<f32>, mip_level: f32) -> f32 {
+    // Since WGSL doesn't support SampleLevel with variable mip on separate textures,
+    // we manually select the MIP level and use linear interpolation between levels
+    let mip_floor = i32(floor(mip_level));
+    let mip_fract = fract(mip_level);
+    
+    var depth: f32;
+    
+    // Sample from the appropriate MIP level(s)
+    // XE_GTAO_DEPTH_MIP_LEVELS = 5 (mips 0-4)
+    if mip_floor <= 0 {
+        depth = textureSampleLevel(depth_mip0, depth_mip_sampler, uv, 0.0).x;
+        if mip_fract > 0.0 {
+            let depth1 = textureSampleLevel(depth_mip1, depth_mip_sampler, uv, 0.0).x;
+            depth = mix(depth, depth1, mip_fract);
+        }
+    } else if mip_floor == 1 {
+        depth = textureSampleLevel(depth_mip1, depth_mip_sampler, uv, 0.0).x;
+        if mip_fract > 0.0 {
+            let depth2 = textureSampleLevel(depth_mip2, depth_mip_sampler, uv, 0.0).x;
+            depth = mix(depth, depth2, mip_fract);
+        }
+    } else if mip_floor == 2 {
+        depth = textureSampleLevel(depth_mip2, depth_mip_sampler, uv, 0.0).x;
+        if mip_fract > 0.0 {
+            let depth3 = textureSampleLevel(depth_mip3, depth_mip_sampler, uv, 0.0).x;
+            depth = mix(depth, depth3, mip_fract);
+        }
+    } else if mip_floor == 3 {
+        depth = textureSampleLevel(depth_mip3, depth_mip_sampler, uv, 0.0).x;
+        if mip_fract > 0.0 {
+            let depth4 = textureSampleLevel(depth_mip4, depth_mip_sampler, uv, 0.0).x;
+            depth = mix(depth, depth4, mip_fract);
+        }
+    } else {
+        // mip_floor >= 4, use coarsest MIP
+        depth = textureSampleLevel(depth_mip4, depth_mip_sampler, uv, 0.0).x;
+    }
+    
+    return depth;
+}
+
+// Get view-space position at UV using MIP sampling
+fn get_viewspace_pos_mip(uv: vec2<f32>, mip_level: f32) -> vec3<f32> {
+    let depth = sample_viewspace_depth_mip(uv, mip_level);
+    return compute_viewspace_position(uv, depth);
+}
+
+// Get view-space position at UV (from hardware depth - for center pixel)
 fn get_viewspace_pos(uv: vec2<f32>) -> vec3<f32> {
     let depth = get_viewspace_depth(uv);
     return compute_viewspace_position(uv, depth);
@@ -196,17 +253,25 @@ fn calculate_edges(center_z: f32, left_z: f32, right_z: f32, top_z: f32, bottom_
 }
 
 // ============================================================================
-// Fast approximation of acos
+// Fast math approximations - MUST MATCH XeGTAO.hlsli exactly
 // ============================================================================
 
-fn fast_acos(x: f32) -> f32 {
-    // Attempt to match XeGTAO's fast_acos
-    let x_clamped = clamp(x, -1.0, 1.0);
-    // Simple approximation: acos(x) ≈ PI/2 - asin(x), and asin(x) ≈ x + x^3/6 for small x
-    // For better accuracy use polynomial approximation
-    let abs_x = abs(x_clamped);
-    let result = sqrt(1.0 - abs_x) * (PI_HALF - abs_x * (0.175394 + abs_x * 0.0421407));
-    return select(result, PI - result, x_clamped < 0.0);
+// XeGTAO.hlsli L171-173: Fast square root approximation
+// Uses the famous inverse sqrt hack: http://h14s.p5r.org/2012/09/0x5f3759df.html
+// Note: WGSL doesn't have bitcast for int<->float, so we use regular sqrt
+// This is acceptable as modern GPUs have fast sqrt instructions
+fn fast_sqrt(x: f32) -> f32 {
+    return sqrt(x);
+}
+
+// XeGTAO.hlsli L176-184: Fast acos approximation
+// input [-1, 1] and output [0, PI]
+// from https://seblagarde.wordpress.com/2014/12/01/inverse-trigonometric-functions-gpu-optimization-for-amd-gcn-architecture/
+fn fast_acos(in_x: f32) -> f32 {
+    let x = abs(in_x);
+    var res = -0.156583 * x + PI_HALF;
+    res *= fast_sqrt(1.0 - x);
+    return select(res, PI - res, in_x < 0.0);
 }
 
 // ============================================================================
@@ -221,8 +286,14 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     
     let pixel_size = camera.screen_size.zw;
     
+    // Get center view-space depth
+    var viewspace_depth = get_viewspace_depth(uv);
+    
+    // XeGTAO L279-284: Move center pixel slightly towards camera to avoid imprecision artifacts
+    // due to depth buffer imprecision. We use fp16 depth MIP chain, so use 0.99920
+    viewspace_depth *= 0.99920;
+    
     // Get center view-space position and normal
-    let viewspace_depth = get_viewspace_depth(uv);
     let P = compute_viewspace_position(uv, viewspace_depth);
     let N = get_viewspace_normal(uv);
     
@@ -230,13 +301,14 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     // In view space, camera is at origin, so viewVec = normalize(-P)
     let view_vec = normalize(-P);
     
-    // Compute effect radius in screen space
-    let world_radius = get_effect_radius() * get_radius_multiplier();
-    // Project radius to screen space (approximate)
-    let radius_pixels = (world_radius / viewspace_depth) / pixel_size.x * 0.5;
+    // XeGTAO L306: Compute effect radius
+    let effect_radius = get_effect_radius() * get_radius_multiplier();
     
-    // Clamp radius to reasonable range
-    let screenspace_radius = clamp(radius_pixels, 1.0, 256.0);
+    // XeGTAO L337-340: Compute screenspace radius using NDCToViewMul_x_PixelSize
+    // pixelDirRBViewspaceSizeAtCenterZ = viewspaceZ * NDCToViewMul_x_PixelSize
+    // screenspaceRadius = effectRadius / pixelDirRBViewspaceSizeAtCenterZ.x
+    let pixel_dir_rb_viewspace_size = viewspace_depth * get_ndc_to_view_mul_x_pixel_size();
+    let screenspace_radius = effect_radius / pixel_dir_rb_viewspace_size.x;
     
     // XeGTAO L342-343: fade out for small screen radii
     var visibility = saturate((10.0 - screenspace_radius) / 100.0) * 0.5;
@@ -247,8 +319,8 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     
     // XeGTAO L304-316: Precompute falloff parameters
     // falloffRange = effectFalloffRange * effectRadius (default effectFalloffRange = 0.615)
-    let falloff_range = get_effect_falloff_range() * world_radius;
-    let falloff_from = world_radius * (1.0 - get_effect_falloff_range());
+    let falloff_range = get_effect_falloff_range() * effect_radius;
+    let falloff_from = effect_radius * (1.0 - get_effect_falloff_range());
     // Optimized: weight = saturate(dist * falloffMul + falloffAdd)
     let falloff_mul = -1.0 / falloff_range;
     let falloff_add = falloff_from / falloff_range + 1.0;
@@ -325,15 +397,26 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
             // XeGTAO line 433: sample offset in screen space (pixels)
             let sample_offset_pixels = s * omega_screen;
             
+            // XeGTAO L435: length for MIP level calculation
+            let sample_offset_length = length(sample_offset_pixels);
+            
+            // XeGTAO L438: MIP level selection based on sample distance
+            // Using coarser MIPs for distant samples reduces bandwidth and noise
+            let mip_level = clamp(log2(sample_offset_length) - get_depth_mip_sampling_offset(), 0.0, 4.0);
+            
             // XeGTAO L440-442: Snap to pixel center for more correct direction math
             let sample_offset = round(sample_offset_pixels) * pixel_size;
+            
+            // Get thin occluder compensation value
+            let thin_occluder_comp = get_thin_occluder_compensation();
             
             // Positive direction (XeGTAO lines 458-493)
             {
                 let sample_uv = uv + sample_offset;
                 if sample_uv.x >= 0.0 && sample_uv.x <= 1.0 && sample_uv.y >= 0.0 && sample_uv.y <= 1.0 {
                     if !is_sky(sample_uv) {
-                        let S = get_viewspace_pos(sample_uv);
+                        // XeGTAO L459: Sample viewspace depth from MIP chain
+                        let S = get_viewspace_pos_mip(sample_uv, mip_level);
                         let delta = S - P;
                         let delta_len = length(delta);
                         
@@ -344,8 +427,10 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                             // XeGTAO line 488: horizon cos = dot(sampleHorizonVec, viewVec)
                             let shc = dot(sample_horizon_vec, view_vec);
                             
-                            // XeGTAO L477-478: Falloff weight using precomputed mul/add
-                            let weight = saturate(delta_len * falloff_mul + falloff_add);
+                            // XeGTAO L481-484: Thin occluder compensation heuristic
+                            // Scale Z component to make samples behind center fall off faster
+                            let falloff_base = length(vec3<f32>(delta.x, delta.y, delta.z * (1.0 + thin_occluder_comp)));
+                            let weight = saturate(falloff_base * falloff_mul + falloff_add);
                             
                             // XeGTAO L492: lerp between low horizon and sample horizon
                             let weighted_shc = mix(low_horizon_cos.x, shc, weight);
@@ -362,7 +447,8 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                 let sample_uv = uv - sample_offset;
                 if sample_uv.x >= 0.0 && sample_uv.x <= 1.0 && sample_uv.y >= 0.0 && sample_uv.y <= 1.0 {
                     if !is_sky(sample_uv) {
-                        let S = get_viewspace_pos(sample_uv);
+                        // XeGTAO L463: Sample viewspace depth from MIP chain
+                        let S = get_viewspace_pos_mip(sample_uv, mip_level);
                         let delta = S - P;
                         let delta_len = length(delta);
                         
@@ -370,8 +456,9 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
                             let sample_horizon_vec = delta / delta_len;
                             let shc = dot(sample_horizon_vec, view_vec);
                             
-                            // XeGTAO L478: Falloff weight using precomputed mul/add
-                            let weight = saturate(delta_len * falloff_mul + falloff_add);
+                            // XeGTAO L481-484: Thin occluder compensation heuristic
+                            let falloff_base = length(vec3<f32>(delta.x, delta.y, delta.z * (1.0 + thin_occluder_comp)));
+                            let weight = saturate(falloff_base * falloff_mul + falloff_add);
                             
                             // XeGTAO L493: lerp between low horizon and sample horizon
                             let weighted_shc = mix(low_horizon_cos.y, shc, weight);
