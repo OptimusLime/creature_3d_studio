@@ -26,6 +26,12 @@ fn main() {
     // 5. Mesh optimization test (solid cubes for face culling/greedy mesh stats)
     generate_mesh_test();
 
+    // 6. Fog test scene (voxels at different depths)
+    generate_fog_test();
+
+    // 7. Cross-chunk culling test scene
+    generate_cross_chunk_test();
+
     println!("\nAll test worlds generated!");
 }
 
@@ -229,4 +235,64 @@ fn generate_mesh_test() {
     // Also save in JSON for debugging
     save_world(&world, "assets/worlds/mesh_test.json").expect("Failed to save JSON");
     println!("  -> Also saved as mesh_test.json");
+}
+
+fn generate_fog_test() {
+    println!("Generating: fog_test.voxworld");
+    let mut world = VoxelWorld::new();
+
+    // 4 white voxels at different Z depths to demonstrate fog gradient
+    // Positions: spread out in X so they don't overlap visually
+    // FOG_MAX_DISTANCE in shader is 50.0
+    let positions = [
+        (-3, 0, 2),   // Near
+        (-1, 0, 10),  // Mid-near
+        (1, 0, 25),   // Mid-far
+        (3, 0, 45),   // Far (very foggy)
+    ];
+
+    for (x, y, z) in positions {
+        // White voxel, no emission
+        world.set_voxel(x, y, z, Voxel::solid(255, 255, 255));
+    }
+
+    save_world(&world, "assets/worlds/fog_test.voxworld").expect("Failed to save");
+    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+}
+
+fn generate_cross_chunk_test() {
+    println!("Generating: cross_chunk_test.voxworld");
+    let mut world = VoxelWorld::new();
+
+    // Large wall at X chunk boundary (demonstrating seamless culling)
+    for y in 4..20 {
+        for z in 8..24 {
+            world.set_voxel(31, y, z, Voxel::solid(180, 80, 60)); // Orange/red brick
+            world.set_voxel(32, y, z, Voxel::solid(180, 80, 60));
+        }
+    }
+
+    // Floor spanning chunks (both X and Z boundaries)
+    for x in 24..40 {
+        for z in 24..40 {
+            world.set_voxel(x, 3, z, Voxel::solid(80, 80, 90)); // Gray stone
+        }
+    }
+
+    // Glowing pillar at corner of 4 chunks
+    for y in 4..12 {
+        world.set_voxel(31, y, 31, Voxel::new(255, 200, 100, 200));
+        world.set_voxel(32, y, 31, Voxel::new(255, 200, 100, 200));
+        world.set_voxel(31, y, 32, Voxel::new(255, 200, 100, 200));
+        world.set_voxel(32, y, 32, Voxel::new(255, 200, 100, 200));
+    }
+
+    // Bridge across Z chunk boundary
+    for x in 16..28 {
+        world.set_voxel(x, 8, 31, Voxel::solid(100, 140, 180)); // Blue-gray
+        world.set_voxel(x, 8, 32, Voxel::solid(100, 140, 180));
+    }
+
+    save_world(&world, "assets/worlds/cross_chunk_test.voxworld").expect("Failed to save");
+    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
 }

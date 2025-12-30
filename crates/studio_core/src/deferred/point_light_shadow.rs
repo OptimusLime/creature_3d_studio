@@ -84,17 +84,6 @@ pub struct CubeFaceMatrices {
 impl CubeFaceMatrices {
     /// Create view-projection matrices for a point light at the given position.
     pub fn new(light_pos: Vec3, near: f32, far: f32) -> Self {
-        // Debug: test the full view-projection
-        {
-            let ground = Vec3::new(0.0, 0.0, 0.0);
-            let view = Mat4::look_to_rh(light_pos, Vec3::NEG_Y, Vec3::NEG_Z);
-            let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
-            let view_pos = view.transform_point3(ground);
-            let clip = proj * Vec4::new(view_pos.x, view_pos.y, view_pos.z, 1.0);
-            let ndc = clip / clip.w;
-            bevy::log::info_once!("DEBUG -Y face: ground(0,0,0) -> view {:?} -> clip {:?} -> ndc {:?}", view_pos, clip, ndc);
-            bevy::log::info_once!("  clip.w={}, ndc.z={} (should be 0-1 for visible)", clip.w, ndc.z);
-        }
         let proj = Mat4::perspective_rh(
             std::f32::consts::FRAC_PI_2, // 90 degrees FOV
             1.0,                          // Square aspect ratio
@@ -117,66 +106,10 @@ impl CubeFaceMatrices {
         ];
         
         let mut view_proj = [Mat4::IDENTITY; 6];
-        static DEBUG_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        let do_debug = !DEBUG_DONE.swap(true, std::sync::atomic::Ordering::Relaxed);
         
         for (i, (dir, up)) in faces.iter().enumerate() {
             let view = Mat4::look_to_rh(light_pos, *dir, *up);
             view_proj[i] = proj * view;
-            
-            // Debug: test multiple points through face 3 (-Y) view-proj
-            if do_debug && i == 3 {
-                for test_point in [
-                    Vec3::new(0.0, 0.0, 0.0),   // center
-                    Vec3::new(5.0, 0.0, 5.0),   // off-center
-                    Vec3::new(-5.0, 1.0, -5.0), // pillar area
-                    Vec3::new(0.0, 1.0, 0.0),   // slightly above ground
-                ] {
-                    let clip = view_proj[i] * Vec4::new(test_point.x, test_point.y, test_point.z, 1.0);
-                    let ndc = if clip.w.abs() > 0.001 { clip / clip.w } else { clip };
-                    bevy::log::info!("-Y face: point {:?} -> clip {:?}, ndc {:?}", test_point, clip, ndc);
-                }
-                
-                // STEP 2 DEBUG: Trace a single test voxel through both render and sample paths
-                // Test voxel at world (2, 1, 2) - should cast shadow on ground
-                let test_voxel = Vec3::new(2.0, 1.0, 2.0);
-                let clip = view_proj[i] * Vec4::new(test_voxel.x, test_voxel.y, test_voxel.z, 1.0);
-                let ndc = clip / clip.w;
-                // Render UV: where this voxel appears in shadow texture
-                let render_u = (ndc.x + 1.0) / 2.0;
-                let render_v = (1.0 - ndc.y) / 2.0;  // Y flip for texture coords
-                bevy::log::info!("=== STEP 2 DEBUG ===");
-                bevy::log::info!("Test voxel at world (2, 1, 2)");
-                bevy::log::info!("  -> NDC: ({}, {})", ndc.x, ndc.y);
-                bevy::log::info!("  -> Render UV (with Y flip): ({}, {})", render_u, render_v);
-                bevy::log::info!("  -> Render UV (no Y flip):   ({}, {})", (ndc.x + 1.0) / 2.0, (ndc.y + 1.0) / 2.0);
-                
-                // Ground point in shadow: ray from light (0,6,0) through (2,1,2) to y=0
-                // Direction: (2, -5, 2), need t where 6 - 5t = 0 -> t = 1.2
-                // Shadow point: (2*1.2, 0, 2*1.2) = (2.4, 0, 2.4)
-                let shadow_ground = Vec3::new(2.4, 0.0, 2.4);
-                let ltf = shadow_ground - light_pos; // (2.4, -6, 2.4)
-                bevy::log::info!("Shadow on ground at world (2.4, 0, 2.4)");
-                bevy::log::info!("  -> light_to_frag: ({}, {}, {})", ltf.x, ltf.y, ltf.z);
-                
-                // Sample UV using our simplified formula
-                let sample_u = ltf.x / ltf.y.abs() * 0.5 + 0.5;
-                let sample_v = ltf.z / ltf.y.abs() * 0.5 + 0.5;
-                bevy::log::info!("  -> Sample UV (current formula): ({}, {})", sample_u, sample_v);
-                
-                // What the render UV SHOULD be for the test voxel if formula is correct
-                let voxel_ltf = test_voxel - light_pos; // (2, -5, 2)
-                let expected_u = voxel_ltf.x / voxel_ltf.y.abs() * 0.5 + 0.5;
-                let expected_v = voxel_ltf.z / voxel_ltf.y.abs() * 0.5 + 0.5;
-                bevy::log::info!("  -> Expected voxel UV (simplified formula): ({}, {})", expected_u, expected_v);
-                
-                bevy::log::info!("=== COMPARISON ===");
-                bevy::log::info!("Render UV (with Y flip):    ({:.4}, {:.4})", render_u, render_v);
-                bevy::log::info!("Expected UV (simplified):   ({:.4}, {:.4})", expected_u, expected_v);
-                bevy::log::info!("Sample UV (ground point):   ({:.4}, {:.4})", sample_u, sample_v);
-                bevy::log::info!("If render != expected, the simplified formula is WRONG");
-                bevy::log::info!("If render == expected but render != sample, that's CORRECT (different depths)");
-            }
         }
         
         Self { view_proj }
@@ -396,34 +329,65 @@ pub fn prepare_point_shadow_textures(
     }
 }
 
-/// Select which point lights will cast shadows.
+/// Select which point light will cast shadows.
 /// 
-/// Selects the nearest MAX_SHADOW_CASTING_LIGHTS lights to the camera
-/// that have the CastsShadow component.
+/// Priority order:
+/// 1. If any light has `PrimaryShadowCaster` marker, that light casts shadows
+/// 2. Otherwise, the CLOSEST light to the camera casts shadows (Wind Waker style)
+/// 
+/// This approach is simple, efficient, and gives designers explicit control
+/// while still working well for dynamic scenes.
 pub fn prepare_shadow_casting_lights(
     mut commands: Commands,
     extracted_lights: Option<Res<super::point_light::ExtractedPointLights>>,
-    // TODO: Get camera position for distance-based sorting
+    cameras: Query<&bevy::render::view::ExtractedView, With<super::DeferredCamera>>,
 ) {
     let mut shadow_lights = ShadowCastingLights::default();
     
-    // For now, just take the first MAX_SHADOW_CASTING_LIGHTS lights
-    // TODO: Sort by distance to camera and filter by CastsShadow component
-    if let Some(extracted) = extracted_lights {
-        for (idx, light) in extracted.lights.iter().enumerate() {
-            if idx >= MAX_SHADOW_CASTING_LIGHTS {
-                break;
-            }
-            
-            shadow_lights.lights.push(ShadowCastingLight {
-                position: light.position,
-                color: light.color,
-                intensity: light.intensity,
-                radius: light.radius,
-                shadow_index: idx as u32,
-            });
-        }
+    let Some(extracted) = extracted_lights else {
+        commands.insert_resource(shadow_lights);
+        return;
+    };
+    
+    if extracted.lights.is_empty() {
+        commands.insert_resource(shadow_lights);
+        return;
     }
+    
+    // First, check for explicitly marked primary shadow caster
+    let primary_idx = extracted.lights.iter().position(|l| l.is_primary_shadow_caster);
+    
+    let shadow_light_idx = if let Some(idx) = primary_idx {
+        idx
+    } else {
+        // Wind Waker approach: find the closest light to the camera
+        let camera_pos = cameras.iter().next()
+            .map(|view| view.world_from_view.translation())
+            .unwrap_or(Vec3::ZERO);
+        
+        let mut closest_idx = 0;
+        let mut closest_dist_sq = f32::MAX;
+        
+        for (idx, light) in extracted.lights.iter().enumerate() {
+            let dist_sq = light.position.distance_squared(camera_pos);
+            if dist_sq < closest_dist_sq {
+                closest_dist_sq = dist_sq;
+                closest_idx = idx;
+            }
+        }
+        
+        closest_idx
+    };
+    
+    // Only this single light casts shadows
+    let light = &extracted.lights[shadow_light_idx];
+    shadow_lights.lights.push(ShadowCastingLight {
+        position: light.position,
+        color: light.color,
+        intensity: light.intensity,
+        radius: light.radius,
+        shadow_index: 0,
+    });
     
     commands.insert_resource(shadow_lights);
 }
@@ -456,7 +420,6 @@ pub fn prepare_point_shadow_bind_groups(
     
     // Create view bind groups for each light/face combination
     for light in &shadow_lights.lights {
-        bevy::log::info_once!("Shadow render using light at {:?}, radius {}", light.position, light.radius);
         let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
         
         for face_idx in 0..6 {
@@ -485,13 +448,7 @@ pub fn prepare_point_shadow_bind_groups(
     }
     
     // Create mesh bind groups (reuse from geometry pipeline data)
-    static MESH_DEBUG_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let do_mesh_debug = !MESH_DEBUG_DONE.swap(true, std::sync::atomic::Ordering::Relaxed);
-    
     for mesh_data in &geometry_pipeline.meshes_to_render {
-        if do_mesh_debug {
-            bevy::log::info!("Point shadow mesh transform: {:?}", mesh_data.transform);
-        }
         let mesh_uniform = super::gbuffer_geometry::GBufferMeshUniform {
             world_from_local: mesh_data.transform.to_cols_array_2d(),
             local_from_world: mesh_data.transform.inverse().to_cols_array_2d(),

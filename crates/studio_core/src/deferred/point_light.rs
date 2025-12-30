@@ -30,6 +30,17 @@ use bevy::render::{
 /// Using storage buffer allows much higher counts than uniform buffers.
 pub const MAX_POINT_LIGHTS: usize = 256;
 
+/// Marker component for the primary shadow-casting light.
+/// 
+/// When present on a DeferredPointLight, this light will ALWAYS cast shadows,
+/// regardless of distance to camera. Use this for explicitly placed "key lights"
+/// in your scene.
+/// 
+/// If no light has this marker, the closest light to the camera casts shadows
+/// (Wind Waker style).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct PrimaryShadowCaster;
+
 /// Point light component for deferred rendering.
 ///
 /// Add this component along with a `Transform` to create a point light.
@@ -81,6 +92,8 @@ pub struct ExtractedPointLight {
     pub color: Vec3,
     pub intensity: f32,
     pub radius: f32,
+    /// If true, this light is marked as the primary shadow caster.
+    pub is_primary_shadow_caster: bool,
 }
 
 /// GPU-side point light data.
@@ -176,11 +189,11 @@ pub struct ExtractedPointLights {
 /// System to extract point lights from main world to render world.
 pub fn extract_point_lights(
     mut commands: Commands,
-    lights_query: Extract<Query<(&GlobalTransform, &DeferredPointLight), With<DeferredPointLight>>>,
+    lights_query: Extract<Query<(&GlobalTransform, &DeferredPointLight, Option<&PrimaryShadowCaster>)>>,
 ) {
     let mut extracted = ExtractedPointLights::default();
     
-    for (transform, light) in lights_query.iter() {
+    for (transform, light, primary_marker) in lights_query.iter() {
         let position = transform.translation();
         let color_linear = light.color.to_linear();
         
@@ -189,6 +202,7 @@ pub fn extract_point_lights(
             color: Vec3::new(color_linear.red, color_linear.green, color_linear.blue),
             intensity: light.intensity,
             radius: light.radius,
+            is_primary_shadow_caster: primary_marker.is_some(),
         });
     }
     
@@ -196,6 +210,10 @@ pub fn extract_point_lights(
 }
 
 /// System to prepare point lights storage buffer.
+/// 
+/// IMPORTANT: The primary shadow caster (if any) is always placed at index 0.
+/// This ensures the shader's assumption that `point_lights.lights[0]` is the
+/// shadow-casting light remains valid.
 pub fn prepare_point_lights(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
@@ -205,7 +223,27 @@ pub fn prepare_point_lights(
     let mut count = 0u32;
     
     if let Some(extracted) = extracted_lights {
-        for light in extracted.lights.iter() {
+        // Find the primary shadow caster index (if any)
+        let primary_idx = extracted.lights.iter().position(|l| l.is_primary_shadow_caster);
+        
+        // If there's a primary shadow caster, add it first (index 0)
+        if let Some(idx) = primary_idx {
+            let light = &extracted.lights[idx];
+            storage.lights.push(GpuPointLight {
+                position: [light.position.x, light.position.y, light.position.z, 0.0],
+                color_intensity: [light.color.x, light.color.y, light.color.z, light.intensity],
+                radius_padding: [light.radius, 0.0, 0.0, 0.0],
+            });
+            count += 1;
+        }
+        
+        // Add remaining lights
+        for (i, light) in extracted.lights.iter().enumerate() {
+            // Skip the primary shadow caster (already added)
+            if Some(i) == primary_idx {
+                continue;
+            }
+            
             if count >= MAX_POINT_LIGHTS as u32 {
                 warn_once!("Too many point lights ({} > {}), extras ignored", 
                       extracted.lights.len(), MAX_POINT_LIGHTS);

@@ -27,7 +27,7 @@ pub mod world_io;
 pub use creature_script::{execute_creature_script, load_creature_script};
 pub use deferred::{
     DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredPointLight, DeferredRenderable,
-    DeferredRenderingPlugin,
+    DeferredRenderingPlugin, PrimaryShadowCaster,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
@@ -58,7 +58,7 @@ pub use world_io::{
     save_world_json, world_file_info, WorldFileInfo, WorldFormat, WorldIoError, WorldIoResult,
 };
 pub use voxel_world_plugin::{
-    CameraConfig, ScreenshotConfig, VoxelWorldApp, VoxelWorldConfig, WorldSource,
+    BloomConfig, CameraConfig, ScreenshotConfig, VoxelWorldApp, VoxelWorldConfig, WorldSource,
 };
 
 /// Core plugin for shared functionality.

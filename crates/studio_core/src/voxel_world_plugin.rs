@@ -5,6 +5,8 @@
 //! - World loading (from file, lua script, or builder function)
 //! - Scene spawning with camera, lights
 //! - Screenshot capture and auto-exit for testing
+//! - Support for both forward and deferred rendering
+//! - HDR and Bloom camera options
 //!
 //! # Example - Minimal Test
 //!
@@ -37,8 +39,10 @@
 
 use bevy::app::AppExit;
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy::render::view::Hdr;
 use bevy::window::WindowPlugin;
 use std::path::Path;
 
@@ -63,11 +67,34 @@ pub enum WorldSource {
     Empty,
 }
 
+/// Bloom configuration for HDR rendering.
+#[derive(Clone)]
+pub struct BloomConfig {
+    pub intensity: f32,
+    pub low_frequency_boost: f32,
+    pub threshold: f32,
+    pub threshold_softness: f32,
+}
+
+impl Default for BloomConfig {
+    fn default() -> Self {
+        Self {
+            intensity: 0.3,
+            low_frequency_boost: 0.7,
+            threshold: 1.0,
+            threshold_softness: 0.5,
+        }
+    }
+}
+
 /// Camera configuration for the scene.
 #[derive(Clone)]
 pub enum CameraConfig {
     /// Automatically frame the world bounds
-    AutoFrame { angle: f32, elevation: f32 },
+    /// - `angle`: Horizontal angle in degrees (0 = +X, 90 = +Z)
+    /// - `elevation`: Vertical angle above horizon in degrees
+    /// - `zoom`: Zoom multiplier (1.0 = tight fit, <1.0 = zoomed in, >1.0 = zoomed out)
+    AutoFrame { angle: f32, elevation: f32, zoom: f32 },
     /// Use a camera preset
     Preset(CameraPreset),
     /// Custom position and target
@@ -81,6 +108,7 @@ impl Default for CameraConfig {
         CameraConfig::AutoFrame {
             angle: 45.0,
             elevation: 30.0,
+            zoom: 1.0,
         }
     }
 }
@@ -128,6 +156,8 @@ pub struct VoxelWorldConfig {
     pub use_deferred: bool,
     /// Enable greedy meshing
     pub use_greedy_meshing: bool,
+    /// Enable cross-chunk face culling
+    pub use_cross_chunk_culling: bool,
     /// Camera configuration
     pub camera: CameraConfig,
     /// Screenshot configuration (if any)
@@ -136,6 +166,10 @@ pub struct VoxelWorldConfig {
     pub spawn_emissive_lights: bool,
     /// Add a shadow-casting light
     pub shadow_light: Option<Vec3>,
+    /// Enable HDR rendering
+    pub use_hdr: bool,
+    /// Bloom configuration (requires HDR)
+    pub bloom: Option<BloomConfig>,
 }
 
 /// Builder for creating a VoxelWorld app with minimal boilerplate.
@@ -155,10 +189,13 @@ impl VoxelWorldApp {
                 clear_color: Color::srgb(0.102, 0.039, 0.180), // Purple fog
                 use_deferred: true,
                 use_greedy_meshing: true,
+                use_cross_chunk_culling: true,
                 camera: CameraConfig::default(),
                 screenshot: None,
                 spawn_emissive_lights: true,
                 shadow_light: None,
+                use_hdr: false,
+                bloom: None,
             },
             world_source: WorldSource::Empty,
             setup_callback: None,
@@ -229,7 +266,18 @@ impl VoxelWorldApp {
 
     /// Position camera with auto-framing.
     pub fn with_camera_angle(mut self, angle: f32, elevation: f32) -> Self {
-        self.config.camera = CameraConfig::AutoFrame { angle, elevation };
+        self.config.camera = CameraConfig::AutoFrame { angle, elevation, zoom: 1.0 };
+        self
+    }
+
+    /// Set zoom level for auto-framing camera.
+    /// - `zoom < 1.0`: Zoom in (closer to subject)
+    /// - `zoom = 1.0`: Default tight framing
+    /// - `zoom > 1.0`: Zoom out (further from subject)
+    pub fn with_zoom(mut self, zoom: f32) -> Self {
+        if let CameraConfig::AutoFrame { angle, elevation, .. } = self.config.camera {
+            self.config.camera = CameraConfig::AutoFrame { angle, elevation, zoom };
+        }
         self
     }
 
@@ -272,6 +320,32 @@ impl VoxelWorldApp {
     /// Add a shadow-casting light at position.
     pub fn with_shadow_light(mut self, position: Vec3) -> Self {
         self.config.shadow_light = Some(position);
+        self
+    }
+
+    /// Enable HDR rendering.
+    pub fn with_hdr(mut self, enabled: bool) -> Self {
+        self.config.use_hdr = enabled;
+        self
+    }
+
+    /// Enable bloom with default settings (requires HDR).
+    pub fn with_bloom(mut self) -> Self {
+        self.config.use_hdr = true;
+        self.config.bloom = Some(BloomConfig::default());
+        self
+    }
+
+    /// Enable bloom with custom settings (requires HDR).
+    pub fn with_bloom_config(mut self, config: BloomConfig) -> Self {
+        self.config.use_hdr = true;
+        self.config.bloom = Some(config);
+        self
+    }
+
+    /// Enable/disable cross-chunk face culling.
+    pub fn with_cross_chunk_culling(mut self, enabled: bool) -> Self {
+        self.config.use_cross_chunk_culling = enabled;
         self
     }
 
@@ -425,9 +499,9 @@ fn setup_world(
         WorldSource::Empty => VoxelWorld::new(),
     };
 
-    // Spawn shadow light first (if configured)
+    // Spawn shadow light first (if configured) with PrimaryShadowCaster marker
     if let Some(light_pos) = config.shadow_light {
-        use crate::deferred::DeferredPointLight;
+        use crate::deferred::{DeferredPointLight, PrimaryShadowCaster};
         commands.spawn((
             DeferredPointLight {
                 color: Color::srgb(1.0, 0.9, 0.7),
@@ -435,15 +509,16 @@ fn setup_world(
                 radius: 25.0,
             },
             Transform::from_translation(light_pos),
+            PrimaryShadowCaster, // This light ALWAYS casts shadows
         ));
-        println!("Added shadow-casting light at {:?}", light_pos);
+        println!("Added primary shadow-casting light at {:?}", light_pos);
     }
 
     // Spawn world meshes and lights
     if world.chunk_count() > 0 {
         let mut spawn_config = WorldSpawnConfig {
             use_greedy_meshing: config.use_greedy_meshing,
-            use_cross_chunk_culling: true,
+            use_cross_chunk_culling: config.use_cross_chunk_culling,
             ..default()
         };
 
@@ -468,63 +543,82 @@ fn setup_world(
     }
 
     // Spawn camera
-    match &config.camera {
-        CameraConfig::AutoFrame { angle, elevation } => {
-            if let Some((min, max)) = world.chunk_bounds() {
-                // Calculate world bounds
-                let min_world = Vec3::new(
-                    (min.x * 32) as f32,
-                    (min.y * 32) as f32,
-                    (min.z * 32) as f32,
-                );
-                let max_world = Vec3::new(
-                    ((max.x + 1) * 32) as f32,
-                    ((max.y + 1) * 32) as f32,
-                    ((max.z + 1) * 32) as f32,
-                );
+    let camera_transform = match &config.camera {
+        CameraConfig::AutoFrame { angle, elevation, zoom } => {
+            // Use actual voxel bounds for tight framing, not chunk bounds
+            if let Some((min_world, max_world)) = world.voxel_bounds() {
+                // Apply zoom: base padding of 1.3 * zoom factor
+                // zoom < 1.0 = closer, zoom > 1.0 = further
+                let padding = 1.3 * zoom;
                 let framing = crate::scene_utils::compute_camera_framing(
                     min_world,
                     max_world,
                     *angle,
                     *elevation,
-                    1.0,
+                    padding,
                 );
-
-                commands.spawn((
-                    Camera3d::default(),
-                    Tonemapping::TonyMcMapface,
-                    Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y),
-                    DeferredCamera,
-                ));
-                println!("Camera auto-framed at {:?}", framing.position);
+                println!("Camera auto-framed at {:?} (bounds: {:?} to {:?}, zoom: {})", 
+                    framing.position, min_world, max_world, zoom);
+                Some(Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y))
             } else {
                 // Empty world, spawn default camera
-                commands.spawn((
-                    Camera3d::default(),
-                    Tonemapping::TonyMcMapface,
-                    Transform::from_xyz(10.0, 10.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-                    DeferredCamera,
-                ));
+                Some(Transform::from_xyz(10.0, 10.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y))
             }
         }
         CameraConfig::Preset(preset) => {
-            commands.spawn((
-                Camera3d::default(),
-                Tonemapping::TonyMcMapface,
-                Transform::from_translation(preset.position).looking_at(preset.look_at, Vec3::Y),
-                DeferredCamera,
-            ));
+            Some(Transform::from_translation(preset.position).looking_at(preset.look_at, Vec3::Y))
         }
         CameraConfig::Custom { position, look_at } => {
+            Some(Transform::from_translation(*position).looking_at(*look_at, Vec3::Y))
+        }
+        CameraConfig::None => None,
+    };
+
+    if let Some(transform) = camera_transform {
+        // Build camera entity based on rendering mode
+        if config.use_deferred {
+            // Deferred rendering camera
             commands.spawn((
                 Camera3d::default(),
                 Tonemapping::TonyMcMapface,
-                Transform::from_translation(*position).looking_at(*look_at, Vec3::Y),
+                transform,
                 DeferredCamera,
             ));
-        }
-        CameraConfig::None => {
-            // User will spawn camera
+        } else if let Some(ref bloom_config) = config.bloom {
+            // Forward rendering with HDR + Bloom
+            commands.spawn((
+                Camera3d::default(),
+                Hdr,
+                Tonemapping::TonyMcMapface,
+                transform,
+                Bloom {
+                    intensity: bloom_config.intensity,
+                    low_frequency_boost: bloom_config.low_frequency_boost,
+                    low_frequency_boost_curvature: 0.95,
+                    high_pass_frequency: 1.0,
+                    prefilter: BloomPrefilter {
+                        threshold: bloom_config.threshold,
+                        threshold_softness: bloom_config.threshold_softness,
+                    },
+                    composite_mode: BloomCompositeMode::Additive,
+                    ..default()
+                },
+            ));
+        } else if config.use_hdr {
+            // Forward rendering with HDR only
+            commands.spawn((
+                Camera3d::default(),
+                Hdr,
+                Tonemapping::TonyMcMapface,
+                transform,
+            ));
+        } else {
+            // Basic forward rendering
+            commands.spawn((
+                Camera3d::default(),
+                Tonemapping::TonyMcMapface,
+                transform,
+            ));
         }
     }
 

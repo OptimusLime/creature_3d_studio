@@ -10,6 +10,7 @@
 //! - **Chunk Position** (`ChunkPos`): Which chunk contains the voxel (world / CHUNK_SIZE)
 //! - **Local Position** (`usize, usize, usize`): Position within chunk (0 to CHUNK_SIZE-1)
 
+use bevy::prelude::Vec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -642,18 +643,44 @@ impl VoxelWorld {
 
     /// Extract border occupancy data for a chunk from its neighbors.
     ///
-    /// This is used for cross-chunk face culling. When generating a mesh for a chunk,
+    /// This is used for cross-chunk face culling and AO calculation. When generating a mesh for a chunk,
     /// we need to know if voxels at the chunk boundary have neighbors in adjacent chunks.
     ///
-    /// Returns a `ChunkBorders` struct containing the edge slices from all 6 neighboring chunks.
+    /// Returns a `ChunkBorders` struct containing:
+    /// - Face borders (6): 2D slices from face-adjacent chunks
+    /// - Edge borders (12): 1D lines from edge-adjacent chunks (diagonal in 2 axes)
+    /// - Corner borders (8): Single voxels from corner-adjacent chunks (diagonal in 3 axes)
     pub fn extract_borders(&self, chunk_pos: ChunkPos) -> ChunkBorders {
         ChunkBorders {
+            // Face borders
             neg_x: self.extract_border_slice(chunk_pos, BorderDirection::NegX),
             pos_x: self.extract_border_slice(chunk_pos, BorderDirection::PosX),
             neg_y: self.extract_border_slice(chunk_pos, BorderDirection::NegY),
             pos_y: self.extract_border_slice(chunk_pos, BorderDirection::PosY),
             neg_z: self.extract_border_slice(chunk_pos, BorderDirection::NegZ),
             pos_z: self.extract_border_slice(chunk_pos, BorderDirection::PosZ),
+            // Edge borders
+            edge_neg_x_neg_y: self.extract_border_edge(chunk_pos, -1, -1, 0),
+            edge_neg_x_pos_y: self.extract_border_edge(chunk_pos, -1, 1, 0),
+            edge_pos_x_neg_y: self.extract_border_edge(chunk_pos, 1, -1, 0),
+            edge_pos_x_pos_y: self.extract_border_edge(chunk_pos, 1, 1, 0),
+            edge_neg_x_neg_z: self.extract_border_edge(chunk_pos, -1, 0, -1),
+            edge_neg_x_pos_z: self.extract_border_edge(chunk_pos, -1, 0, 1),
+            edge_pos_x_neg_z: self.extract_border_edge(chunk_pos, 1, 0, -1),
+            edge_pos_x_pos_z: self.extract_border_edge(chunk_pos, 1, 0, 1),
+            edge_neg_y_neg_z: self.extract_border_edge(chunk_pos, 0, -1, -1),
+            edge_neg_y_pos_z: self.extract_border_edge(chunk_pos, 0, -1, 1),
+            edge_pos_y_neg_z: self.extract_border_edge(chunk_pos, 0, 1, -1),
+            edge_pos_y_pos_z: self.extract_border_edge(chunk_pos, 0, 1, 1),
+            // Corner borders
+            corner_neg_x_neg_y_neg_z: self.extract_border_corner(chunk_pos, -1, -1, -1),
+            corner_neg_x_neg_y_pos_z: self.extract_border_corner(chunk_pos, -1, -1, 1),
+            corner_neg_x_pos_y_neg_z: self.extract_border_corner(chunk_pos, -1, 1, -1),
+            corner_neg_x_pos_y_pos_z: self.extract_border_corner(chunk_pos, -1, 1, 1),
+            corner_pos_x_neg_y_neg_z: self.extract_border_corner(chunk_pos, 1, -1, -1),
+            corner_pos_x_neg_y_pos_z: self.extract_border_corner(chunk_pos, 1, -1, 1),
+            corner_pos_x_pos_y_neg_z: self.extract_border_corner(chunk_pos, 1, 1, -1),
+            corner_pos_x_pos_y_pos_z: self.extract_border_corner(chunk_pos, 1, 1, 1),
         }
     }
 
@@ -732,6 +759,69 @@ impl VoxelWorld {
         BorderSlice { occupancy }
     }
 
+    /// Extract a 1D edge from a diagonally-adjacent chunk (shares an edge with this chunk).
+    ///
+    /// # Arguments
+    /// * `chunk_pos` - Position of the chunk we're extracting borders FOR
+    /// * `dx, dy, dz` - Direction to the edge neighbor (-1, 0, or 1). Exactly two must be non-zero.
+    fn extract_border_edge(&self, chunk_pos: ChunkPos, dx: i32, dy: i32, dz: i32) -> BorderEdge {
+        let neighbor_pos = ChunkPos::new(
+            chunk_pos.x + dx,
+            chunk_pos.y + dy,
+            chunk_pos.z + dz,
+        );
+
+        let Some(neighbor_chunk) = self.get_chunk(neighbor_pos) else {
+            return BorderEdge::empty();
+        };
+
+        let mut occupancy = [false; CHUNK_SIZE];
+
+        // Determine which voxel position to sample based on direction
+        // If dx = -1, we need x = CHUNK_SIZE-1 from neighbor (their +X edge)
+        // If dx = +1, we need x = 0 from neighbor (their -X edge)
+        // If dx = 0, x varies along the edge
+        let x_fixed = if dx < 0 { Some(CHUNK_SIZE - 1) } else if dx > 0 { Some(0) } else { None };
+        let y_fixed = if dy < 0 { Some(CHUNK_SIZE - 1) } else if dy > 0 { Some(0) } else { None };
+        let z_fixed = if dz < 0 { Some(CHUNK_SIZE - 1) } else if dz > 0 { Some(0) } else { None };
+
+        // The varying axis is the one where dx/dy/dz == 0
+        for i in 0..CHUNK_SIZE {
+            let x = x_fixed.unwrap_or(i);
+            let y = y_fixed.unwrap_or(i);
+            let z = z_fixed.unwrap_or(i);
+            occupancy[i] = neighbor_chunk.get(x, y, z).is_some();
+        }
+
+        BorderEdge { occupancy }
+    }
+
+    /// Extract a single corner voxel from a diagonally-adjacent chunk (shares only a corner).
+    ///
+    /// # Arguments
+    /// * `chunk_pos` - Position of the chunk we're extracting borders FOR
+    /// * `dx, dy, dz` - Direction to the corner neighbor (-1 or 1 for each axis)
+    fn extract_border_corner(&self, chunk_pos: ChunkPos, dx: i32, dy: i32, dz: i32) -> bool {
+        let neighbor_pos = ChunkPos::new(
+            chunk_pos.x + dx,
+            chunk_pos.y + dy,
+            chunk_pos.z + dz,
+        );
+
+        let Some(neighbor_chunk) = self.get_chunk(neighbor_pos) else {
+            return false;
+        };
+
+        // Sample the corner voxel from the neighbor that's closest to us
+        // If dx = -1, we need x = CHUNK_SIZE-1 (their +X corner)
+        // If dx = +1, we need x = 0 (their -X corner)
+        let x = if dx < 0 { CHUNK_SIZE - 1 } else { 0 };
+        let y = if dy < 0 { CHUNK_SIZE - 1 } else { 0 };
+        let z = if dz < 0 { CHUNK_SIZE - 1 } else { 0 };
+
+        neighbor_chunk.get(x, y, z).is_some()
+    }
+
     /// Remove empty chunks (chunks with no voxels).
     pub fn prune_empty_chunks(&mut self) {
         self.chunks.retain(|_, chunk| !chunk.is_empty());
@@ -757,6 +847,52 @@ impl VoxelWorld {
         }
 
         Some((min, max))
+    }
+
+    /// Get the actual voxel bounding box in world coordinates.
+    /// 
+    /// Unlike `chunk_bounds()` which returns chunk-level bounds,
+    /// this iterates through all voxels to find the exact min/max positions.
+    /// 
+    /// Returns `(min_corner, max_corner)` in world coordinates, or None if empty.
+    pub fn voxel_bounds(&self) -> Option<(Vec3, Vec3)> {
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut min_z = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        let mut max_z = i32::MIN;
+        let mut found_any = false;
+
+        for (chunk_pos, chunk) in &self.chunks {
+            let chunk_offset_x = chunk_pos.x * CHUNK_SIZE_I32;
+            let chunk_offset_y = chunk_pos.y * CHUNK_SIZE_I32;
+            let chunk_offset_z = chunk_pos.z * CHUNK_SIZE_I32;
+
+            for (lx, ly, lz, _voxel) in chunk.iter() {
+                found_any = true;
+                let wx = chunk_offset_x + lx as i32;
+                let wy = chunk_offset_y + ly as i32;
+                let wz = chunk_offset_z + lz as i32;
+
+                min_x = min_x.min(wx);
+                min_y = min_y.min(wy);
+                min_z = min_z.min(wz);
+                max_x = max_x.max(wx);
+                max_y = max_y.max(wy);
+                max_z = max_z.max(wz);
+            }
+        }
+
+        if !found_any {
+            return None;
+        }
+
+        // Convert to Vec3, adding 1 to max because voxels are 1x1x1 cubes
+        Some((
+            Vec3::new(min_x as f32, min_y as f32, min_z as f32),
+            Vec3::new((max_x + 1) as f32, (max_y + 1) as f32, (max_z + 1) as f32),
+        ))
     }
 }
 
@@ -812,11 +948,46 @@ impl BorderSlice {
     }
 }
 
-/// Border occupancy data from all 6 neighboring chunks.
+/// A 1D edge of occupancy data from a chunk edge (where two faces meet).
 ///
-/// Used for cross-chunk face culling when generating meshes.
+/// This represents a CHUNK_SIZE line of boolean values for edge neighbors
+/// (diagonal neighbors that cross two chunk boundaries).
+#[derive(Clone, Debug)]
+pub struct BorderEdge {
+    /// Occupancy data for the edge.
+    /// True = solid voxel, False = empty.
+    pub occupancy: [bool; CHUNK_SIZE],
+}
+
+impl BorderEdge {
+    /// Create an empty border edge (all false - no solid voxels).
+    pub fn empty() -> Self {
+        Self {
+            occupancy: [false; CHUNK_SIZE],
+        }
+    }
+
+    /// Check if a position along this edge is solid.
+    #[inline]
+    pub fn is_solid(&self, idx: usize) -> bool {
+        if idx < CHUNK_SIZE {
+            self.occupancy[idx]
+        } else {
+            false
+        }
+    }
+}
+
+/// Border occupancy data from all 6 neighboring chunks, 12 edge neighbors, and 8 corner neighbors.
+///
+/// Used for cross-chunk face culling and AO calculation when generating meshes.
+///
+/// Face borders (6): Data from chunks sharing a face with this chunk.
+/// Edge borders (12): Data from chunks sharing an edge with this chunk (diagonal in 2 axes).
+/// Corner borders (8): Data from chunks sharing only a corner with this chunk (diagonal in 3 axes).
 #[derive(Clone, Debug)]
 pub struct ChunkBorders {
+    // === Face borders (6) - 2D slices ===
     /// Border from -X neighbor (their x=CHUNK_SIZE-1 slice)
     pub neg_x: BorderSlice,
     /// Border from +X neighbor (their x=0 slice)
@@ -829,25 +1000,81 @@ pub struct ChunkBorders {
     pub neg_z: BorderSlice,
     /// Border from +Z neighbor (their z=0 slice)
     pub pos_z: BorderSlice,
+
+    // === Edge borders (12) - 1D lines ===
+    // XY edges (vary along Z)
+    pub edge_neg_x_neg_y: BorderEdge,
+    pub edge_neg_x_pos_y: BorderEdge,
+    pub edge_pos_x_neg_y: BorderEdge,
+    pub edge_pos_x_pos_y: BorderEdge,
+    // XZ edges (vary along Y)
+    pub edge_neg_x_neg_z: BorderEdge,
+    pub edge_neg_x_pos_z: BorderEdge,
+    pub edge_pos_x_neg_z: BorderEdge,
+    pub edge_pos_x_pos_z: BorderEdge,
+    // YZ edges (vary along X)
+    pub edge_neg_y_neg_z: BorderEdge,
+    pub edge_neg_y_pos_z: BorderEdge,
+    pub edge_pos_y_neg_z: BorderEdge,
+    pub edge_pos_y_pos_z: BorderEdge,
+
+    // === Corner borders (8) - single booleans ===
+    pub corner_neg_x_neg_y_neg_z: bool,
+    pub corner_neg_x_neg_y_pos_z: bool,
+    pub corner_neg_x_pos_y_neg_z: bool,
+    pub corner_neg_x_pos_y_pos_z: bool,
+    pub corner_pos_x_neg_y_neg_z: bool,
+    pub corner_pos_x_neg_y_pos_z: bool,
+    pub corner_pos_x_pos_y_neg_z: bool,
+    pub corner_pos_x_pos_y_pos_z: bool,
 }
 
 impl ChunkBorders {
     /// Create empty borders (no neighbors).
     pub fn empty() -> Self {
         Self {
+            // Face borders
             neg_x: BorderSlice::empty(),
             pos_x: BorderSlice::empty(),
             neg_y: BorderSlice::empty(),
             pos_y: BorderSlice::empty(),
             neg_z: BorderSlice::empty(),
             pos_z: BorderSlice::empty(),
+            // Edge borders
+            edge_neg_x_neg_y: BorderEdge::empty(),
+            edge_neg_x_pos_y: BorderEdge::empty(),
+            edge_pos_x_neg_y: BorderEdge::empty(),
+            edge_pos_x_pos_y: BorderEdge::empty(),
+            edge_neg_x_neg_z: BorderEdge::empty(),
+            edge_neg_x_pos_z: BorderEdge::empty(),
+            edge_pos_x_neg_z: BorderEdge::empty(),
+            edge_pos_x_pos_z: BorderEdge::empty(),
+            edge_neg_y_neg_z: BorderEdge::empty(),
+            edge_neg_y_pos_z: BorderEdge::empty(),
+            edge_pos_y_neg_z: BorderEdge::empty(),
+            edge_pos_y_pos_z: BorderEdge::empty(),
+            // Corner borders
+            corner_neg_x_neg_y_neg_z: false,
+            corner_neg_x_neg_y_pos_z: false,
+            corner_neg_x_pos_y_neg_z: false,
+            corner_neg_x_pos_y_pos_z: false,
+            corner_pos_x_neg_y_neg_z: false,
+            corner_pos_x_neg_y_pos_z: false,
+            corner_pos_x_pos_y_neg_z: false,
+            corner_pos_x_pos_y_pos_z: false,
         }
     }
 
     /// Check if a neighbor voxel across the chunk boundary is solid.
     ///
     /// This is called when checking faces at the chunk boundary during mesh generation.
-    /// It looks up the appropriate border slice based on the direction.
+    /// It looks up the appropriate border data based on which chunk boundaries the
+    /// target position crosses.
+    ///
+    /// Handles:
+    /// - Single-axis crossings (face neighbors): Use 2D BorderSlice
+    /// - Two-axis crossings (edge neighbors): Use 1D BorderEdge
+    /// - Three-axis crossings (corner neighbors): Use single bool
     ///
     /// # Arguments
     /// * `x, y, z` - Local position within the chunk (0 to CHUNK_SIZE-1)
@@ -856,36 +1083,132 @@ impl ChunkBorders {
     /// # Returns
     /// True if the neighbor position in the adjacent chunk is solid.
     pub fn is_neighbor_solid(&self, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
-        // This is only called when we KNOW the neighbor is outside the chunk bounds.
-        // The dx, dy, dz tells us which direction we're checking.
+        // Calculate target position
+        let nx = x as i32 + dx;
+        let ny = y as i32 + dy;
+        let nz = z as i32 + dz;
 
-        if dx < 0 && x == 0 {
-            // Checking -X neighbor
-            return self.neg_x.is_solid(y, z);
-        }
-        if dx > 0 && x == CHUNK_SIZE - 1 {
-            // Checking +X neighbor
-            return self.pos_x.is_solid(y, z);
-        }
-        if dy < 0 && y == 0 {
-            // Checking -Y neighbor
-            return self.neg_y.is_solid(x, z);
-        }
-        if dy > 0 && y == CHUNK_SIZE - 1 {
-            // Checking +Y neighbor
-            return self.pos_y.is_solid(x, z);
-        }
-        if dz < 0 && z == 0 {
-            // Checking -Z neighbor
-            return self.neg_z.is_solid(x, y);
-        }
-        if dz > 0 && z == CHUNK_SIZE - 1 {
-            // Checking +Z neighbor
-            return self.pos_z.is_solid(x, y);
-        }
+        // Determine which boundaries the TARGET position crosses
+        let cross_neg_x = nx < 0;
+        let cross_pos_x = nx >= CHUNK_SIZE as i32;
+        let cross_neg_y = ny < 0;
+        let cross_pos_y = ny >= CHUNK_SIZE as i32;
+        let cross_neg_z = nz < 0;
+        let cross_pos_z = nz >= CHUNK_SIZE as i32;
 
-        // Not at a boundary in this direction
-        false
+        let cross_x = cross_neg_x || cross_pos_x;
+        let cross_y = cross_neg_y || cross_pos_y;
+        let cross_z = cross_neg_z || cross_pos_z;
+
+        let num_crossings = cross_x as u8 + cross_y as u8 + cross_z as u8;
+
+        // Calculate the position within the neighbor chunk
+        // If crossing negative boundary, wrap to CHUNK_SIZE-1
+        // If crossing positive boundary, wrap to 0
+        // If not crossing, use the target position as-is
+        let target_x = if cross_neg_x { 
+            (CHUNK_SIZE as i32 + nx) as usize 
+        } else if cross_pos_x { 
+            (nx - CHUNK_SIZE as i32) as usize 
+        } else { 
+            nx as usize 
+        };
+        let target_y = if cross_neg_y { 
+            (CHUNK_SIZE as i32 + ny) as usize 
+        } else if cross_pos_y { 
+            (ny - CHUNK_SIZE as i32) as usize 
+        } else { 
+            ny as usize 
+        };
+        let target_z = if cross_neg_z { 
+            (CHUNK_SIZE as i32 + nz) as usize 
+        } else if cross_pos_z { 
+            (nz - CHUNK_SIZE as i32) as usize 
+        } else { 
+            nz as usize 
+        };
+
+        match num_crossings {
+            0 => false, // Not crossing any boundary - shouldn't happen if called correctly
+            1 => {
+                // Single-axis crossing - use face border
+                // Look up using the coordinates that DON'T cross the boundary
+                if cross_neg_x {
+                    self.neg_x.is_solid(target_y, target_z)
+                } else if cross_pos_x {
+                    self.pos_x.is_solid(target_y, target_z)
+                } else if cross_neg_y {
+                    self.neg_y.is_solid(target_x, target_z)
+                } else if cross_pos_y {
+                    self.pos_y.is_solid(target_x, target_z)
+                } else if cross_neg_z {
+                    self.neg_z.is_solid(target_x, target_y)
+                } else if cross_pos_z {
+                    self.pos_z.is_solid(target_x, target_y)
+                } else {
+                    false
+                }
+            }
+            2 => {
+                // Two-axis crossing - use edge border
+                // Look up using the coordinate that DOESN'T cross the boundary
+                // XY edges (vary along Z) - Z doesn't cross
+                if cross_neg_x && cross_neg_y {
+                    self.edge_neg_x_neg_y.is_solid(target_z)
+                } else if cross_neg_x && cross_pos_y {
+                    self.edge_neg_x_pos_y.is_solid(target_z)
+                } else if cross_pos_x && cross_neg_y {
+                    self.edge_pos_x_neg_y.is_solid(target_z)
+                } else if cross_pos_x && cross_pos_y {
+                    self.edge_pos_x_pos_y.is_solid(target_z)
+                }
+                // XZ edges (vary along Y) - Y doesn't cross
+                else if cross_neg_x && cross_neg_z {
+                    self.edge_neg_x_neg_z.is_solid(target_y)
+                } else if cross_neg_x && cross_pos_z {
+                    self.edge_neg_x_pos_z.is_solid(target_y)
+                } else if cross_pos_x && cross_neg_z {
+                    self.edge_pos_x_neg_z.is_solid(target_y)
+                } else if cross_pos_x && cross_pos_z {
+                    self.edge_pos_x_pos_z.is_solid(target_y)
+                }
+                // YZ edges (vary along X) - X doesn't cross
+                else if cross_neg_y && cross_neg_z {
+                    self.edge_neg_y_neg_z.is_solid(target_x)
+                } else if cross_neg_y && cross_pos_z {
+                    self.edge_neg_y_pos_z.is_solid(target_x)
+                } else if cross_pos_y && cross_neg_z {
+                    self.edge_pos_y_neg_z.is_solid(target_x)
+                } else if cross_pos_y && cross_pos_z {
+                    self.edge_pos_y_pos_z.is_solid(target_x)
+                } else {
+                    false
+                }
+            }
+            3 => {
+                // Three-axis crossing - use corner border
+                if cross_neg_x && cross_neg_y && cross_neg_z {
+                    self.corner_neg_x_neg_y_neg_z
+                } else if cross_neg_x && cross_neg_y && cross_pos_z {
+                    self.corner_neg_x_neg_y_pos_z
+                } else if cross_neg_x && cross_pos_y && cross_neg_z {
+                    self.corner_neg_x_pos_y_neg_z
+                } else if cross_neg_x && cross_pos_y && cross_pos_z {
+                    self.corner_neg_x_pos_y_pos_z
+                } else if cross_pos_x && cross_neg_y && cross_neg_z {
+                    self.corner_pos_x_neg_y_neg_z
+                } else if cross_pos_x && cross_neg_y && cross_pos_z {
+                    self.corner_pos_x_neg_y_pos_z
+                } else if cross_pos_x && cross_pos_y && cross_neg_z {
+                    self.corner_pos_x_pos_y_neg_z
+                } else if cross_pos_x && cross_pos_y && cross_pos_z {
+                    self.corner_pos_x_pos_y_pos_z
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 }
 
@@ -1315,5 +1638,94 @@ mod tests {
             borders1.is_neighbor_solid(0, 16, 16, -1, 0, 0),
             "Should detect -X neighbor at boundary"
         );
+    }
+
+    #[test]
+    fn test_diagonal_neighbor_across_two_boundaries() {
+        let mut world = VoxelWorld::new();
+
+        // Create floor spanning 4 chunks at y=3
+        // Chunk (0,0,0): floor at local x=24..31, z=24..31, y=3
+        // Chunk (1,0,0): floor at local x=0..7, z=24..31, y=3
+        // Chunk (0,0,1): floor at local x=24..31, z=0..7, y=3
+        // Chunk (1,0,1): floor at local x=0..7, z=0..7, y=3
+        for x in 24..40 {
+            for z in 24..40 {
+                world.set_voxel(x, 3, z, Voxel::solid(80, 80, 90));
+            }
+        }
+
+        // Extract borders for chunk (0,0,0)
+        let borders = world.extract_borders(ChunkPos::new(0, 0, 0));
+
+        // From position (31, 3, 31), check diagonal offset (1, 1, 1)
+        // Target position: (32, 4, 32) which is in chunk (1,0,1) at local (0, 4, 0)
+        // This is ABOVE the floor, so should be air (false)
+        let result = borders.is_neighbor_solid(31, 3, 31, 1, 1, 1);
+        assert!(!result, "Position above diagonal floor should be air, got solid");
+
+        // From position (31, 3, 31), check diagonal offset (1, 0, 1)
+        // Target position: (32, 3, 32) which is in chunk (1,0,1) at local (0, 3, 0)
+        // This IS the floor, so should be solid (true)
+        let result = borders.is_neighbor_solid(31, 3, 31, 1, 0, 1);
+        assert!(result, "Diagonal floor position should be solid, got air");
+    }
+
+    #[test]
+    fn test_edge_border_extraction() {
+        let mut world = VoxelWorld::new();
+
+        // Put a voxel in chunk (1,0,1) at local position (0, 5, 0)
+        // World position: (32, 5, 32)
+        world.set_voxel(32, 5, 32, Voxel::solid(255, 0, 0));
+
+        // Extract borders for chunk (0,0,0)
+        let borders = world.extract_borders(ChunkPos::new(0, 0, 0));
+
+        // The edge_pos_x_pos_z should have this voxel at index 5 (y=5)
+        assert!(
+            borders.edge_pos_x_pos_z.is_solid(5),
+            "Edge border should contain voxel at y=5"
+        );
+        assert!(
+            !borders.edge_pos_x_pos_z.is_solid(4),
+            "Edge border should not contain voxel at y=4"
+        );
+    }
+
+    #[test]
+    fn test_face_border_for_floor_ao() {
+        let mut world = VoxelWorld::new();
+
+        // Create floor at y=3 spanning chunks
+        for x in 24..40 {
+            for z in 24..40 {
+                world.set_voxel(x, 3, z, Voxel::solid(80, 80, 90));
+            }
+        }
+
+        // Extract borders for chunk (0,0,0)
+        let borders = world.extract_borders(ChunkPos::new(0, 0, 0));
+
+        // For AO calculation on floor voxel at (31, 3, 27), checking (1, 1, 0):
+        // Target: (32, 4, 27) in chunk (1,0,0) at local (0, 4, 27)
+        // This should be air (above floor)
+
+        // The pos_x border should NOT have solid at (4, 27) since that's above the floor
+        assert!(
+            !borders.pos_x.is_solid(4, 27),
+            "pos_x border at (y=4, z=27) should be air (above floor)"
+        );
+
+        // The pos_x border SHOULD have solid at (3, 27) since that's the floor level
+        assert!(
+            borders.pos_x.is_solid(3, 27),
+            "pos_x border at (y=3, z=27) should be solid (floor level)"
+        );
+
+        // Test is_neighbor_solid for the AO case
+        // From voxel at (31, 3, 27), offset (1, 1, 0) should return false (air above)
+        let result = borders.is_neighbor_solid(31, 3, 27, 1, 1, 0);
+        assert!(!result, "AO check (1,1,0) from floor voxel should find air above");
     }
 }
