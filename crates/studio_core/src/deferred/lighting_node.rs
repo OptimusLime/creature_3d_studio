@@ -28,8 +28,8 @@ use bevy::render::{
 use super::gbuffer::ViewGBufferTextures;
 use super::point_light::PointLightsBuffer;
 use super::point_light_shadow::{ViewPointShadowTextures, ShadowCastingLights, CubeFaceMatrices};
-use super::shadow::{ViewShadowTextures, ViewDirectionalShadowTextures};
-use super::shadow_node::{ViewShadowUniforms, ViewDirectionalShadowUniforms};
+use super::shadow::ViewDirectionalShadowTextures;
+use super::shadow_node::ViewDirectionalShadowUniforms;
 
 /// GPU uniform data for point shadow view-projection matrices.
 /// Contains the 6 face matrices needed to sample the cube shadow map correctly.
@@ -54,19 +54,16 @@ impl ViewNode for LightingPassNode {
         &'static ExtractedCamera,
         &'static ViewTarget,
         &'static ViewGBufferTextures,
-        &'static ViewShadowTextures,
-        &'static ViewShadowUniforms,
+        &'static ViewDirectionalShadowTextures,
+        &'static ViewDirectionalShadowUniforms,
         &'static ViewPointShadowTextures,
-        Option<&'static ViewDirectionalShadowTextures>,
-        Option<&'static ViewDirectionalShadowUniforms>,
     );
 
     fn run<'w>(
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures, 
-         directional_shadow_textures, directional_shadow_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
@@ -107,69 +104,34 @@ impl ViewNode for LightingPassNode {
         );
         
         // Create bind group for dual directional shadow maps (group 1)
-        // Use dual shadow textures if available, otherwise fall back to legacy single shadow
-        let shadow_map_bind_group = if let Some(dual_textures) = directional_shadow_textures {
-            render_context.render_device().create_bind_group(
-                "lighting_directional_shadow_bind_group",
-                &lighting_pipeline.directional_shadow_layout,
-                &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: BindingResource::TextureView(&dual_textures.moon1.default_view),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::TextureView(&dual_textures.moon2.default_view),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::Sampler(&lighting_pipeline.shadow_sampler),
-                    },
-                ],
-            )
-        } else {
-            // Legacy fallback: use single shadow texture for both slots
-            render_context.render_device().create_bind_group(
-                "lighting_directional_shadow_bind_group",
-                &lighting_pipeline.directional_shadow_layout,
-                &[
-                    BindGroupEntry {
-                        binding: 0,
-                        resource: BindingResource::TextureView(&shadow_textures.depth.default_view),
-                    },
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::TextureView(&shadow_textures.depth.default_view),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::Sampler(&lighting_pipeline.shadow_sampler),
-                    },
-                ],
-            )
-        };
+        let shadow_map_bind_group = render_context.render_device().create_bind_group(
+            "lighting_directional_shadow_bind_group",
+            &lighting_pipeline.directional_shadow_layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&shadow_textures.moon1.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&shadow_textures.moon2.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(&lighting_pipeline.shadow_sampler),
+                },
+            ],
+        );
         
         // Create bind group for directional shadow uniforms (group 2)
-        let shadow_uniforms_bind_group = if let Some(dual_uniforms) = directional_shadow_uniforms {
-            render_context.render_device().create_bind_group(
-                "lighting_directional_shadow_uniforms_bind_group",
-                &lighting_pipeline.directional_shadow_uniforms_layout,
-                &[BindGroupEntry {
-                    binding: 0,
-                    resource: dual_uniforms.buffer.as_entire_binding(),
-                }],
-            )
-        } else {
-            // Legacy fallback
-            render_context.render_device().create_bind_group(
-                "lighting_shadow_uniforms_bind_group",
-                &lighting_pipeline.shadow_uniforms_layout,
-                &[BindGroupEntry {
-                    binding: 0,
-                    resource: shadow_uniforms.buffer.as_entire_binding(),
-                }],
-            )
-        };
+        let shadow_uniforms_bind_group = render_context.render_device().create_bind_group(
+            "lighting_directional_shadow_uniforms_bind_group",
+            &lighting_pipeline.directional_shadow_uniforms_layout,
+            &[BindGroupEntry {
+                binding: 0,
+                resource: shadow_uniforms.buffer.as_entire_binding(),
+            }],
+        );
         
         // Create bind group for point lights (group 3)
         let point_lights_bind_group = if let Some(point_lights_buffer) = world.get_resource::<PointLightsBuffer>() {
@@ -348,12 +310,6 @@ pub struct LightingPipeline {
     pub point_shadow_sampler: Sampler,
     /// Point shadow matrices layout (group 5) - view-proj matrices for cube faces
     pub point_shadow_matrices_layout: BindGroupLayout,
-    
-    // Legacy single shadow (kept for backwards compatibility during transition)
-    #[allow(dead_code)]
-    pub shadow_map_layout: BindGroupLayout,
-    #[allow(dead_code)]
-    pub shadow_uniforms_layout: BindGroupLayout,
 }
 
 /// System to initialize the lighting pipeline on first run.
@@ -458,46 +414,6 @@ pub fn init_lighting_pipeline(
     // Contains both moon matrices, colors, intensities, and shadow softness
     let directional_shadow_uniforms_layout = render_device.create_bind_group_layout(
         "lighting_directional_shadow_uniforms_layout",
-        &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    );
-    
-    // Legacy shadow map layout (kept for transition period)
-    let shadow_map_layout = render_device.create_bind_group_layout(
-        "lighting_shadow_map_layout",
-        &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Depth,
-                    view_dimension: TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Sampler(SamplerBindingType::Comparison),
-                count: None,
-            },
-        ],
-    );
-    
-    // Legacy shadow uniforms layout
-    let shadow_uniforms_layout = render_device.create_bind_group_layout(
-        "lighting_shadow_uniforms_layout",
         &[
             BindGroupLayoutEntry {
                 binding: 0,
@@ -708,8 +624,5 @@ pub fn init_lighting_pipeline(
         point_shadow_layout,
         point_shadow_sampler,
         point_shadow_matrices_layout,
-        // Legacy layouts
-        shadow_map_layout,
-        shadow_uniforms_layout,
     });
 }

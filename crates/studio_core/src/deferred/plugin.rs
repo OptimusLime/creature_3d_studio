@@ -27,13 +27,13 @@ use super::point_light_shadow::{
 use super::point_light_shadow_node::PointShadowPassNode;
 use super::prepare::{prepare_gbuffer_textures, prepare_gbuffer_view_uniforms};
 use super::shadow::{
-    init_shadow_pipeline, prepare_shadow_textures, prepare_directional_shadow_textures,
-    ShadowConfig, MoonConfig,
+    init_shadow_pipeline, prepare_directional_shadow_textures,
+    MoonConfig,
 };
 use super::shadow_node::{
-    prepare_shadow_mesh_bind_groups, prepare_shadow_view_uniforms, 
+    prepare_shadow_mesh_bind_groups,
     prepare_directional_shadow_uniforms,
-    ShadowPassNode, Moon1ShadowPassNode, Moon2ShadowPassNode,
+    Moon1ShadowPassNode, Moon2ShadowPassNode,
 };
 
 /// Plugin that enables deferred rendering for voxels.
@@ -60,7 +60,6 @@ impl Plugin for DeferredRenderingPlugin {
         // Main app resources
         app.init_resource::<DeferredLightingConfig>();
         app.init_resource::<BloomConfig>();
-        app.init_resource::<ShadowConfig>();
         app.init_resource::<MoonConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
@@ -73,8 +72,7 @@ impl Plugin for DeferredRenderingPlugin {
             return;
         };
         
-        // Initialize shadow configs in render world
-        render_app.init_resource::<ShadowConfig>();
+        // Initialize moon config in render world
         render_app.init_resource::<MoonConfig>();
 
         // Add extraction systems for deferred meshes, point lights, and moon config
@@ -115,13 +113,7 @@ impl Plugin for DeferredRenderingPlugin {
                 prepare_bloom_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_bloom_pipeline),
-                prepare_shadow_textures
-                    .in_set(RenderSystems::PrepareResources)
-                    .after(init_shadow_pipeline),
                 prepare_directional_shadow_textures
-                    .in_set(RenderSystems::PrepareResources)
-                    .after(init_shadow_pipeline),
-                prepare_shadow_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_shadow_pipeline),
                 prepare_directional_shadow_uniforms
@@ -150,11 +142,6 @@ impl Plugin for DeferredRenderingPlugin {
 
         // Add render graph nodes
         render_app
-            // Shadow pass node (legacy - generates single directional shadow map)
-            .add_render_graph_node::<ViewNodeRunner<ShadowPassNode>>(
-                Core3d,
-                DeferredLabel::ShadowPass,
-            )
             // Moon 1 shadow pass (purple moon)
             .add_render_graph_node::<ViewNodeRunner<Moon1ShadowPassNode>>(
                 Core3d,
@@ -187,13 +174,12 @@ impl Plugin for DeferredRenderingPlugin {
             );
 
         // Define render graph edges (execution order)
-        // All shadow passes run first, then G-buffer, then connect to MainOpaquePass
-        // Order: Start -> Legacy Shadow -> Moon1 -> Moon2 -> Point Shadow -> GBuffer -> MainOpaque
+        // Shadow passes run first, then G-buffer, then connect to MainOpaquePass
+        // Order: Start -> Moon1 -> Moon2 -> Point Shadow -> GBuffer -> MainOpaque
         render_app.add_render_graph_edges(
             Core3d,
             (
                 Node3d::StartMainPass,
-                DeferredLabel::ShadowPass,        // Legacy single shadow (kept for compatibility)
                 DeferredLabel::Moon1ShadowPass,   // Purple moon shadow
                 DeferredLabel::Moon2ShadowPass,   // Orange moon shadow
                 DeferredLabel::PointShadowPass,   // Point light cube shadow
