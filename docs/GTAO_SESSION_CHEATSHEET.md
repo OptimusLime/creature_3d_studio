@@ -22,9 +22,9 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 **Critical gaps to fix:**
 - ~~No depth MIP chain (XeGTAO uses 5-level)~~ **DONE**
 - ~~Config not wired through~~ **DONE**
-- Main pass needs to sample from MIP chain (currently uses hardware depth)
+- ~~Main pass needs to sample from MIP chain~~ **DONE**
+- ~~Missing thin occluder compensation~~ **DONE**
 - Wrong denoiser (we use 7x7 blur, XeGTAO uses edge-aware)
-- Missing thin occluder compensation
 
 ---
 
@@ -50,7 +50,7 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 | 0 | Write implementation plan | DONE |
 | 1 | Wire GtaoConfig through | **DONE** |
 | 2 | Implement depth MIP chain | **DONE** |
-| 3 | Main pass XeGTAO compliance | TODO |
+| 3 | Main pass XeGTAO compliance | **DONE** |
 | 4 | Edge-aware denoiser | TODO |
 | 5 | Edge packing | TODO |
 | 6 | TAA noise index | TODO |
@@ -59,17 +59,17 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 
 ## Next Step
 
-**Phase 3: Main pass XeGTAO compliance**
+**Phase 4: Edge-aware denoiser**
 
-Update main GTAO shader to sample from the depth MIP chain and match XeGTAO behavior.
+Replace the 7x7 blur in deferred_lighting.wgsl with XeGTAO's edge-aware spatial denoiser.
 
 Tasks:
-1. Update get_viewspace_depth() to sample from depth_mip0 instead of hardware depth
-2. Add MIP level selection based on sample distance (XeGTAO_GetDepthMipLevel)
-3. Add thin occluder compensation heuristic
-4. Verify viewspaceZ precision matches fp16 range
+1. Remove 7x7 blur from deferred_lighting.wgsl (L84-138)
+2. Create gtao_denoise.wgsl implementing XeGTAO_Denoise (L734-826)
+3. Add edge packing/unpacking (Phase 5)
+4. Wire denoiser into render graph after main GTAO pass
 
-Reference: `XeGTAO.hlsli` L454-462 (MIP sampling), L475-498 (thin occluder)
+Reference: `XeGTAO.hlsli` L686-826 (denoiser functions)
 
 Test: `cargo run --example p20_gtao_test`
 
