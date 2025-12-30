@@ -5,17 +5,16 @@
 //!
 //! Run with: `cargo run --example p20_gtao_test`
 //!
-//! Test modes (set via environment variable GTAO_MODE):
-//! - full: Full render with AO applied to lighting (default)
-//! - ao_only: AO buffer visualization (grayscale)
-//! - depth: View-space depth visualization
-//! - normals: View-space normals visualization
+//! This test captures multiple debug screenshots to verify each stage of the
+//! GTAO pipeline:
+//! - render.png: Final rendered scene with GTAO applied
+//! - ao_only.png: Raw GTAO output (grayscale)
+//! - gtao_depth.png: Linear viewspace depth
+//! - gtao_normal.png: View-space normals
+//! - gtao_edges.png: Packed edges for denoiser
+//! - gtao_radius.png: Screenspace sample radius
 //!
-//! Example: `GTAO_MODE=ao_only cargo run --example p20_gtao_test`
-//!
-//! Expected outputs in screenshots/:
-//! - p20_gtao_full.png: Complete render
-//! - p20_gtao_ao_only.png: AO buffer (white=unoccluded, dark=occluded)
+//! All screenshots are saved to: screenshots/gtao_test/
 //!
 //! Verification criteria:
 //! 1. Flat ground: AO value > 0.95 (no false occlusion)
@@ -25,19 +24,14 @@
 //! 5. Thin pillar: No excessive darkening of surrounding area
 
 use bevy::prelude::*;
-use std::env;
-use studio_core::VoxelWorldApp;
+use studio_core::{DebugCapture, DebugScreenshotConfig, VoxelWorldApp};
 
 fn main() {
-    // Determine test mode from environment
-    let mode = env::var("GTAO_MODE").unwrap_or_else(|_| "full".to_string());
-    
     println!("==============================================");
     println!("  Phase 20: GTAO Verification Test");
     println!("==============================================");
-    println!("Mode: {}", mode);
     println!();
-    
+
     // Generate test world if it doesn't exist
     let world_path = "assets/worlds/gtao_test.voxworld";
     if !std::path::Path::new(world_path).exists() {
@@ -45,11 +39,27 @@ fn main() {
         println!("Then re-run this test.");
         std::process::exit(1);
     }
-    
-    let screenshot_path = format!("screenshots/p20_gtao_{}.png", mode);
-    
+
+    // Configure debug screenshots for systematic verification
+    let debug_config = DebugScreenshotConfig::new("screenshots/gtao_test")
+        .with_base_wait_frames(15) // Wait for scene to stabilize
+        // Normal render - final output with GTAO
+        .with_capture("render", DebugCapture::default())
+        // GTAO intermediates
+        .with_capture("ao_only", DebugCapture::lighting_debug(5))
+        .with_capture("gtao_depth", DebugCapture::gtao_debug(11).with_name("gtao_depth"))
+        .with_capture("gtao_normal", DebugCapture::gtao_debug(20).with_name("gtao_normal"))
+        .with_capture("gtao_edges", DebugCapture::gtao_debug(40).with_name("gtao_edges"))
+        .with_capture("gtao_radius", DebugCapture::gtao_debug(30).with_name("gtao_radius"))
+        // G-buffer debug
+        .with_capture("gbuffer_normals", DebugCapture::lighting_debug(1))
+        .with_capture("gbuffer_depth", DebugCapture::lighting_debug(2));
+
+    println!("Capturing {} debug screenshots to screenshots/gtao_test/", debug_config.captures.len());
+    println!();
+
     // Camera positioned to see all test geometries
-    let app = VoxelWorldApp::new(format!("GTAO Test - {}", mode))
+    let app = VoxelWorldApp::new("GTAO Verification Test")
         .with_world_file(world_path)
         .with_resolution(1024, 768)
         .with_deferred(true)
@@ -57,36 +67,38 @@ fn main() {
         .with_camera_angle(35.0, 25.0)
         .with_zoom(0.7)
         .with_shadow_light(Vec3::new(8.0, 15.0, 8.0))
-        .with_screenshot(&screenshot_path);
-    
-    match mode.as_str() {
-        "full" => {
-            println!("Rendering full scene with GTAO applied...");
-        }
-        "ao_only" => {
-            println!("AO-only mode: Set DEBUG_MODE=4 in gtao.wgsl for constant output test");
-            println!("              Set DEBUG_MODE=0 for actual GTAO output");
-        }
-        "depth" => {
-            println!("Depth mode: Set DEBUG_MODE=1 in gtao.wgsl");
-        }
-        "normals" => {
-            println!("Normals mode: Set DEBUG_MODE=2 in gtao.wgsl");
-        }
-        _ => {
-            println!("Unknown mode '{}', using 'full'", mode);
-        }
-    }
-    
+        .with_debug_screenshots(debug_config);
+
     app.run();
-    
+
     println!();
-    println!("Screenshot saved to: {}", screenshot_path);
+    println!("==============================================");
+    println!("  Verification Checklist");
+    println!("==============================================");
     println!();
-    println!("Verification checklist:");
-    println!("  [ ] Pipeline runs without errors");
-    println!("  [ ] Output texture is not all white (occlusion is computed)");
-    println!("  [ ] Output texture is not all black (not over-occluded)");
-    println!("  [ ] Flat surfaces have high visibility (> 0.9)");
-    println!("  [ ] Corners/creases have lower visibility (0.3-0.7)");
+    println!("Check screenshots/gtao_test/ for the following:");
+    println!();
+    println!("  render.png:");
+    println!("    [ ] Scene renders without crashes");
+    println!("    [ ] Corners are darker than flat surfaces");
+    println!("    [ ] No excessive noise or artifacts");
+    println!();
+    println!("  ao_only.png:");
+    println!("    [ ] Flat surfaces are white/bright (AO > 0.9)");
+    println!("    [ ] Corners show darkening (AO 0.3-0.7)");
+    println!("    [ ] No patchy noise patterns");
+    println!("    [ ] Smooth gradients, no banding");
+    println!();
+    println!("  gtao_depth.png:");
+    println!("    [ ] Smooth depth gradient (near=dark, far=bright)");
+    println!("    [ ] No NaN/Inf artifacts (magenta pixels)");
+    println!();
+    println!("  gtao_normal.png:");
+    println!("    [ ] Surfaces facing camera are bright");
+    println!("    [ ] Side surfaces are medium gray");
+    println!();
+    println!("  gtao_edges.png:");
+    println!("    [ ] Sharp depth edges are visible");
+    println!("    [ ] Smooth surfaces show consistent values");
+    println!();
 }

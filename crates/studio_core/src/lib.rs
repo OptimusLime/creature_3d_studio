@@ -15,6 +15,7 @@ use bevy::prelude::*;
 
 pub mod chunk_streaming;
 pub mod creature_script;
+pub mod debug_screenshot;
 pub mod deferred;
 pub mod orbit_camera;
 pub mod scene_utils;
@@ -59,6 +60,9 @@ pub use world_io::{
 };
 pub use voxel_world_plugin::{
     BloomConfig, CameraConfig, ScreenshotConfig, VoxelWorldApp, VoxelWorldConfig, WorldSource,
+};
+pub use debug_screenshot::{
+    DebugCapture, DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState,
 };
 
 /// Core plugin for shared functionality.

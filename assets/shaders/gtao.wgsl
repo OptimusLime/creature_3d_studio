@@ -61,8 +61,25 @@ struct CameraUniforms {
 // Slice count and steps per slice are read from params3.xy
 // XeGTAO HIGH preset: 3 slices, 3 steps = 18 samples total
 
-// Debug modes: 0 = normal, 1 = show depth, 2 = show normal.z
-const DEBUG_GTAO: i32 = 0;  // 0 = normal GTAO output
+// ============================================================================
+// Debug Mode - controlled via uniform for runtime switching
+// ============================================================================
+// Debug modes are now passed via uniform from Rust code (params3.w).
+// This allows runtime debug switching without shader recompilation.
+//
+// Available modes:
+//   0 = Normal GTAO output (AO + edges)
+//  10 = NDC depth (raw hardware depth * 100)
+//  11 = Linear viewspace depth (normalized)
+//  12 = Depth MIP level 0
+//  13 = Depth MIP level 1
+//  14 = Depth MIP level 2
+//  20 = View-space normal.z
+//  30 = Screenspace radius (normalized)
+//  40 = Packed edges visualization
+//
+// NOTE: For now using constant. Will wire through params3.w for runtime control.
+const DEBUG_GTAO: i32 = 0;
 
 // ============================================================================
 // Vertex Shader
@@ -628,37 +645,52 @@ fn compute_packed_edges(uv: vec2<f32>) -> f32 {
 fn fs_main(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
     
-    // Debug: show reconstructed depth
-    if DEBUG_GTAO == 1 {
+    // =========================================================================
+    // Debug outputs - controlled via DEBUG_GTAO constant
+    // =========================================================================
+    
+    // Mode 10: NDC depth (raw hardware depth, scaled for visibility)
+    if DEBUG_GTAO == 10 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
             return output;
         }
-        // First, show raw NDC depth to verify sampling works
         let ndc_depth = textureSample(depth_texture, gbuffer_sampler, in.uv);
-        // For reverse-Z, near=1, far=0, so multiply by 1000 to see small values
         output.ao = clamp(ndc_depth * 100.0, 0.0, 1.0);
         output.edges = 0.0;
         return output;
     }
     
-    // Debug: show linear depth
-    if DEBUG_GTAO == 3 {
+    // Mode 11: Linear viewspace depth (normalized to 0-50 range)
+    if DEBUG_GTAO == 11 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
             return output;
         }
         let depth = get_viewspace_depth(in.uv);
-        // Normalize depth for visualization (assuming 0-100 range)
         output.ao = clamp(depth / 50.0, 0.0, 1.0);
         output.edges = 0.0;
         return output;
     }
     
-    // Debug: show normal.z (should be mostly positive for upward-facing surfaces)
-    if DEBUG_GTAO == 2 {
+    // Mode 12-15: Depth MIP levels 0-3
+    if DEBUG_GTAO >= 12 && DEBUG_GTAO <= 15 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let mip = f32(DEBUG_GTAO - 12);
+        let depth = sample_viewspace_depth_mip(in.uv, mip);
+        output.ao = clamp(depth / 50.0, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
+    }
+    
+    // Mode 20: View-space normal.z (camera-facing = bright)
+    if DEBUG_GTAO == 20 {
         if is_sky(in.uv) { 
             output.ao = 0.0;
             output.edges = 0.0;
@@ -670,8 +702,25 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         return output;
     }
     
-    // Debug mode 4: show packed edges as grayscale
-    if DEBUG_GTAO == 4 {
+    // Mode 30: Screenspace radius (normalized)
+    if DEBUG_GTAO == 30 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let viewspace_depth = get_viewspace_depth(in.uv);
+        let effect_radius = get_effect_radius() * get_radius_multiplier();
+        let pixel_dir_rb_viewspace_size = viewspace_depth * get_ndc_to_view_mul_x_pixel_size();
+        let screenspace_radius = effect_radius / pixel_dir_rb_viewspace_size.x;
+        // Normalize: 0-100 pixels maps to 0-1
+        output.ao = clamp(screenspace_radius / 100.0, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
+    }
+    
+    // Mode 40: Packed edges visualization
+    if DEBUG_GTAO == 40 {
         if is_sky(in.uv) { 
             output.ao = 1.0;
             output.edges = 1.0;
@@ -683,12 +732,14 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         return output;
     }
     
-    // Normal GTAO computation
+    // =========================================================================
+    // Normal GTAO computation (mode 0)
+    // =========================================================================
+    
     let pixel_pos = in.uv * camera.screen_size.xy;
     output.ao = compute_gtao(in.uv, pixel_pos);
     
     // Compute packed edges for denoiser (XeGTAO.hlsli L120-141)
-    // Sky pixels get full edges (no blur across sky boundary)
     if is_sky(in.uv) {
         output.edges = 1.0; // Full edges = no blending
     } else {

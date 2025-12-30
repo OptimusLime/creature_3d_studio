@@ -143,6 +143,8 @@ impl ScreenshotConfig {
     }
 }
 
+use crate::debug_screenshot::{DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState};
+
 /// Configuration for the VoxelWorldApp.
 #[derive(Default)]
 pub struct VoxelWorldConfig {
@@ -162,6 +164,8 @@ pub struct VoxelWorldConfig {
     pub camera: CameraConfig,
     /// Screenshot configuration (if any)
     pub screenshot: Option<ScreenshotConfig>,
+    /// Debug screenshot configuration (multi-capture with debug modes)
+    pub debug_screenshots: Option<DebugScreenshotConfig>,
     /// Spawn point lights from emissive voxels
     pub spawn_emissive_lights: bool,
     /// Add a shadow-casting light
@@ -194,6 +198,7 @@ impl VoxelWorldApp {
                 use_cross_chunk_culling: true,
                 camera: CameraConfig::default(),
                 screenshot: None,
+                debug_screenshots: None,
                 spawn_emissive_lights: true,
                 shadow_light: None,
                 use_hdr: false,
@@ -358,6 +363,15 @@ impl VoxelWorldApp {
         self
     }
 
+    /// Configure debug screenshots (multi-capture with debug modes).
+    /// This replaces the simple screenshot configuration.
+    pub fn with_debug_screenshots(mut self, config: DebugScreenshotConfig) -> Self {
+        self.config.debug_screenshots = Some(config);
+        // Clear simple screenshot config when using debug screenshots
+        self.config.screenshot = None;
+        self
+    }
+
     /// Add a custom setup callback.
     pub fn with_setup<F>(mut self, callback: F) -> Self
     where
@@ -407,6 +421,16 @@ impl VoxelWorldApp {
             app.insert_resource(moon_config);
         }
 
+        // Debug screenshot plugin (if configured)
+        let has_debug_screenshots = self.config.debug_screenshots.is_some();
+        if let Some(debug_config) = self.config.debug_screenshots.clone() {
+            app.add_plugins(DebugScreenshotPlugin);
+            app.insert_resource(DebugScreenshotState::new(debug_config));
+        } else {
+            // Initialize default debug modes even without debug screenshots
+            app.init_resource::<DebugModes>();
+        }
+
         // Resources
         app.insert_resource(ClearColor(clear_color));
         app.insert_resource(VoxelWorldAppConfig(self.config));
@@ -423,7 +447,10 @@ impl VoxelWorldApp {
 
         // Systems
         app.add_systems(Startup, setup_world);
-        app.add_systems(Update, screenshot_and_exit);
+        // Only add simple screenshot system if not using debug screenshots
+        if !has_debug_screenshots {
+            app.add_systems(Update, screenshot_and_exit);
+        }
 
         // Run
         app.run();
