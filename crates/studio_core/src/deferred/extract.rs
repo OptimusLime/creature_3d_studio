@@ -15,6 +15,7 @@ use bytemuck;
 
 use crate::voxel_mesh::VoxelMaterial;
 use super::gbuffer_geometry::{GBufferGeometryPipeline, GBufferMeshDrawData, GBufferMeshUniform};
+use super::shadow::MoonConfig;
 
 /// Marker component for entities that should be rendered through the deferred pipeline.
 ///
@@ -122,4 +123,14 @@ pub fn prepare_deferred_meshes(
         });
     }
 
+}
+
+/// System to extract MoonConfig from main world to render world.
+///
+/// This ensures changes to MoonConfig in the main app are reflected in rendering.
+pub fn extract_moon_config(
+    mut commands: Commands,
+    moon_config: Extract<Res<MoonConfig>>,
+) {
+    commands.insert_resource(moon_config.clone());
 }

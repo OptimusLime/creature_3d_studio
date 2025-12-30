@@ -27,7 +27,7 @@ pub mod world_io;
 pub use creature_script::{execute_creature_script, load_creature_script};
 pub use deferred::{
     DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredPointLight, DeferredRenderable,
-    DeferredRenderingPlugin, PrimaryShadowCaster,
+    DeferredRenderingPlugin, MoonConfig, PrimaryShadowCaster,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};

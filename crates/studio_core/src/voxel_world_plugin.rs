@@ -46,7 +46,7 @@ use bevy::render::view::Hdr;
 use bevy::window::WindowPlugin;
 use std::path::Path;
 
-use crate::deferred::{DeferredCamera, DeferredRenderingPlugin};
+use crate::deferred::{DeferredCamera, DeferredRenderingPlugin, MoonConfig};
 use crate::scene_utils::{spawn_world_with_lights_config, CameraPreset, WorldSpawnConfig};
 use crate::voxel::VoxelWorld;
 use crate::voxel_mesh::VoxelMaterialPlugin;
@@ -170,6 +170,8 @@ pub struct VoxelWorldConfig {
     pub use_hdr: bool,
     /// Bloom configuration (requires HDR)
     pub bloom: Option<BloomConfig>,
+    /// Moon configuration for dual moon lighting
+    pub moon_config: Option<MoonConfig>,
 }
 
 /// Builder for creating a VoxelWorld app with minimal boilerplate.
@@ -196,6 +198,7 @@ impl VoxelWorldApp {
                 shadow_light: None,
                 use_hdr: false,
                 bloom: None,
+                moon_config: None,
             },
             world_source: WorldSource::Empty,
             setup_callback: None,
@@ -349,6 +352,12 @@ impl VoxelWorldApp {
         self
     }
 
+    /// Set custom moon configuration for dual moon lighting.
+    pub fn with_moon_config(mut self, config: MoonConfig) -> Self {
+        self.config.moon_config = Some(config);
+        self
+    }
+
     /// Add a custom setup callback.
     pub fn with_setup<F>(mut self, callback: F) -> Self
     where
@@ -391,6 +400,11 @@ impl VoxelWorldApp {
         // Deferred rendering plugin (optional)
         if use_deferred {
             app.add_plugins(DeferredRenderingPlugin);
+        }
+
+        // Override moon config if specified (must happen after DeferredRenderingPlugin)
+        if let Some(moon_config) = self.config.moon_config.clone() {
+            app.insert_resource(moon_config);
         }
 
         // Resources

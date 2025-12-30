@@ -14,15 +14,22 @@
 @group(0) @binding(2) var gPosition: texture_2d<f32>;
 @group(0) @binding(3) var gbuffer_sampler: sampler;
 
-// Shadow map (bind group 1)
-@group(1) @binding(0) var shadow_map: texture_depth_2d;
-@group(1) @binding(1) var shadow_sampler: sampler_comparison;
+// Dual directional shadow maps (bind group 1) - moon1 + moon2
+@group(1) @binding(0) var moon1_shadow_map: texture_depth_2d;
+@group(1) @binding(1) var moon2_shadow_map: texture_depth_2d;
+@group(1) @binding(2) var shadow_sampler: sampler_comparison;
 
-// Shadow uniforms (bind group 2) - light-space matrix
-struct ShadowUniforms {
-    light_view_proj: mat4x4<f32>,
+// Directional shadow uniforms (bind group 2) - both moon matrices and config
+struct DirectionalShadowUniforms {
+    moon1_view_proj: mat4x4<f32>,
+    moon2_view_proj: mat4x4<f32>,
+    moon1_direction: vec4<f32>,      // xyz = direction, w = unused
+    moon1_color_intensity: vec4<f32>, // rgb = color, a = intensity
+    moon2_direction: vec4<f32>,
+    moon2_color_intensity: vec4<f32>,
+    shadow_softness: vec4<f32>,      // x = directional, y = point, zw = unused
 }
-@group(2) @binding(0) var<uniform> shadow: ShadowUniforms;
+@group(2) @binding(0) var<uniform> shadow_uniforms: DirectionalShadowUniforms;
 
 // Point lights (bind group 3) - Storage buffer for high volume lights
 // Must match MAX_POINT_LIGHTS in point_light.rs
@@ -127,6 +134,27 @@ const SHADOW_MAP_SIZE: f32 = 2048.0;
 const SHADOW_BIAS_MIN: f32 = 0.001;  // Minimum bias to prevent shadow acne
 const SHADOW_BIAS_MAX: f32 = 0.01;   // Maximum bias for grazing angles
 
+// Poisson disk samples for soft shadows (16 samples in a unit circle)
+// These provide good coverage with minimal banding artifacts
+const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
+    vec2<f32>(-0.94201624, -0.39906216),
+    vec2<f32>(0.94558609, -0.76890725),
+    vec2<f32>(-0.094184101, -0.92938870),
+    vec2<f32>(0.34495938, 0.29387760),
+    vec2<f32>(-0.91588581, 0.45771432),
+    vec2<f32>(-0.81544232, -0.87912464),
+    vec2<f32>(-0.38277543, 0.27676845),
+    vec2<f32>(0.97484398, 0.75648379),
+    vec2<f32>(0.44323325, -0.97511554),
+    vec2<f32>(0.53742981, -0.47373420),
+    vec2<f32>(-0.26496911, -0.41893023),
+    vec2<f32>(0.79197514, 0.19090188),
+    vec2<f32>(-0.24188840, 0.99706507),
+    vec2<f32>(-0.81409955, 0.91437590),
+    vec2<f32>(0.19984126, 0.78641367),
+    vec2<f32>(0.14383161, -0.14100790)
+);
+
 // Debug mode: 0 = final lighting, 1 = show gNormal, 2 = show gPosition depth, 3 = albedo only, 4 = shadow only, 5 = AO only, 6 = point lights only, 7 = world position XZ, 8 = light count, 9 = distance to light 0, 10 = first light color, 11 = first light radius, 20 = point shadow for light 0, 21 = raw -Y face shadow sample, 22 = face UV coords, 23 = which cube face, 24 = compare depth, 25 = show UV coords for -Y face, 26 = test fixed UV sample
 // 50 = matrix-based UV, 51 = compare matrix vs manual UV, 52 = stored vs compare depth
 // 61 = shadow depth difference visualization
@@ -206,65 +234,94 @@ fn calculate_all_point_lights(world_pos: vec3<f32>, world_normal: vec3<f32>) -> 
     return total;
 }
 
-// Calculate shadow factor using PCF (Percentage Closer Filtering).
-// Returns 0.0 for fully in shadow, 1.0 for fully lit.
-fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+// Calculate soft shadow using Poisson disk sampling.
+// shadow_map: the depth texture to sample
+// view_proj: light-space view-projection matrix
+// world_pos: fragment world position
+// world_normal: fragment world normal
+// light_dir: direction TO the light (normalized)
+// softness: 0.0 = hard shadows, 1.0 = very soft
+fn calculate_soft_directional_shadow(
+    shadow_map: texture_depth_2d,
+    view_proj: mat4x4<f32>,
+    world_pos: vec3<f32>,
+    world_normal: vec3<f32>,
+    light_dir: vec3<f32>,
+    softness: f32,
+) -> f32 {
     // Transform world position to light clip space
-    let light_space_pos = shadow.light_view_proj * vec4<f32>(world_pos, 1.0);
-    
-    // Perspective divide (orthographic projection, but still needed for proper coords)
+    let light_space_pos = view_proj * vec4<f32>(world_pos, 1.0);
     let proj_coords = light_space_pos.xyz / light_space_pos.w;
     
     // Transform from NDC [-1,1] to texture UV [0,1]
-    // Note: Y is flipped because texture coordinates go top-to-bottom
     let shadow_uv = vec2<f32>(
         proj_coords.x * 0.5 + 0.5,
         proj_coords.y * -0.5 + 0.5  // Flip Y
     );
     
-    // Current fragment depth in light space
     let current_depth = proj_coords.z;
     
-    // Check if outside shadow map bounds
+    // Check bounds
     if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 {
-        return 1.0;  // Outside shadow map = not in shadow
+        return 1.0;
     }
-    
-    // Check if behind the light's far plane
     if current_depth > 1.0 || current_depth < 0.0 {
-        return 1.0;  // Outside frustum = not in shadow
+        return 1.0;
     }
     
-    // Calculate slope-scaled bias based on surface angle to light
-    // Surfaces perpendicular to light need less bias, grazing angles need more
-    // Use the primary shadow-casting light direction
-    var primary_light_dir: vec3<f32>;
-    if DARK_WORLD_MODE == 1 {
-        primary_light_dir = normalize(-MOON1_DIRECTION);  // Purple moon casts shadows
-    } else {
-        primary_light_dir = normalize(-SUN_DIRECTION);
-    }
-    let n_dot_l = max(dot(world_normal, primary_light_dir), 0.0);
+    // Slope-scaled bias
+    let n_dot_l = max(dot(world_normal, light_dir), 0.0);
     let bias = max(SHADOW_BIAS_MAX * (1.0 - n_dot_l), SHADOW_BIAS_MIN);
     
-    // PCF 3x3 sampling for soft shadow edges
-    var shadow_sum = 0.0;
-    let texel_size = 1.0 / SHADOW_MAP_SIZE;
+    // Softness controls the sample radius (0-3 texels)
+    let radius = softness * 3.0 / SHADOW_MAP_SIZE;
     
-    for (var x = -1; x <= 1; x++) {
-        for (var y = -1; y <= 1; y++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            // textureSampleCompare returns 1.0 if current_depth - bias < shadow_depth
-            shadow_sum += textureSampleCompare(
-                shadow_map,
-                shadow_sampler,
-                shadow_uv + offset,
-                current_depth - bias
-            );
-        }
+    // 16-sample Poisson disk for smooth soft shadows
+    var shadow_sum = 0.0;
+    for (var i = 0; i < 16; i++) {
+        let offset = POISSON_DISK[i] * radius;
+        shadow_sum += textureSampleCompare(
+            shadow_map,
+            shadow_sampler,
+            shadow_uv + offset,
+            current_depth - bias
+        );
     }
     
-    return shadow_sum / 9.0;
+    return shadow_sum / 16.0;
+}
+
+// Calculate Moon 1 (purple) shadow
+fn calculate_moon1_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+    let light_dir = normalize(-shadow_uniforms.moon1_direction.xyz);
+    let softness = shadow_uniforms.shadow_softness.x;
+    return calculate_soft_directional_shadow(
+        moon1_shadow_map,
+        shadow_uniforms.moon1_view_proj,
+        world_pos,
+        world_normal,
+        light_dir,
+        softness
+    );
+}
+
+// Calculate Moon 2 (orange) shadow
+fn calculate_moon2_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+    let light_dir = normalize(-shadow_uniforms.moon2_direction.xyz);
+    let softness = shadow_uniforms.shadow_softness.x;
+    return calculate_soft_directional_shadow(
+        moon2_shadow_map,
+        shadow_uniforms.moon2_view_proj,
+        world_pos,
+        world_normal,
+        light_dir,
+        softness
+    );
+}
+
+// Legacy shadow calculation (kept for compatibility, uses moon1 by default)
+fn calculate_shadow(world_pos: vec3<f32>, world_normal: vec3<f32>) -> f32 {
+    return calculate_moon1_shadow(world_pos, world_normal);
 }
 
 // Helper function to sample a single point from the appropriate shadow face
@@ -339,12 +396,11 @@ fn compute_cube_face_uv(dir: vec3<f32>, face_idx: i32) -> vec2<f32> {
     return vec2<f32>(u * 0.5 + 0.5, v * 0.5 + 0.5);
 }
 
-// Calculate shadow for a point light using cube shadow map with PCF.
+// Calculate shadow for a point light using cube shadow map with soft PCF.
 // Returns 0.0 for fully in shadow, 1.0 for fully lit.
 //
 // Uses matrix-based UV calculation to match how shadow maps were rendered.
-// The view_proj matrix transforms world position to clip space, then we
-// convert to UV coordinates for shadow map sampling.
+// Softness is controlled by shadow_uniforms.shadow_softness.y
 fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f32) -> f32 {
     // Use the light position from the shadow matrices for consistency
     let shadow_light_pos = point_shadow_matrices.light_pos_radius.xyz;
@@ -381,22 +437,21 @@ fn calculate_point_shadow(light_pos: vec3<f32>, world_pos: vec3<f32>, radius: f3
     
     // Depth comparison: we store linear distance/radius
     // Bias to prevent self-shadowing (shadow acne)
-    // Larger bias needed for voxel geometry with flat surfaces
     let compare_depth = (distance / shadow_radius) - 0.05;
     
-    // PCF 3x3 sampling for soft shadow edges
-    let texel_size = 1.0 / POINT_SHADOW_MAP_SIZE;
-    var shadow_sum = 0.0;
+    // Get softness from uniforms (0.0 = hard, 1.0 = very soft)
+    let softness = shadow_uniforms.shadow_softness.y;
+    let radius_scale = softness * 2.0 / POINT_SHADOW_MAP_SIZE;  // 0-2 texels based on softness
     
-    for (var x = -1; x <= 1; x++) {
-        for (var y = -1; y <= 1; y++) {
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            let sample_uv = face_uv + offset;
-            shadow_sum += sample_point_shadow_face(face_idx, sample_uv, compare_depth);
-        }
+    // Use Poisson disk sampling for softer shadows
+    var shadow_sum = 0.0;
+    for (var i = 0; i < 16; i++) {
+        let offset = POISSON_DISK[i] * radius_scale;
+        let sample_uv = face_uv + offset;
+        shadow_sum += sample_point_shadow_face(face_idx, sample_uv, compare_depth);
     }
     
-    return shadow_sum / 9.0;
+    return shadow_sum / 16.0;
 }
 
 @fragment
@@ -517,11 +572,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     // --- Shadow Calculation ---
-    let shadow_factor = calculate_shadow(world_pos, world_normal);
+    // Calculate shadows for both moons independently
+    let moon1_shadow = calculate_moon1_shadow(world_pos, world_normal);
+    let moon2_shadow = calculate_moon2_shadow(world_pos, world_normal);
     
-    // Debug: Show shadow only
+    // Legacy shadow_factor for compatibility
+    let shadow_factor = moon1_shadow;
+    
+    // Debug: Show shadow only (moon1 in red channel, moon2 in green)
     if DEBUG_MODE == 4 {
-        return vec4<f32>(vec3<f32>(shadow_factor), 1.0);
+        return vec4<f32>(moon1_shadow, moon2_shadow, 0.0, 1.0);
     }
     
     // Debug: Show AO only
@@ -1477,22 +1537,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var total_light = vec3<f32>(0.0);
     
     if DARK_WORLD_MODE == 1 {
-        // === DARK WORLD MODE: Dual colored moons ===
+        // === DARK WORLD MODE: Dual colored moons with independent shadows ===
         
         // Very dim ambient
         total_light = DARK_AMBIENT_COLOR * DARK_AMBIENT_INTENSITY;
         
-        // Purple Moon (primary light, uses shadow map)
-        let moon1_dir = normalize(-MOON1_DIRECTION);
+        // Moon 1 (Purple) - uses uniform data from MoonConfig
+        let moon1_dir = normalize(-shadow_uniforms.moon1_direction.xyz);
+        let moon1_color = shadow_uniforms.moon1_color_intensity.rgb;
+        let moon1_intensity = shadow_uniforms.moon1_color_intensity.a;
         let n_dot_moon1 = max(dot(world_normal, moon1_dir), 0.0);
-        total_light += MOON1_COLOR * MOON1_INTENSITY * n_dot_moon1 * shadow_factor;
+        total_light += moon1_color * moon1_intensity * n_dot_moon1 * moon1_shadow;
         
-        // Orange Moon (secondary light, no shadow map yet - TODO: multi-shadow)
-        // Orange moon lights faces that purple moon doesn't hit well
-        let moon2_dir = normalize(-MOON2_DIRECTION);
+        // Moon 2 (Orange) - now with its own shadow!
+        let moon2_dir = normalize(-shadow_uniforms.moon2_direction.xyz);
+        let moon2_color = shadow_uniforms.moon2_color_intensity.rgb;
+        let moon2_intensity = shadow_uniforms.moon2_color_intensity.a;
         let n_dot_moon2 = max(dot(world_normal, moon2_dir), 0.0);
-        // No shadow for orange moon yet - it provides fill lighting
-        total_light += MOON2_COLOR * MOON2_INTENSITY * n_dot_moon2;
+        total_light += moon2_color * moon2_intensity * n_dot_moon2 * moon2_shadow;
         
     } else {
         // === CLASSIC SUN MODE ===
