@@ -57,10 +57,24 @@ pub struct GtaoCameraUniform {
     /// x = sample_distribution_power, y = thin_occluder_compensation
     /// z = depth_mip_sampling_offset, w = denoise_blur_beta - 16 bytes
     pub params2: [f32; 4],
-    /// x = slice_count, y = steps_per_slice, z = unused, w = unused - 16 bytes
+    /// x = slice_count, y = steps_per_slice, z = noise_index (frame % 64), w = unused - 16 bytes
+    /// noise_index is used for TAA temporal noise variation (XeGTAO.h L82, L196)
     pub params3: [f32; 4],
 }
 // Total: 64*3 + 16*6 = 192 + 96 = 288 bytes
+
+/// Resource to track frame count for TAA noise index.
+/// XeGTAO uses NoiseIndex = frameCounter % 64 (XeGTAO.h L196)
+#[derive(Resource, Default)]
+pub struct GtaoFrameCount {
+    pub frame: u32,
+}
+
+/// System to increment frame counter each frame for TAA noise variation.
+/// Run in ExtractSchedule to update before rendering.
+pub fn update_gtao_frame_count(mut frame_count: ResMut<GtaoFrameCount>) {
+    frame_count.frame = frame_count.frame.wrapping_add(1);
+}
 
 /// Render graph node that computes GTAO.
 #[derive(Default)]
@@ -235,12 +249,24 @@ impl ViewNode for GtaoPassNode {
                 gtao_config.depth_mip_sampling_offset,
                 gtao_config.denoise_blur_beta(),
             ],
-            // Pack: x = slice_count, y = steps_per_slice, z = unused, w = unused
+            // Pack: x = slice_count, y = steps_per_slice, z = noise_index, w = unused
             // FROM CONFIG - not hardcoded
+            // noise_index = frameCounter % 64 for TAA (XeGTAO.h L196)
             params3: [
                 gtao_config.slice_count() as f32,
                 gtao_config.steps_per_slice() as f32,
-                0.0,
+                {
+                    let frame_count = world
+                        .get_resource::<GtaoFrameCount>()
+                        .map(|fc| fc.frame)
+                        .unwrap_or(0);
+                    // XeGTAO.h L196: NoiseIndex = (settings.DenoisePasses>0)?(frameCounter % 64):(0);
+                    if gtao_config.denoise_passes() > 0 {
+                        (frame_count % 64) as f32
+                    } else {
+                        0.0
+                    }
+                },
                 0.0,
             ],
         };

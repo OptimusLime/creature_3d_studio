@@ -1,9 +1,17 @@
 // GTAO - Ground Truth Ambient Occlusion
 // Based on XeGTAO by Intel
 // Using CORRECT depth reconstruction from hardware depth buffer
+//
+// Phase 6: TAA Noise Index Support
+// Uses Hilbert curve + R2 sequence for spatio-temporal noise (XeGTAO.h L117-142, vaGTAO.hlsl L74-91)
 
 const PI: f32 = 3.14159265359;
 const PI_HALF: f32 = 1.5707963267948966;
+
+// XeGTAO.h L117-118: Hilbert curve constants
+// XE_HILBERT_LEVEL = 6, XE_HILBERT_WIDTH = 64, XE_HILBERT_AREA = 4096
+const XE_HILBERT_LEVEL: u32 = 6u;
+const XE_HILBERT_WIDTH: u32 = 64u;
 
 // ============================================================================
 // Bind Groups
@@ -15,9 +23,11 @@ const PI_HALF: f32 = 1.5707963267948966;
 @group(0) @binding(2) var gbuffer_sampler: sampler;
 @group(0) @binding(3) var depth_texture: texture_depth_2d;  // Hardware depth buffer!
 
-// Group 1: Noise
-@group(1) @binding(0) var noise_texture: texture_2d<f32>;
-@group(1) @binding(1) var noise_sampler: sampler;
+// Group 1: Noise (DEPRECATED - kept for pipeline compatibility)
+// Phase 6: Now using Hilbert curve + R2 sequence for spatio-temporal noise (vaGTAO.hlsl L74-91)
+// These bindings are no longer used but kept to avoid pipeline layout changes
+@group(1) @binding(0) var noise_texture: texture_2d<f32>;  // UNUSED
+@group(1) @binding(1) var noise_sampler: sampler;  // UNUSED
 
 // Group 2: Camera uniforms
 // IMPORTANT: Layout must match Rust GtaoCameraUniform exactly!
@@ -133,6 +143,11 @@ fn get_slice_count() -> i32 {
 
 fn get_steps_per_slice() -> i32 {
     return i32(camera.params3.y);
+}
+
+// XeGTAO.h L82, L196: NoiseIndex = frameCounter % 64 (for TAA)
+fn get_noise_index() -> u32 {
+    return u32(camera.params3.z);
 }
 
 // Convert NDC depth [0,1] to linear view-space depth
@@ -291,6 +306,68 @@ fn fast_acos(in_x: f32) -> f32 {
 }
 
 // ============================================================================
+// XeGTAO Hilbert Curve + R2 Sequence Noise (Phase 6)
+// ============================================================================
+
+// XeGTAO.h L120-142: Hilbert curve index calculation
+// Converts 2D pixel coordinates to 1D Hilbert curve index for better spatial distribution
+// From https://www.shadertoy.com/view/3tB3z3
+fn hilbert_index(pos_x_in: u32, pos_y_in: u32) -> u32 {
+    var pos_x = pos_x_in;
+    var pos_y = pos_y_in;
+    var index = 0u;
+    var cur_level = XE_HILBERT_WIDTH / 2u;
+    
+    // XeGTAO.h L123-140: Iterate through Hilbert curve levels
+    loop {
+        if cur_level == 0u {
+            break;
+        }
+        
+        let region_x = u32((pos_x & cur_level) > 0u);
+        let region_y = u32((pos_y & cur_level) > 0u);
+        
+        // XeGTAO.h L127: index += curLevel * curLevel * ((3 * regionX) ^ regionY)
+        index += cur_level * cur_level * ((3u * region_x) ^ region_y);
+        
+        // XeGTAO.h L128-139: Transform coordinates based on region
+        if region_y == 0u {
+            if region_x == 1u {
+                pos_x = (XE_HILBERT_WIDTH - 1u) - pos_x;
+                pos_y = (XE_HILBERT_WIDTH - 1u) - pos_y;
+            }
+            // Swap x and y
+            let temp = pos_x;
+            pos_x = pos_y;
+            pos_y = temp;
+        }
+        
+        cur_level = cur_level / 2u;
+    }
+    
+    return index;
+}
+
+// vaGTAO.hlsl L74-91: Spatio-temporal noise using Hilbert curve + R2 sequence
+// Returns vec2 noise in [0, 1] range for slice direction and sample jitter
+fn spatio_temporal_noise(pix_coord: vec2<u32>, temporal_index: u32) -> vec2<f32> {
+    // vaGTAO.hlsl L81: Get Hilbert index for pixel position (mod 64 for tiling)
+    let index = hilbert_index(pix_coord.x % XE_HILBERT_WIDTH, pix_coord.y % XE_HILBERT_WIDTH);
+    
+    // vaGTAO.hlsl L83: Add temporal offset - 288 is empirically chosen for best distribution
+    // "why 288? tried out a few and that's the best so far (with XE_HILBERT_LEVEL 6U)"
+    let temporal_offset = 288u * (temporal_index % 64u);
+    let final_index = index + temporal_offset;
+    
+    // vaGTAO.hlsl L85: R2 sequence for quasi-random distribution
+    // See http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+    // R2 constants: (sqrt(5)-1)/2 ≈ 0.7548776662, 1/φ² ≈ 0.5698402910
+    let r2_const = vec2<f32>(0.7548776662466927, 0.5698402909980533);
+    
+    return fract(vec2<f32>(0.5) + f32(final_index) * r2_const);
+}
+
+// ============================================================================
 // GTAO Core Algorithm (XeGTAO-style horizon-based)
 // ============================================================================
 
@@ -341,9 +418,10 @@ fn compute_gtao(uv: vec2<f32>, pixel_pos: vec2<f32>) -> f32 {
     let falloff_mul = -1.0 / falloff_range;
     let falloff_add = falloff_from / falloff_range + 1.0;
     
-    // Get noise for randomizing slice directions to avoid banding
-    let noise_uv = pixel_pos / 32.0;
-    let noise = textureSample(noise_texture, noise_sampler, noise_uv);
+    // XeGTAO Phase 6: Spatio-temporal noise using Hilbert curve + R2 sequence
+    // Replaces texture-based noise for better TAA integration (vaGTAO.hlsl L74-91)
+    let pix_coord = vec2<u32>(u32(pixel_pos.x), u32(pixel_pos.y));
+    let noise = spatio_temporal_noise(pix_coord, get_noise_index());
     let noise_slice = noise.x;
     let noise_sample = noise.y;
     

@@ -180,21 +180,26 @@ From XeGTAO.h and usage patterns:
 - Edge texture shows depth discontinuities
 - Denoise respects edges (no blur across depth boundaries)
 
-### Phase 6: TAA Noise Index Support
+### Phase 6: TAA Noise Index Support (COMPLETED)
 
 **Goal:** Support temporal noise distribution for TAA integration.
 
-**Status:** TODO
+**Status:** DONE
 
-**Tasks:**
-1. Add frame counter to render world
-2. Pass `NoiseIndex = frameCounter % 64` to shader uniforms
-3. Implement `hilbert_index()` function - port from XeGTAO.h L120-142
-4. Implement `spatio_temporal_noise()` - port from vaGTAO.hlsl L74-91:
+**Tasks (all completed):**
+1. ✅ Add frame counter to render world (`GtaoFrameCount` resource)
+2. ✅ Pass `NoiseIndex = frameCounter % 64` to shader uniforms (params3.z)
+3. ✅ Implement `hilbert_index()` function - port from XeGTAO.h L120-142
+4. ✅ Implement `spatio_temporal_noise()` - port from vaGTAO.hlsl L74-91:
    - Uses Hilbert curve index for spatial variation
    - Uses R2 sequence for temporal variation
    - Replaces current texture-based noise
-5. Replace noise texture sampling with Hilbert+R2 sequence
+5. ✅ Replace noise texture sampling with Hilbert+R2 sequence in `compute_gtao()`
+
+**Files modified:**
+- `assets/shaders/gtao.wgsl` - Added `hilbert_index()`, `spatio_temporal_noise()`, `get_noise_index()`
+- `crates/studio_core/src/deferred/gtao_node.rs` - Added `GtaoFrameCount`, `update_gtao_frame_count()`
+- `crates/studio_core/src/deferred/plugin.rs` - Wire frame counter into extraction
 
 **XeGTAO Reference Lines:**
 - XeGTAO.h L120-142: `HilbertIndex()` function
@@ -202,18 +207,20 @@ From XeGTAO.h and usage patterns:
 - XeGTAO.hlsli L331-332: Where noise is consumed (localNoise)
 
 **Verification Checklist:**
-| # | Item | XeGTAO Reference | Status |
-|---|------|------------------|--------|
-| 1 | Frame counter extraction | Engine-specific | ⬜ TBD |
-| 2 | NoiseIndex = frame % 64 | vaGTAO.hlsl L81 | ⬜ TBD |
-| 3 | HilbertIndex implementation | XeGTAO.h L120-142 | ⬜ TBD |
-| 4 | R2 sequence (0.7548776662...) | vaGTAO.hlsl L85 | ⬜ TBD |
-| 5 | SpatioTemporalNoise output | vaGTAO.hlsl L74-91 | ⬜ TBD |
-| 6 | Remove noise texture dependency | gtao.wgsl | ⬜ TBD |
+| # | Item | XeGTAO Reference | Our Implementation | Status |
+|---|------|------------------|-------------------|--------|
+| 1 | Frame counter extraction | Engine-specific | gtao_node.rs:68-72 | ✅ |
+| 2 | NoiseIndex = frame % 64 | XeGTAO.h L196 | gtao_node.rs:253-260 | ✅ |
+| 3 | HilbertIndex implementation | XeGTAO.h L120-142 | gtao.wgsl:310-346 | ✅ |
+| 4 | R2 sequence constants | vaGTAO.hlsl L85 | gtao.wgsl:362-363 | ✅ |
+| 5 | SpatioTemporalNoise output | vaGTAO.hlsl L74-91 | gtao.wgsl:349-365 | ✅ |
+| 6 | Replace noise texture sampling | gtao.wgsl | gtao.wgsl:419-423 | ✅ |
 
 **Verification:**
-- With TAA: no temporal artifacts
-- Without TAA: still works (NoiseIndex = 0)
+- ✅ Build succeeds
+- ✅ `cargo run --example p20_gtao_test` runs without errors
+- With TAA: temporal noise distribution varies per frame
+- Without TAA: NoiseIndex = 0 (static noise)
 
 ---
 

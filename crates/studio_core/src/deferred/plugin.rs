@@ -37,7 +37,7 @@ use super::shadow_node::{
     Moon1ShadowPassNode, Moon2ShadowPassNode,
 };
 use super::gtao::{GtaoConfig, prepare_gtao_textures};
-use super::gtao_node::{init_gtao_pipeline, init_gtao_noise_texture, GtaoPassNode};
+use super::gtao_node::{init_gtao_pipeline, init_gtao_noise_texture, GtaoPassNode, GtaoFrameCount, update_gtao_frame_count};
 use super::gtao_depth_prefilter::{
     init_depth_prefilter_pipeline, prepare_depth_mip_textures, DepthPrefilterNode,
 };
@@ -87,12 +87,16 @@ impl Plugin for DeferredRenderingPlugin {
         
         // Initialize moon config in render world
         render_app.init_resource::<MoonConfig>();
+        
+        // Initialize GTAO frame counter for TAA noise index (XeGTAO.h L196)
+        render_app.init_resource::<GtaoFrameCount>();
 
         // Add extraction systems for deferred meshes, point lights, and moon config
         render_app.add_systems(ExtractSchedule, (
             extract_deferred_meshes, 
             extract_point_lights,
             extract_moon_config,
+            update_gtao_frame_count,
         ));
 
         // Add prepare systems
