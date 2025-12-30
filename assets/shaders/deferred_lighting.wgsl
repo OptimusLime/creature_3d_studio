@@ -550,13 +550,42 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // NO encoding/decoding needed - just normalize to handle interpolation
     let world_normal = normalize(normal_sample.rgb);
     
-    // Sample SSAO texture (screen-space ambient occlusion)
-    // SSAO provides better quality than vertex AO and works correctly with greedy meshing
-    let ssao_value = textureSample(ssao_texture, ssao_sampler, in.uv).r;
+    // Sample SSAO texture with simple 3x3 blur to reduce noise
+    // This is a bilateral blur that respects depth discontinuities
+    let texel_size = vec2<f32>(1.0 / 1920.0, 1.0 / 1080.0); // TODO: pass actual screen size
+    let center_depth = position_sample.w;
     
-    // Use SSAO instead of vertex AO (normal_sample.a)
-    // For now, just use SSAO directly. Later we could blend them.
-    let ao = ssao_value;
+    var ao_sum: f32 = 0.0;
+    var weight_sum: f32 = 0.0;
+    
+    // 3x3 blur kernel
+    for (var y: i32 = -1; y <= 1; y++) {
+        for (var x: i32 = -1; x <= 1; x++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size * 2.0;
+            let sample_uv = in.uv + offset;
+            
+            // Sample SSAO
+            let sample_ao = textureSample(ssao_texture, ssao_sampler, sample_uv).r;
+            
+            // Sample depth for bilateral weight
+            let sample_pos = textureSample(gPosition, gbuffer_sampler, sample_uv);
+            let sample_depth = sample_pos.w;
+            
+            // Bilateral weight: reduce influence of samples at different depths
+            let depth_diff = abs(center_depth - sample_depth);
+            let depth_weight = exp(-depth_diff * 5.0);
+            
+            // Distance weight (center samples weighted more)
+            let dist = length(vec2<f32>(f32(x), f32(y)));
+            let dist_weight = 1.0 / (1.0 + dist);
+            
+            let weight = depth_weight * dist_weight;
+            ao_sum += sample_ao * weight;
+            weight_sum += weight;
+        }
+    }
+    
+    let ao = select(ao_sum / weight_sum, 1.0, weight_sum < 0.001);
     
     let world_pos = position_sample.xyz;
     let depth = position_sample.w;
@@ -617,9 +646,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(vec3<f32>(ao), 1.0);
     }
     
-    // Debug: Show raw SSAO texture (before any blending with vertex AO)
+    // Debug: Show raw SSAO texture (after blur)
     if DEBUG_MODE == 100 {
-        return vec4<f32>(vec3<f32>(ssao_value), 1.0);
+        return vec4<f32>(vec3<f32>(ao), 1.0);
     }
     
     // Debug: Show world position XZ (scaled to 0-1 range for -20 to +20)

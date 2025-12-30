@@ -36,7 +36,7 @@ use super::shadow_node::{
     Moon1ShadowPassNode, Moon2ShadowPassNode,
 };
 use super::ssao::{SsaoConfig, init_ssao_kernel, prepare_ssao_textures};
-use super::ssao_node::{init_ssao_pipeline, SsaoPassNode};
+use super::ssao_node::{init_ssao_pipeline, init_ssao_noise_texture, SsaoPassNode};
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -95,6 +95,7 @@ impl Plugin for DeferredRenderingPlugin {
         // - prepare_shadow_textures creates shadow map depth texture
         // - prepare_shadow_view_uniforms creates light-space matrices
         // - prepare_point_shadow_* systems for point light cube shadow maps
+        // Pipeline initialization systems
         render_app.add_systems(
             Render,
             (
@@ -105,6 +106,14 @@ impl Plugin for DeferredRenderingPlugin {
                 init_point_shadow_pipeline.in_set(RenderSystems::Prepare),
                 init_ssao_pipeline.in_set(RenderSystems::Prepare),
                 init_ssao_kernel.in_set(RenderSystems::Prepare),
+                init_ssao_noise_texture.in_set(RenderSystems::Prepare),
+            ),
+        );
+        
+        // G-buffer and mesh prepare systems
+        render_app.add_systems(
+            Render,
+            (
                 prepare_gbuffer_textures.in_set(RenderSystems::PrepareResources),
                 prepare_gbuffer_view_uniforms
                     .in_set(RenderSystems::PrepareResources)
@@ -118,6 +127,13 @@ impl Plugin for DeferredRenderingPlugin {
                 prepare_bloom_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_bloom_pipeline),
+            ),
+        );
+        
+        // Shadow prepare systems
+        render_app.add_systems(
+            Render,
+            (
                 prepare_directional_shadow_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_shadow_pipeline),
@@ -130,7 +146,13 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(prepare_deferred_meshes),
                 prepare_point_lights
                     .in_set(RenderSystems::PrepareResources),
-                // Point light shadow systems
+            ),
+        );
+        
+        // Point shadow and SSAO prepare systems
+        render_app.add_systems(
+            Render,
+            (
                 prepare_point_shadow_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_point_shadow_pipeline),
@@ -142,7 +164,6 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(init_point_shadow_pipeline)
                     .after(prepare_shadow_casting_lights)
                     .after(prepare_deferred_meshes),
-                // SSAO systems
                 prepare_ssao_textures
                     .in_set(RenderSystems::PrepareResources)
                     .after(init_ssao_pipeline),
