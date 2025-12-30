@@ -194,14 +194,49 @@ In `deferred_lighting.wgsl`:
 
 ---
 
-## Parameters
+## Parameter Tuning Checklist
 
-```wgsl
-const SLICE_COUNT: i32 = 9;       // Direction slices
-const STEPS_PER_SLICE: i32 = 4;   // Steps per direction
-// Total: 9 slices × 4 steps × 2 directions = 72 samples
+### XeGTAO Default Values (from XeGTAO.h)
+
+```cpp
+#define XE_GTAO_DEFAULT_RADIUS_MULTIPLIER         1.457f   // counter screen space biases
+#define XE_GTAO_DEFAULT_FALLOFF_RANGE             0.615f   // distant samples contribute less
+#define XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER 2.0f     // small crevices more important
+#define XE_GTAO_DEFAULT_THIN_OCCLUDER_COMPENSATION 0.0f    // thickness heuristic
+#define XE_GTAO_DEFAULT_FINAL_VALUE_POWER         2.2f     // power function on final value
+#define XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET 3.30f    // MIP selection
 ```
 
-```rust
-effect_radius: 3.0,  // World units (voxels are 1 unit)
-```
+### Parameter Verification Checklist
+
+| # | Parameter | XeGTAO Default | Our Value | File:Line | Status |
+|---|-----------|---------------|-----------|-----------|--------|
+| 1 | SLICE_COUNT | 3/6/9 (Low/Med/High) | 9 | gtao.wgsl:40 | ⬜ NOT YET CHECKED |
+| 2 | STEPS_PER_SLICE | 2-4 typical | 4 | gtao.wgsl:41 | ⬜ NOT YET CHECKED |
+| 3 | effect_radius | Scene dependent | 3.0 | gtao_node.rs:187 | ⬜ NOT YET CHECKED |
+| 4 | effect_falloff_range | **0.615** | 0.615 | gtao_node.rs:188 | ⬜ NOT YET CHECKED |
+| 5 | radius_multiplier | **1.457** | 1.457 | gtao_node.rs:192 | ⬜ NOT YET CHECKED |
+| 6 | final_value_power | **2.2** | 2.2 | gtao_node.rs:193 | ⬜ NOT YET CHECKED |
+| 7 | sample_distribution_power | **2.0** | 2.0 | gtao_node.rs:194 | ⬜ NOT YET CHECKED |
+| 8 | thin_occluder_compensation | **0.0** | 0.0 | gtao_node.rs:195 | ⬜ NOT YET CHECKED |
+| 9 | pixel_too_close_threshold | **1.3** | 1.3 | gtao.wgsl:227 | ⬜ NOT YET CHECKED |
+| 10 | projNormalLen fudge | **0.05** | 0.05 | gtao.wgsl:352 | ⬜ NOT YET CHECKED |
+| 11 | min visibility | **0.03** | 0.03 | gtao.wgsl:378 | ⬜ NOT YET CHECKED |
+| 12 | Blur kernel_radius | XeGTAO: edge-aware | 3 (7x7) | deferred_lighting.wgsl:98 | ⬜ NOT YET CHECKED |
+| 13 | Half-resolution | Yes | Yes | gtao.rs:70-71 | ⬜ NOT YET CHECKED |
+
+### Known Issues
+
+1. **Config not wired through**: `gtao.rs` has `GtaoConfig` struct but `gtao_node.rs` uses hardcoded values (lines 187-195)
+2. **7x7 blur may be excessive**: XeGTAO uses edge-aware denoise with `DenoiseBlurBeta = 1.2`, not a fixed kernel
+
+### XeGTAO Quality Presets
+
+| Quality | SliceCount | StepsPerSlice | Total Samples |
+|---------|------------|---------------|---------------|
+| Low | 1 | 2 | 4 |
+| Medium | 2 | 2 | 8 |
+| High | 3 | 3 | 18 |
+| Ultra | 9 | 3 | 54 |
+
+Our current: 9 slices × 4 steps = 72 samples (higher than Ultra)
