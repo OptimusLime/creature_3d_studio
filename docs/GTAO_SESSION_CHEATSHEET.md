@@ -17,11 +17,11 @@
 
 We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/Rust voxel engine. The remit is **100% compliance** with XeGTAO - no "simpler" approaches, no shortcuts.
 
-**Current state:** Phases 1-4 complete. Edge-aware denoiser implemented and working.
+**Current state:** Phases 1-5 complete and **AUDITED**. Edge-aware denoiser passes line-by-line audit.
 
 **Remaining work:**
-- Phase 6: TAA noise index support (optional for now)
-- Final audit: line-by-line comparison with XeGTAO.hlsli
+- Phase 6: TAA noise index support (Hilbert curve + R2 sequence)
+- Final audit: line-by-line comparison of main pass with XeGTAO.hlsli
 
 ---
 
@@ -59,6 +59,22 @@ We're implementing Intel's XeGTAO (Ground Truth Ambient Occlusion) in our Bevy/R
 
 **Merged Phase 4 (denoiser) and Phase 5 (edge packing) since they're interdependent.**
 
+**AUDIT STATUS: ALL PASS** (verified line-by-line against XeGTAO.hlsli)
+
+| Component | XeGTAO Lines | Our File:Lines | Status |
+|-----------|--------------|----------------|--------|
+| Edge calculation | L120-129 | gtao.wgsl:246-260 | ✅ |
+| Edge packing | L132-141 | gtao.wgsl:264-269 | ✅ |
+| Edge unpacking | L686-696 | gtao_denoise.wgsl:44-56 | ✅ |
+| AddSample helper | L704-710 | gtao_denoise.wgsl:63-67 | ✅ |
+| Blur amount calc | L736-737 | gtao_denoise.wgsl:86-93 | ✅ |
+| Edge symmetry | L769-770 | gtao_denoise.wgsl:122-124 | ✅ |
+| AO leaking prevention | L772-776 | gtao_denoise.wgsl:126-132 | ✅ |
+| Diagonal weights | L785-788 | gtao_denoise.wgsl:134-139 | ✅ |
+| Weighted sum | L801-814 | gtao_denoise.wgsl:152-166 | ✅ |
+
+**Note:** We use individual texture samples instead of GatherRed (performance difference, not correctness).
+
 Changes made:
 1. **gtao.wgsl** - Added edge calculation (`calculate_edges`) and packing (`pack_edges`), changed output to MRT (AO + packed edges)
 2. **gtao_node.rs** - Updated to output to two render targets (AO and edges textures)
@@ -75,14 +91,20 @@ Changes made:
 
 ## Next Step
 
-**Phase 6: TAA Noise Index Support** (optional - can skip if not using TAA)
+**Phase 6: TAA Noise Index Support**
+
+Replace texture-based noise with XeGTAO's Hilbert curve + R2 sequence.
 
 Tasks:
-1. Add frame counter to render world
-2. Pass `NoiseIndex = frameCounter % 64` to shader
-3. Use Hilbert index for noise variation (optional optimization)
+1. Add frame counter to render world extraction
+2. Pass `NoiseIndex = frameCounter % 64` to shader uniforms
+3. Implement `hilbert_index()` function (XeGTAO.h L120-142)
+4. Implement `spatio_temporal_noise()` (vaGTAO.hlsl L74-91)
+5. Replace noise texture sampling in gtao.wgsl
 
-Or alternatively: **Final Audit** - line-by-line comparison with XeGTAO.hlsli
+Reference files to read:
+- `XeGTAO/Source/Rendering/Shaders/XeGTAO.h` L120-142 (HilbertIndex)
+- `XeGTAO/Source/Rendering/Shaders/vaGTAO.hlsl` L74-91 (SpatioTemporalNoise)
 
 ---
 

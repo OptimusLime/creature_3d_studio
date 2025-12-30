@@ -184,10 +184,32 @@ From XeGTAO.h and usage patterns:
 
 **Goal:** Support temporal noise distribution for TAA integration.
 
+**Status:** TODO
+
 **Tasks:**
 1. Add frame counter to render world
-2. Pass `NoiseIndex = frameCounter % 64` to shader
-3. Use Hilbert index for noise variation (optional optimization)
+2. Pass `NoiseIndex = frameCounter % 64` to shader uniforms
+3. Implement `hilbert_index()` function - port from XeGTAO.h L120-142
+4. Implement `spatio_temporal_noise()` - port from vaGTAO.hlsl L74-91:
+   - Uses Hilbert curve index for spatial variation
+   - Uses R2 sequence for temporal variation
+   - Replaces current texture-based noise
+5. Replace noise texture sampling with Hilbert+R2 sequence
+
+**XeGTAO Reference Lines:**
+- XeGTAO.h L120-142: `HilbertIndex()` function
+- vaGTAO.hlsl L74-91: `SpatioTemporalNoise()` function
+- XeGTAO.hlsli L331-332: Where noise is consumed (localNoise)
+
+**Verification Checklist:**
+| # | Item | XeGTAO Reference | Status |
+|---|------|------------------|--------|
+| 1 | Frame counter extraction | Engine-specific | ⬜ TBD |
+| 2 | NoiseIndex = frame % 64 | vaGTAO.hlsl L81 | ⬜ TBD |
+| 3 | HilbertIndex implementation | XeGTAO.h L120-142 | ⬜ TBD |
+| 4 | R2 sequence (0.7548776662...) | vaGTAO.hlsl L85 | ⬜ TBD |
+| 5 | SpatioTemporalNoise output | vaGTAO.hlsl L74-91 | ⬜ TBD |
+| 6 | Remove noise texture dependency | gtao.wgsl | ⬜ TBD |
 
 **Verification:**
 - With TAA: no temporal artifacts
@@ -246,9 +268,15 @@ After all fixes are complete, verify each line matches:
 | 43 | visibility /= sliceCount | L556 | TBD | ⬜ |
 | 44 | visibility = pow | L557 | TBD | ⬜ |
 | 45 | visibility = max(0.03, ...) | L558 | TBD | ⬜ |
-| 46 | Edge calculation | L120-129 | TBD | ⬜ |
-| 47 | Edge packing | L132-141 | TBD | ⬜ |
-| 48 | Denoise algorithm | L704-826 | TBD | ⬜ |
+| 46 | Edge calculation | L120-129 | gtao.wgsl:246-260 | ✅ |
+| 47 | Edge packing | L132-141 | gtao.wgsl:264-269 | ✅ |
+| 48 | Edge unpacking | L686-696 | gtao_denoise.wgsl:44-56 | ✅ |
+| 49 | AddSample helper | L704-710 | gtao_denoise.wgsl:63-67 | ✅ |
+| 50 | Denoise blur amount | L736-737 | gtao_denoise.wgsl:86-93 | ✅ |
+| 51 | Edge symmetry enforcement | L769-770 | gtao_denoise.wgsl:122-124 | ✅ |
+| 52 | AO leaking prevention | L772-776 | gtao_denoise.wgsl:126-132 | ✅ |
+| 53 | Diagonal weights | L785-788 | gtao_denoise.wgsl:134-139 | ✅ |
+| 54 | Denoise weighted sum | L801-814 | gtao_denoise.wgsl:152-166 | ✅ |
 
 ---
 
