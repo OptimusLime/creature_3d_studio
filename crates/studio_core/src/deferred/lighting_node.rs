@@ -250,6 +250,7 @@ impl ViewNode for LightingPassNode {
         // Prefer denoised texture if available, otherwise fall back to raw GTAO
         let gtao_bind_group = if let Some(denoised) = gtao_denoised {
             // Use XeGTAO denoised output
+            info!("Lighting: Using DENOISED GTAO texture");
             Some(render_context.render_device().create_bind_group(
                 "lighting_gtao_denoised_bind_group",
                 &lighting_pipeline.gtao_layout,
@@ -266,6 +267,7 @@ impl ViewNode for LightingPassNode {
             ))
         } else if let Some(gtao) = gtao_texture {
             // Fall back to raw GTAO (shouldn't happen if pipeline is set up correctly)
+            warn!("Lighting: Falling back to RAW GTAO texture (denoised not available)");
             Some(render_context.render_device().create_bind_group(
                 "lighting_gtao_raw_bind_group",
                 &lighting_pipeline.gtao_layout,

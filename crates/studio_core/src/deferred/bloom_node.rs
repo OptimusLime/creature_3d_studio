@@ -41,6 +41,11 @@ impl ViewNode for BloomNode {
             .cloned()
             .unwrap_or_default();
 
+        // Skip bloom if disabled
+        if !bloom_config.enabled {
+            return Ok(());
+        }
+
         // Get pipelines
         let Some(downsample_pipeline) =
             pipeline_cache.get_render_pipeline(bloom_pipeline.downsample_pipeline_id)

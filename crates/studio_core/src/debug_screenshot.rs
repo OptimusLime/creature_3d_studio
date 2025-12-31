@@ -35,6 +35,8 @@ pub struct DebugCapture {
     pub gtao_debug_mode: i32,
     /// Lighting shader debug mode (passed via uniform)  
     pub lighting_debug_mode: i32,
+    /// Denoiser debug mode: 0=normal, 1=sum_weight, 2=edges_c, 3=blur_amount, 4=diff
+    pub denoise_debug_mode: u32,
     /// Number of frames to wait before capture (for stabilization)
     pub wait_frames: u32,
 }
@@ -45,6 +47,7 @@ impl Default for DebugCapture {
             name: "render".to_string(),
             gtao_debug_mode: 0,
             lighting_debug_mode: 0,
+            denoise_debug_mode: 0,
             wait_frames: 5,
         }
     }
@@ -74,6 +77,25 @@ impl DebugCapture {
             name: format!("gtao_mode_{}", mode),
             gtao_debug_mode: mode,
             lighting_debug_mode: 0,
+            denoise_debug_mode: 0,
+            wait_frames: 5,
+        }
+    }
+
+    /// Create a capture with denoiser debug mode.
+    ///
+    /// Denoiser debug modes:
+    /// - 0: Normal denoised output
+    /// - 1: Sum weight (normalized to [0,1] by /8)
+    /// - 2: Min edges_c after symmetry
+    /// - 3: Blur amount (normalized by /2)
+    /// - 4: Difference from input (*10)
+    pub fn denoise_debug(mode: u32) -> Self {
+        Self {
+            name: format!("denoise_mode_{}", mode),
+            gtao_debug_mode: 0,
+            lighting_debug_mode: 5, // Show AO only
+            denoise_debug_mode: mode,
             wait_frames: 5,
         }
     }
@@ -94,6 +116,7 @@ impl DebugCapture {
             name: format!("lighting_mode_{}", mode),
             gtao_debug_mode: 0,
             lighting_debug_mode: mode,
+            denoise_debug_mode: 0,
             wait_frames: 5,
         }
     }
@@ -230,6 +253,8 @@ pub struct DebugModes {
     pub gtao_debug_mode: i32,
     /// Lighting shader debug mode (0 = normal, 1-7 = various debug visualizations)
     pub lighting_debug_mode: i32,
+    /// Denoiser debug mode (0 = normal, 1-4 = debug visualizations)
+    pub denoise_debug_mode: u32,
 }
 
 /// System to process debug screenshot captures.
@@ -256,6 +281,7 @@ pub fn debug_screenshot_system(
     // Update debug modes for current capture
     debug_modes.gtao_debug_mode = capture.gtao_debug_mode;
     debug_modes.lighting_debug_mode = capture.lighting_debug_mode;
+    debug_modes.denoise_debug_mode = capture.denoise_debug_mode;
 
     // Wait for stabilization
     let wait_needed = state.current_wait_frames();

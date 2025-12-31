@@ -183,6 +183,8 @@ pub struct VoxelWorldApp {
     config: VoxelWorldConfig,
     world_source: WorldSource,
     setup_callback: Option<Box<dyn FnOnce(&mut Commands, &VoxelWorld) + Send + Sync>>,
+    /// Whether deferred bloom is enabled (default: true)
+    deferred_bloom_enabled: bool,
 }
 
 impl VoxelWorldApp {
@@ -207,6 +209,7 @@ impl VoxelWorldApp {
             },
             world_source: WorldSource::Empty,
             setup_callback: None,
+            deferred_bloom_enabled: true,
         }
     }
 
@@ -351,6 +354,17 @@ impl VoxelWorldApp {
         self
     }
 
+    /// Disable deferred bloom (useful for clean debug output).
+    pub fn without_deferred_bloom(self) -> Self {
+        self.with_deferred_bloom_enabled(false)
+    }
+
+    /// Enable/disable deferred bloom.
+    pub fn with_deferred_bloom_enabled(mut self, enabled: bool) -> Self {
+        self.deferred_bloom_enabled = enabled;
+        self
+    }
+
     /// Enable/disable cross-chunk face culling.
     pub fn with_cross_chunk_culling(mut self, enabled: bool) -> Self {
         self.config.use_cross_chunk_culling = enabled;
@@ -419,6 +433,12 @@ impl VoxelWorldApp {
         // Override moon config if specified (must happen after DeferredRenderingPlugin)
         if let Some(moon_config) = self.config.moon_config.clone() {
             app.insert_resource(moon_config);
+        }
+
+        // Override deferred bloom config if disabled (must happen after DeferredRenderingPlugin)
+        if use_deferred && !self.deferred_bloom_enabled {
+            use crate::deferred::BloomConfig as DeferredBloomConfig;
+            app.insert_resource(DeferredBloomConfig::disabled());
         }
 
         // Debug screenshot plugin (if configured)

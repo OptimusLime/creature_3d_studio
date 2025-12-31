@@ -83,6 +83,9 @@ impl Plugin for DeferredRenderingPlugin {
         
         // Extract DebugModes resource to render world (for runtime debug mode switching)
         app.add_plugins(ExtractResourcePlugin::<DebugModes>::default());
+        
+        // Extract BloomConfig resource to render world (for enabling/disabling bloom)
+        app.add_plugins(ExtractResourcePlugin::<BloomConfig>::default());
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {

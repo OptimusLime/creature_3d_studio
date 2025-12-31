@@ -147,6 +147,9 @@ pub struct GtaoConfig {
 
     /// Enable/disable GTAO entirely
     pub enabled: bool,
+
+    /// Debug mode for denoiser: 0=normal, 1=sum_weight, 2=edges_c, 3=blur_amount, 4=diff
+    pub denoise_debug_mode: u32,
 }
 
 impl Default for GtaoConfig {
@@ -154,10 +157,10 @@ impl Default for GtaoConfig {
         Self {
             // HIGH quality preset - 3 slices, 3 steps = 18 samples
             quality_level: GtaoQualityLevel::High,
-            // Sharp denoise - 1 pass with beta=1.2
-            denoise_level: GtaoDenoiseLevel::Sharp,
-            // Scene-dependent radius - 3.0 works well for our voxel scenes
-            effect_radius: 3.0,
+            // Medium denoise - 2 passes for good balance of quality and performance
+            denoise_level: GtaoDenoiseLevel::Medium,
+            // XeGTAO default
+            effect_radius: 0.5,
             // XeGTAO defaults below
             effect_falloff_range: 0.615,
             radius_multiplier: 1.457,
@@ -166,6 +169,7 @@ impl Default for GtaoConfig {
             thin_occluder_compensation: 0.0,
             depth_mip_sampling_offset: 3.30,
             enabled: true,
+            denoise_debug_mode: 0,
         }
     }
 }

@@ -91,14 +91,14 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     return out;
 }
 
-// Linearize depth from clip-space z to linear distance
-// Reverse-Z: near = 1, far = 0, so we need to handle that
-fn linearize_depth(ndc_z: f32) -> f32 {
-    // For reverse-Z with infinite far plane:
-    // linear_depth = near / ndc_z
-    // But we use finite far, so:
-    let z = ndc_z;
-    return (2.0 * NEAR_CLIP * FAR_CLIP) / (FAR_CLIP + NEAR_CLIP - z * (FAR_CLIP - NEAR_CLIP));
+// Linearize depth from NDC depth to linear viewspace distance
+// Bevy uses INFINITE REVERSE-Z: near plane maps to z=1.0, far (infinity) maps to z=0.0
+// Formula: linear_z = near / (epsilon + ndc_depth)
+// The epsilon prevents division by zero at the far plane
+fn linearize_depth(ndc_depth: f32) -> f32 {
+    // Small epsilon to avoid division by zero at far plane (ndc_depth = 0)
+    let epsilon = 0.0001;
+    return NEAR_CLIP / (epsilon + ndc_depth);
 }
 
 @fragment
@@ -115,9 +115,11 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     out.g_normal = vec4<f32>(normal, in.ao);
     
     // G-Buffer output 2: World position + linear depth
-    // Linear depth is calculated from NDC z for use in fog/lighting
-    let ndc_z = in.clip_position.z / in.clip_position.w;
-    let linear_depth = linearize_depth(ndc_z);
+    // Linear depth is calculated from NDC depth for use in fog/lighting
+    // NOTE: @builtin(position).z is already the NDC depth [0,1], NOT clip space z
+    // The perspective divide has already been performed by the hardware
+    let ndc_depth = in.clip_position.z;
+    let linear_depth = linearize_depth(ndc_depth);
     out.g_position = vec4<f32>(in.world_position, linear_depth);
     
     return out;

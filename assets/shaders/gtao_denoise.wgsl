@@ -31,7 +31,8 @@ struct DenoiseUniforms {
     viewport_pixel_size: vec2<f32>, // 1/width, 1/height
     denoise_blur_beta: f32,         // XeGTAO default: 1.2
     is_final_pass: u32,             // 1 if final pass, 0 otherwise
-    padding: vec2<f32>,
+    debug_mode: u32,                // 0=normal, 1=sum_weight, 2=edges_c, 3=blur_amount
+    padding: f32,
 }
 @group(2) @binding(0) var<uniform> uniforms: DenoiseUniforms;
 
@@ -82,6 +83,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
+
+    
     // XeGTAO L736-737: Blur amount based on pass
     let blur_amount = select(
         uniforms.denoise_blur_beta / 5.0,  // Intermediate passes
@@ -109,6 +112,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         let center_uv = (vec2<f32>(pix_coord) + 0.5) * uniforms.viewport_pixel_size;
         let pixel_size = uniforms.viewport_pixel_size;
+        
+        // Denoiser is now active - passthrough debug removed
         
         // Sample edges at neighboring pixels
         let edges_l = unpack_edges(textureSampleLevel(input_edges, input_sampler, center_uv + vec2<f32>(-pixel_size.x, 0.0), 0.0).r);
@@ -168,7 +173,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // XeGTAO L814: Normalize
         let denoised_ao = sum / sum_weight;
         
+        // Debug output modes
+        var output_value = denoised_ao;
+        if uniforms.debug_mode == 1u {
+            // Visualize sum_weight: should be ~blur_amount + 4*edge_weights + 4*diag_weights
+            // For blur_beta=1.2 with full edges, sum_weight ~ 1.2 + 4*1 + 4*0.425 = 6.9
+            // Normalize to [0,1] by dividing by 8
+            output_value = sum_weight / 8.0;
+        } else if uniforms.debug_mode == 2u {
+            // Visualize edges_c after symmetry (min of all 4)
+            output_value = min(min(edges_c.x, edges_c.y), min(edges_c.z, edges_c.w));
+        } else if uniforms.debug_mode == 3u {
+            // Visualize blur_amount
+            output_value = blur_amount / 2.0;
+        } else if uniforms.debug_mode == 4u {
+            // Visualize difference: abs(denoised - input)
+            // Multiply by 10 to make small differences visible
+            output_value = abs(denoised_ao - ao_c) * 10.0;
+        }
+        
         // Write output
-        textureStore(output_ao, pix_coord, vec4<f32>(denoised_ao, 0.0, 0.0, 1.0));
+        textureStore(output_ao, pix_coord, vec4<f32>(output_value, 0.0, 0.0, 1.0));
     }
 }

@@ -10,6 +10,7 @@
 
 use bevy::prelude::*;
 use bevy::render::{
+    extract_resource::ExtractResource,
     render_resource::{
         BindGroupLayout, BindGroupLayoutEntry,
         BindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
@@ -27,8 +28,10 @@ use bevy::render::{
 pub const BLOOM_MIP_LEVELS: usize = 6;
 
 /// Bloom configuration.
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct BloomConfig {
+    /// Whether bloom is enabled
+    pub enabled: bool,
     /// Minimum brightness for bloom (0.0-1.0)
     pub threshold: f32,
     /// Bloom intensity multiplier
@@ -42,10 +45,21 @@ pub struct BloomConfig {
 impl Default for BloomConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             threshold: 0.6,      // Lower threshold to catch colored emissive surfaces
             intensity: 1.5,      // Moderate bloom - preserves color saturation
             blend_factor: 0.6,   // Moderate blend for visible glow without washout
             exposure: 1.2,       // Slightly higher exposure for darker scenes
+        }
+    }
+}
+
+impl BloomConfig {
+    /// Create a disabled bloom config (for clean debug output)
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ..Default::default()
         }
     }
 }

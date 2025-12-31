@@ -289,8 +289,10 @@ fn calculate_edges(center_z: f32, left_z: f32, right_z: f32, top_z: f32, bottom_
     // XeGTAO L127: Take minimum of absolute values
     edges = min(abs(edges), abs(edges_slope_adjusted));
     
-    // XeGTAO L128: Final edge computation - 1.25 - edges/(centerZ * 0.011)
-    return saturate(vec4<f32>(1.25) - edges / (center_z * 0.011));
+    // XeGTAO L128: Final edge computation - 1.25 - edges/(centerZ * edgeSensitivity)
+    // Using XeGTAO reference value of 0.011
+    let edge_sensitivity = 0.011;
+    return saturate(vec4<f32>(1.25) - edges / (center_z * edge_sensitivity));
 }
 
 // XeGTAO.hlsli L132-141: Pack 4 edge values into single float
@@ -694,6 +696,24 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         return output;
     }
     
+    // Mode 16: Inverted depth with tighter range (near=white, far=black)
+    // Maps depth 15-45 units to full 0-1 range for this test scene
+    if debug_mode == 16 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let depth = get_viewspace_depth(in.uv);
+        // Map 15-45 range to 1-0 (inverted so near=bright, far=dark)
+        let near_range = 15.0;
+        let far_range = 45.0;
+        let normalized = (depth - near_range) / (far_range - near_range);
+        output.ao = 1.0 - clamp(normalized, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
+    }
+    
     // Mode 20: View-space normal.z (camera-facing = bright)
     if debug_mode == 20 {
         if is_sky(in.uv) { 
@@ -703,6 +723,24 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         }
         let N = get_viewspace_normal(in.uv);
         output.ao = N.z * 0.5 + 0.5;
+        output.edges = 0.0;
+        return output;
+    }
+    
+    // Mode 21: View-space normal.xy encoded as color
+    // X: red channel (0.5 = center, 0 = left, 1 = right)
+    // Y: green channel (0.5 = center, 0 = down, 1 = up)
+    // Since we output single channel, encode as: 0.5 + 0.25*x + 0.25*y
+    if debug_mode == 21 {
+        if is_sky(in.uv) { 
+            output.ao = 0.5;
+            output.edges = 0.0;
+            return output;
+        }
+        let N = get_viewspace_normal(in.uv);
+        // Encode X and Y into single grayscale value
+        // This gives: left-down=0, center=0.5, right-up=1
+        output.ao = 0.5 + N.x * 0.25 + N.y * 0.25;
         output.edges = 0.0;
         return output;
     }
@@ -734,6 +772,134 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
         let packed = compute_packed_edges(in.uv);
         output.ao = packed;
         output.edges = packed;
+        return output;
+    }
+    
+    // Mode 41: Raw edge values BEFORE formula (for debugging)
+    // Shows max(abs(depth differences)) scaled for visibility
+    if debug_mode == 41 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let pixel_size = camera.screen_size.zw;
+        let center_z = get_viewspace_depth(in.uv);
+        let left_z = get_viewspace_depth(in.uv + vec2<f32>(-pixel_size.x, 0.0));
+        let right_z = get_viewspace_depth(in.uv + vec2<f32>(pixel_size.x, 0.0));
+        let top_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, -pixel_size.y));
+        let bottom_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, pixel_size.y));
+        
+        // Raw depth differences
+        let raw_edges = vec4<f32>(left_z, right_z, top_z, bottom_z) - center_z;
+        let max_edge = max(max(abs(raw_edges.x), abs(raw_edges.y)), max(abs(raw_edges.z), abs(raw_edges.w)));
+        
+        // Scale: 0-2 viewspace units maps to 0-1 grayscale
+        output.ao = clamp(max_edge / 2.0, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
+    }
+    
+    // Mode 42: The divisor term (center_z * 0.011) for debugging
+    if debug_mode == 42 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let center_z = get_viewspace_depth(in.uv);
+        // Show the divisor term scaled to 0-1 range (0-1 for center_z * 0.011 up to 0.9)
+        output.ao = clamp(center_z * 0.011 / 0.9, 0.0, 1.0);
+        output.edges = 0.0;
+        return output;
+    }
+    
+    // Mode 43: Edge values AFTER calculate_edges() but BEFORE pack_edges()
+    // Shows the minimum edge value (0 = strong edge, 1 = no edge)
+    if debug_mode == 43 {
+        if is_sky(in.uv) { 
+            output.ao = 1.0;
+            output.edges = 1.0;
+            return output;
+        }
+        let pixel_size = camera.screen_size.zw;
+        let center_z = get_viewspace_depth(in.uv);
+        let left_z = get_viewspace_depth(in.uv + vec2<f32>(-pixel_size.x, 0.0));
+        let right_z = get_viewspace_depth(in.uv + vec2<f32>(pixel_size.x, 0.0));
+        let top_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, -pixel_size.y));
+        let bottom_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, pixel_size.y));
+        
+        // Get unpacked edge values
+        let edges = calculate_edges(center_z, left_z, right_z, top_z, bottom_z);
+        
+        // Show minimum edge value (should be low at discontinuities, high on smooth surfaces)
+        let min_edge = min(min(edges.x, edges.y), min(edges.z, edges.w));
+        output.ao = min_edge;
+        output.edges = min_edge;
+        return output;
+    }
+    
+    // Mode 44: Show INVERTED minimum edge (1 - min_edge) to highlight edges as BRIGHT
+    // This makes edges more visible for debugging
+    if debug_mode == 44 {
+        if is_sky(in.uv) { 
+            output.ao = 0.0;
+            output.edges = 0.0;
+            return output;
+        }
+        let pixel_size = camera.screen_size.zw;
+        let center_z = get_viewspace_depth(in.uv);
+        let left_z = get_viewspace_depth(in.uv + vec2<f32>(-pixel_size.x, 0.0));
+        let right_z = get_viewspace_depth(in.uv + vec2<f32>(pixel_size.x, 0.0));
+        let top_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, -pixel_size.y));
+        let bottom_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, pixel_size.y));
+        
+        let edges = calculate_edges(center_z, left_z, right_z, top_z, bottom_z);
+        let min_edge = min(min(edges.x, edges.y), min(edges.z, edges.w));
+        // Invert and amplify: edges near 0.8 become 0.2, edges near 1.0 become 0.0
+        // Then scale by 5x to make small differences visible
+        output.ao = clamp((1.0 - min_edge) * 5.0, 0.0, 1.0);
+        output.edges = output.ao;
+        return output;
+    }
+    
+    // Mode 45: Show the actual numeric min edge value - useful for checking exact numbers
+    // Output format: if edge < 0.5, output edge (black to mid-gray)
+    //                if edge >= 0.5, output edge (mid-gray to white)
+    if debug_mode == 45 {
+        if is_sky(in.uv) { 
+            output.ao = 1.0;
+            output.edges = 1.0;
+            return output;
+        }
+        let pixel_size = camera.screen_size.zw;
+        let center_z = get_viewspace_depth(in.uv);
+        let left_z = get_viewspace_depth(in.uv + vec2<f32>(-pixel_size.x, 0.0));
+        let right_z = get_viewspace_depth(in.uv + vec2<f32>(pixel_size.x, 0.0));
+        let top_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, -pixel_size.y));
+        let bottom_z = get_viewspace_depth(in.uv + vec2<f32>(0.0, pixel_size.y));
+        
+        let edges = calculate_edges(center_z, left_z, right_z, top_z, bottom_z);
+        let min_edge = min(min(edges.x, edges.y), min(edges.z, edges.w));
+        // Direct output - value IS the grayscale
+        output.ao = min_edge;
+        output.edges = min_edge;
+        return output;
+    }
+    
+    // Mode 50: Raw GTAO visibility (BEFORE denoising)
+    // This shows the direct output from compute_gtao() - expected to be noisy
+    // Corners/crevices should be DARK, flat surfaces should be BRIGHT
+    if debug_mode == 50 {
+        if is_sky(in.uv) { 
+            output.ao = 1.0;
+            output.edges = 1.0;
+            return output;
+        }
+        let pixel_pos = in.uv * camera.screen_size.xy;
+        // Raw visibility - this is what goes into the denoiser
+        output.ao = compute_gtao(in.uv, pixel_pos);
+        output.edges = compute_packed_edges(in.uv);
         return output;
     }
     
