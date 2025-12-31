@@ -15,11 +15,13 @@ use bevy::prelude::*;
 
 pub mod chunk_streaming;
 pub mod creature_script;
+pub mod day_night;
 pub mod debug_screenshot;
 pub mod deferred;
 pub mod orbit_camera;
 pub mod scene_utils;
 pub mod screenshot;
+pub mod screenshot_sequence;
 pub mod voxel;
 pub mod voxel_mesh;
 pub mod voxel_world_plugin;
@@ -63,6 +65,14 @@ pub use voxel_world_plugin::{
 };
 pub use debug_screenshot::{
     DebugCapture, DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState,
+};
+pub use day_night::{
+    ColorKeyframe, ColorLutConfig, DayNightCycle, DayNightCyclePlugin, InterpolationMode,
+    MoonCycleConfig, apply_cycle_to_bloom, apply_cycle_to_moon_config, update_day_night_cycle,
+};
+pub use screenshot_sequence::{
+    ScreenshotSequence, ScreenshotSequencePlugin, SequenceState,
+    capture_screenshot_sequence,
 };
 
 /// Core plugin for shared functionality.

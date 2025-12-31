@@ -46,8 +46,10 @@ use bevy::render::view::Hdr;
 use bevy::window::WindowPlugin;
 use std::path::Path;
 
+use crate::day_night::{DayNightCycle, DayNightCyclePlugin};
 use crate::deferred::{DeferredCamera, DeferredRenderingPlugin, MoonConfig};
 use crate::scene_utils::{spawn_world_with_lights_config, CameraPreset, WorldSpawnConfig};
+use crate::screenshot_sequence::{ScreenshotSequence, ScreenshotSequencePlugin};
 use crate::voxel::VoxelWorld;
 use crate::voxel_mesh::VoxelMaterialPlugin;
 use crate::world_io::load_world;
@@ -176,6 +178,10 @@ pub struct VoxelWorldConfig {
     pub bloom: Option<BloomConfig>,
     /// Moon configuration for dual moon lighting
     pub moon_config: Option<MoonConfig>,
+    /// Day/night cycle configuration
+    pub day_night_cycle: Option<DayNightCycle>,
+    /// Screenshot sequence configuration
+    pub screenshot_sequence: Option<ScreenshotSequence>,
 }
 
 /// Builder for creating a VoxelWorld app with minimal boilerplate.
@@ -206,6 +212,8 @@ impl VoxelWorldApp {
                 use_hdr: false,
                 bloom: None,
                 moon_config: None,
+                day_night_cycle: None,
+                screenshot_sequence: None,
             },
             world_source: WorldSource::Empty,
             setup_callback: None,
@@ -386,6 +394,28 @@ impl VoxelWorldApp {
         self
     }
 
+    /// Enable day/night cycle with the given configuration.
+    ///
+    /// This enables automatic moon position/color cycling over time.
+    /// The cycle updates each frame and syncs to MoonConfig.
+    pub fn with_day_night_cycle(mut self, cycle: DayNightCycle) -> Self {
+        self.config.day_night_cycle = Some(cycle);
+        self
+    }
+
+    /// Enable screenshot sequence capture.
+    ///
+    /// This will capture screenshots at specific times in the day/night cycle.
+    /// The app will auto-exit when the sequence is complete.
+    ///
+    /// NOTE: This requires a day/night cycle to be configured.
+    pub fn with_screenshot_sequence(mut self, sequence: ScreenshotSequence) -> Self {
+        self.config.screenshot_sequence = Some(sequence);
+        // Disable simple screenshot when using sequence
+        self.config.screenshot = None;
+        self
+    }
+
     /// Add a custom setup callback.
     pub fn with_setup<F>(mut self, callback: F) -> Self
     where
@@ -433,6 +463,18 @@ impl VoxelWorldApp {
         // Override moon config if specified (must happen after DeferredRenderingPlugin)
         if let Some(moon_config) = self.config.moon_config.clone() {
             app.insert_resource(moon_config);
+        }
+
+        // Add day/night cycle if configured
+        if let Some(day_night_cycle) = self.config.day_night_cycle.clone() {
+            app.add_plugins(DayNightCyclePlugin);
+            app.insert_resource(day_night_cycle);
+        }
+
+        // Add screenshot sequence if configured
+        if let Some(screenshot_sequence) = self.config.screenshot_sequence.clone() {
+            app.add_plugins(ScreenshotSequencePlugin);
+            app.insert_resource(screenshot_sequence);
         }
 
         // Override deferred bloom config if disabled (must happen after DeferredRenderingPlugin)

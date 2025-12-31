@@ -352,7 +352,10 @@ Bonsai-quality voxel rendering in Bevy. Dark fantasy 80s aesthetic: magenta/cyan
 | 15b | Point Light Shadows | `p13_point_light_shadow` | Cube shadow maps | ✅ Done |
 | 16 | Multi-Chunk World | `p16_multi_chunk` | VoxelWorld + HashMap | ✅ Done |
 | 17 | Chunk Streaming | `p17_chunk_streaming` | Distance-based load/unload | ✅ Done |
-| **18** | **Cross-Chunk Culling** | TBD | Border buffers | **NEXT** |
+| 18 | Cross-Chunk Culling | `p18_cross_chunk_culling` | Border buffers | ✅ Done |
+| 19 | Dual Moon Shadows | `p19_dual_moon_shadows` | Independent shadow maps | ✅ Done |
+| 20 | GTAO | `p20_gtao_test` | Screen-space ambient occlusion | ✅ Done |
+| **21** | **Day/Night Cycle** | `p21_day_night_cycle` | Independent moon orbits, LUT color grading, screenshot sequence | ✅ Done |
 
 ---
 
