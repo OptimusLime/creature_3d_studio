@@ -78,6 +78,7 @@ pub use screenshot_sequence::{
 };
 pub use voxel_physics::{
     generate_trimesh_collider, generate_chunk_colliders,
+    generate_cuboid_collider, generate_merged_cuboid_collider,
 };
 pub use voxel_fragment::{
     VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,

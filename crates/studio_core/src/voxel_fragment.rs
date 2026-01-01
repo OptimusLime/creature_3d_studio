@@ -39,7 +39,7 @@ use bevy_rapier3d::prelude::*;
 
 use crate::voxel::VoxelWorld;
 use crate::voxel_mesh::build_world_meshes_cross_chunk;
-use crate::voxel_physics::generate_trimesh_collider;
+use crate::voxel_physics::generate_merged_cuboid_collider;
 
 /// A dynamic piece of voxel geometry that exists in the physics world.
 ///
@@ -142,8 +142,8 @@ pub fn spawn_fragment(
     position: Vec3,
     impulse: Vec3,
 ) -> Option<Entity> {
-    // Generate collider from voxel data
-    let collider = generate_trimesh_collider(&data)?;
+    // Generate collider from voxel data - use merged cuboids for MUCH better performance
+    let collider = generate_merged_cuboid_collider(&data)?;
     
     // Calculate origin as integer position
     let origin = IVec3::new(
@@ -198,8 +198,8 @@ pub fn spawn_fragment_with_mesh(
     impulse: Vec3,
     material: Handle<crate::voxel_mesh::VoxelMaterial>,
 ) -> Option<Entity> {
-    // Generate collider and mesh from voxel data
-    let collider = generate_trimesh_collider(&data)?;
+    // Generate collider - use merged cuboids for MUCH better performance
+    let collider = generate_merged_cuboid_collider(&data)?;
     let chunk_meshes = build_world_meshes_cross_chunk(&data);
     
     // Calculate origin as integer position
@@ -311,7 +311,7 @@ mod tests {
     fn test_spawn_fragment_empty_returns_none() {
         // Can't test full spawn without Bevy app, but we can test the logic
         let data = VoxelWorld::new();
-        let collider = generate_trimesh_collider(&data);
+        let collider = generate_merged_cuboid_collider(&data);
         assert!(collider.is_none(), "Empty world should produce no collider");
     }
 
@@ -320,7 +320,7 @@ mod tests {
         let mut data = VoxelWorld::new();
         data.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
         
-        let collider = generate_trimesh_collider(&data);
+        let collider = generate_merged_cuboid_collider(&data);
         assert!(collider.is_some(), "Non-empty world should produce collider");
     }
 }

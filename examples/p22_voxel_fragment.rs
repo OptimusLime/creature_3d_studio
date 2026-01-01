@@ -9,11 +9,14 @@
 //!
 //! Press SPACE to spawn a new fragment above the terrain.
 //! Press R to reset all fragments.
+//! Press B to run benchmark (spawns 1, 2, 4, 8 fragments and measures physics time)
 //!
 //! Screenshots saved to: screenshots/voxel_fragment/
 
 use bevy::prelude::*;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy_rapier3d::prelude::*;
+use std::time::Instant;
 use studio_core::{
     generate_trimesh_collider, spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin,
     VoxelMaterial, VoxelMaterialPlugin, VoxelWorld,
@@ -41,6 +44,8 @@ fn main() {
             }),
             ..default()
         }))
+        // Diagnostics
+        .add_plugins(FrameTimeDiagnosticsPlugin::default())
         // Physics
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
@@ -51,8 +56,16 @@ fn main() {
         .add_plugins(VoxelFragmentPlugin)
         // Systems
         .add_systems(Startup, setup)
-        .add_systems(Update, (spawn_fragment_on_space, reset_fragments))
+        .add_systems(Update, (
+            spawn_fragment_on_space, 
+            reset_fragments,
+            display_fps,
+            run_benchmark,
+            log_physics_stats,
+        ))
         .insert_resource(FragmentSpawnConfig::default())
+        .insert_resource(PhysicsStats::default())
+        .insert_resource(BenchmarkState::default())
         .run();
 }
 
@@ -81,36 +94,35 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
-    // Create terrain
+    // Create terrain - USE UNIFORM COLORS for greedy meshing to work!
+    // Checkerboard pattern defeats greedy meshing: 1760 tris vs 32 tris!
     let mut terrain = VoxelWorld::new();
     
-    // Ground platform (20x20, 3 blocks thick)
+    // Ground platform (20x20, 3 blocks thick) - SINGLE COLOR
+    let ground_color = Voxel::solid(70, 70, 80);
     for x in -10..10 {
         for z in -10..10 {
             for y in 0..3 {
-                let color = if (x + z) % 2 == 0 {
-                    Voxel::solid(80, 80, 90)
-                } else {
-                    Voxel::solid(60, 60, 70)
-                };
-                terrain.set_voxel(x, y, z, color);
+                terrain.set_voxel(x, y, z, ground_color);
             }
         }
     }
     
-    // Add some pillars for interesting collisions
+    // Add some pillars for interesting collisions - SINGLE COLOR per pillar
+    let pillar_color = Voxel::solid(100, 60, 60);
     for (px, pz) in [(-5, -5), (5, -5), (-5, 5), (5, 5)] {
         for y in 3..8 {
-            terrain.set_voxel(px, y, pz, Voxel::solid(100, 60, 60));
+            terrain.set_voxel(px, y, pz, pillar_color);
         }
     }
     
-    // Center ramp
+    // Center ramp - SINGLE COLOR
+    let ramp_color = Voxel::solid(60, 100, 60);
     for x in -2..3 {
         for z in -2..3 {
             let height = 3 + (x + 2) as i32;
             for y in 3..height {
-                terrain.set_voxel(x, y, z, Voxel::solid(60, 100, 60));
+                terrain.set_voxel(x, y, z, ramp_color);
             }
         }
     }
@@ -244,5 +256,216 @@ fn reset_fragments(
             commands.entity(entity).despawn();
         }
         info!("Reset {} fragments", count);
+    }
+}
+
+/// Physics performance stats
+#[derive(Resource, Default)]
+struct PhysicsStats {
+    last_report: f32,
+    frame_count: u32,
+}
+
+/// Display FPS and physics info
+fn display_fps(
+    diagnostics: Res<DiagnosticsStore>,
+    fragments: Query<(&Collider, &Velocity), With<SpawnedFragment>>,
+    terrain_colliders: Query<&Collider, Without<SpawnedFragment>>,
+    time: Res<Time>,
+    mut stats: ResMut<PhysicsStats>,
+) {
+    stats.frame_count += 1;
+    stats.last_report += time.delta_secs();
+    
+    // Report every 2 seconds
+    if stats.last_report >= 2.0 {
+        let fps = diagnostics
+            .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
+            .and_then(|d| d.smoothed())
+            .unwrap_or(0.0);
+        
+        let frame_time = diagnostics
+            .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
+            .and_then(|d| d.smoothed())
+            .unwrap_or(0.0);
+        
+        let fragment_count = fragments.iter().count();
+        
+        // Count triangles in terrain collider
+        let mut terrain_tris = 0;
+        for collider in terrain_colliders.iter() {
+            if let Some(trimesh) = collider.as_trimesh() {
+                terrain_tris += trimesh.indices().len();
+            }
+        }
+        
+        // Count triangles in fragment colliders
+        let mut fragment_tris = 0;
+        for (collider, _) in fragments.iter() {
+            if let Some(trimesh) = collider.as_trimesh() {
+                fragment_tris += trimesh.indices().len();
+            }
+        }
+        
+        info!(
+            "FPS: {:.1} | Frame: {:.2}ms | Fragments: {} | Terrain tris: {} | Fragment tris: {}",
+            fps, frame_time, fragment_count, terrain_tris, fragment_tris
+        );
+        
+        stats.last_report = 0.0;
+        stats.frame_count = 0;
+    }
+}
+
+/// Log detailed physics stats
+fn log_physics_stats(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    fragments: Query<(&Collider, &Transform, &Velocity), With<SpawnedFragment>>,
+    terrain: Query<&Collider, Without<SpawnedFragment>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        info!("=== PHYSICS STATS ===");
+        
+        // Terrain info
+        for collider in terrain.iter() {
+            if let Some(trimesh) = collider.as_trimesh() {
+                info!("Terrain: {} vertices, {} triangles", 
+                    trimesh.vertices().len(),
+                    trimesh.indices().len()
+                );
+            }
+        }
+        
+        // Fragment info
+        for (i, (collider, transform, velocity)) in fragments.iter().enumerate() {
+            if let Some(trimesh) = collider.as_trimesh() {
+                info!(
+                    "Fragment {}: {} tris, pos={:?}, vel={:.2}",
+                    i,
+                    trimesh.indices().len(),
+                    transform.translation,
+                    velocity.linvel.length()
+                );
+            }
+        }
+    }
+}
+
+/// Benchmark state
+#[derive(Resource, Default)]
+struct BenchmarkState {
+    running: bool,
+    stage: usize,
+    start_time: Option<Instant>,
+    results: Vec<(usize, f64)>, // (fragment_count, avg_frame_time_ms)
+    frames_in_stage: u32,
+    accumulated_time: f64,
+}
+
+/// Run benchmark when B is pressed
+fn run_benchmark(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    material_handle: Res<VoxelMaterialHandle>,
+    mut state: ResMut<BenchmarkState>,
+    fragments: Query<Entity, With<SpawnedFragment>>,
+    diagnostics: Res<DiagnosticsStore>,
+    _time: Res<Time>,
+) {
+    // Start benchmark
+    if keyboard.just_pressed(KeyCode::KeyB) && !state.running {
+        info!("=== STARTING PHYSICS BENCHMARK ===");
+        state.running = true;
+        state.stage = 0;
+        state.results.clear();
+        state.frames_in_stage = 0;
+        state.accumulated_time = 0.0;
+        
+        // Clear existing fragments
+        for entity in fragments.iter() {
+            commands.entity(entity).despawn();
+        }
+    }
+    
+    if !state.running {
+        return;
+    }
+    
+    let stages = [1, 2, 4, 8, 16];
+    
+    if state.stage >= stages.len() {
+        // Benchmark complete
+        info!("=== BENCHMARK RESULTS ===");
+        for (count, time) in &state.results {
+            info!("  {} fragments: {:.2}ms avg frame time", count, time);
+        }
+        state.running = false;
+        return;
+    }
+    
+    let target_fragments = stages[state.stage];
+    let current_fragments = fragments.iter().count();
+    
+    // Spawn fragments if needed
+    if current_fragments < target_fragments {
+        let mut fragment_data = VoxelWorld::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    fragment_data.set_voxel(x, y, z, Voxel::solid(200, 100, 100));
+                }
+            }
+        }
+        
+        let x = (simple_random() - 0.5) * 8.0;
+        let z = (simple_random() - 0.5) * 8.0;
+        let position = Vec3::new(x, 12.0, z);
+        
+        if let Some(entity) = spawn_fragment_with_mesh(
+            &mut commands,
+            &mut meshes,
+            fragment_data,
+            position,
+            Vec3::ZERO,
+            material_handle.0.clone(),
+        ) {
+            commands.entity(entity).insert(SpawnedFragment);
+        }
+        
+        // Reset timing for this stage
+        state.start_time = Some(Instant::now());
+        state.frames_in_stage = 0;
+        state.accumulated_time = 0.0;
+        return;
+    }
+    
+    // Measure frame time
+    if let Some(frame_time) = diagnostics
+        .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
+        .and_then(|d| d.smoothed())
+    {
+        state.accumulated_time += frame_time;
+        state.frames_in_stage += 1;
+    }
+    
+    // Run each stage for 3 seconds
+    if let Some(start) = state.start_time {
+        if start.elapsed().as_secs_f32() > 3.0 {
+            let avg_time = if state.frames_in_stage > 0 {
+                state.accumulated_time / state.frames_in_stage as f64
+            } else {
+                0.0
+            };
+            
+            info!(
+                "Stage {}: {} fragments, {:.2}ms avg frame time ({} frames)",
+                state.stage, target_fragments, avg_time, state.frames_in_stage
+            );
+            
+            state.results.push((target_fragments, avg_time));
+            state.stage += 1;
+            state.start_time = None;
+        }
     }
 }

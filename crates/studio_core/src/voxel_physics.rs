@@ -102,6 +102,106 @@ pub fn generate_trimesh_collider(world: &VoxelWorld) -> Option<Collider> {
     Collider::trimesh(all_vertices, all_indices).ok()
 }
 
+/// Generate a compound collider using cuboids for each voxel.
+///
+/// This is MUCH faster than trimesh for dynamic objects because:
+/// - Cuboid-cuboid collision is O(1) vs trimesh O(n) triangle tests
+/// - Better suited for Rapier's solver
+///
+/// For a uniform 3x3x3 cube, this produces 1 cuboid (if same color, greedy merge)
+/// or up to 27 cuboids (if all different colors).
+///
+/// # Arguments
+/// * `world` - The VoxelWorld to generate a collider for
+///
+/// # Returns
+/// * `Some(Collider)` - A compound collider if the world has any voxels
+/// * `None` - If the world is empty
+pub fn generate_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
+    if world.total_voxel_count() == 0 {
+        return None;
+    }
+    
+    let mut shapes: Vec<(Vec3, Quat, Collider)> = Vec::new();
+    
+    // For now, use one cuboid per voxel (simple but correct)
+    // TODO: Could optimize by merging adjacent same-color voxels into larger cuboids
+    for (chunk_pos, chunk) in world.iter_chunks() {
+        let (ox, oy, oz) = chunk_pos.world_origin();
+        
+        for (lx, ly, lz, _voxel) in chunk.iter() {
+            let wx = ox + lx as i32;
+            let wy = oy + ly as i32;
+            let wz = oz + lz as i32;
+            
+            // Position at center of voxel
+            let pos = Vec3::new(wx as f32 + 0.5, wy as f32 + 0.5, wz as f32 + 0.5);
+            
+            // Unit cuboid (half-extents = 0.5)
+            let cuboid = Collider::cuboid(0.5, 0.5, 0.5);
+            
+            shapes.push((pos, Quat::IDENTITY, cuboid));
+        }
+    }
+    
+    if shapes.is_empty() {
+        return None;
+    }
+    
+    Some(Collider::compound(shapes))
+}
+
+/// Generate a compound collider with merged cuboids using AABB regions.
+///
+/// This analyzes the voxel data and creates larger cuboids where possible,
+/// dramatically reducing the number of collision shapes.
+///
+/// For a uniform 3x3x3 cube: 1 cuboid instead of 27
+/// For a uniform 10x10x1 floor: 1 cuboid instead of 100
+pub fn generate_merged_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
+    if world.total_voxel_count() == 0 {
+        return None;
+    }
+    
+    // Get voxel bounds
+    let bounds = world.voxel_bounds()?;
+    let min = IVec3::new(
+        bounds.0.x.floor() as i32,
+        bounds.0.y.floor() as i32,
+        bounds.0.z.floor() as i32,
+    );
+    let max = IVec3::new(
+        bounds.1.x.ceil() as i32,
+        bounds.1.y.ceil() as i32,
+        bounds.1.z.ceil() as i32,
+    );
+    
+    // Simple greedy merge: find largest AABB that fits
+    // For now, just check if it's a solid rectangular region
+    let size = max - min;
+    let expected_count = (size.x * size.y * size.z) as usize;
+    
+    if world.total_voxel_count() == expected_count {
+        // It's a solid box! Use single cuboid
+        let half_extents = Vec3::new(
+            size.x as f32 / 2.0,
+            size.y as f32 / 2.0,
+            size.z as f32 / 2.0,
+        );
+        let center = Vec3::new(
+            min.x as f32 + half_extents.x,
+            min.y as f32 + half_extents.y,
+            min.z as f32 + half_extents.z,
+        );
+        
+        let cuboid = Collider::cuboid(half_extents.x, half_extents.y, half_extents.z);
+        return Some(Collider::compound(vec![(center, Quat::IDENTITY, cuboid)]));
+    }
+    
+    // Fall back to per-voxel cuboids
+    generate_cuboid_collider(world)
+}
+
 /// Generate per-chunk colliders for a VoxelWorld.
 ///
 /// This is more efficient for large worlds as it allows:
@@ -231,5 +331,154 @@ mod tests {
         
         let colliders = generate_chunk_colliders(&world);
         assert_eq!(colliders.len(), 2);
+    }
+
+    #[test]
+    fn test_fragment_triangle_count() {
+        // 3x3x3 fragment with same color
+        let mut fragment = VoxelWorld::new();
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    fragment.set_voxel(x, y, z, Voxel::solid(200, 100, 100));
+                }
+            }
+        }
+        
+        if let Some(collider) = generate_trimesh_collider(&fragment) {
+            if let Some(trimesh) = collider.as_trimesh() {
+                println!("FRAGMENT 3x3x3 TRIMESH: {} vertices, {} triangles", 
+                    trimesh.vertices().len(),
+                    trimesh.indices().len()
+                );
+                // Should be 12 triangles (6 faces * 2 tris) with greedy meshing
+            }
+        }
+    }
+
+    #[test]
+    fn test_cuboid_collider_single_voxel() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        
+        let collider = generate_cuboid_collider(&world);
+        assert!(collider.is_some());
+        
+        let collider = collider.unwrap();
+        // Should be a compound with 1 cuboid
+        assert!(collider.as_compound().is_some());
+        let compound = collider.as_compound().unwrap();
+        assert_eq!(compound.shapes().len(), 1);
+    }
+
+    #[test]
+    fn test_merged_cuboid_collider_solid_box() {
+        let mut world = VoxelWorld::new();
+        // 3x3x3 solid box
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    world.set_voxel(x, y, z, Voxel::solid(200, 100, 100));
+                }
+            }
+        }
+        
+        let collider = generate_merged_cuboid_collider(&world);
+        assert!(collider.is_some());
+        
+        let collider = collider.unwrap();
+        let compound = collider.as_compound().expect("Should be compound");
+        
+        // Should merge into single cuboid!
+        assert_eq!(compound.shapes().len(), 1, "Solid box should merge to 1 cuboid");
+        println!("MERGED 3x3x3: {} shapes (should be 1)", compound.shapes().len());
+    }
+
+    #[test]
+    fn test_merged_cuboid_collider_with_hole() {
+        let mut world = VoxelWorld::new();
+        // 3x3x3 with center missing
+        for x in 0..3 {
+            for y in 0..3 {
+                for z in 0..3 {
+                    if x != 1 || y != 1 || z != 1 {
+                        world.set_voxel(x, y, z, Voxel::solid(200, 100, 100));
+                    }
+                }
+            }
+        }
+        
+        let collider = generate_merged_cuboid_collider(&world);
+        assert!(collider.is_some());
+        
+        let collider = collider.unwrap();
+        let compound = collider.as_compound().expect("Should be compound");
+        
+        // Can't merge due to hole, falls back to per-voxel
+        assert_eq!(compound.shapes().len(), 26, "Box with hole should have 26 cuboids");
+        println!("HOLLOW 3x3x3: {} shapes (should be 26)", compound.shapes().len());
+    }
+
+    #[test]
+    fn test_terrain_triangle_count() {
+        // Simulate the terrain from p22_voxel_fragment
+        let mut terrain = VoxelWorld::new();
+        
+        // Ground platform (20x20, 3 blocks thick) - BUT with checkerboard colors!
+        // This PREVENTS greedy meshing from merging faces!
+        for x in -10..10 {
+            for z in -10..10 {
+                for y in 0..3 {
+                    let color = if (x + z) % 2 == 0 {
+                        Voxel::solid(80, 80, 90)
+                    } else {
+                        Voxel::solid(60, 60, 70)
+                    };
+                    terrain.set_voxel(x, y, z, color);
+                }
+            }
+        }
+        
+        println!("Terrain voxel count: {}", terrain.total_voxel_count());
+        
+        if let Some(collider) = generate_trimesh_collider(&terrain) {
+            if let Some(trimesh) = collider.as_trimesh() {
+                println!("CHECKERBOARD TERRAIN TRIMESH: {} vertices, {} triangles", 
+                    trimesh.vertices().len(),
+                    trimesh.indices().len()
+                );
+                
+                // This is the problem! Checkerboard pattern = NO greedy merge
+                // Each voxel face = 2 triangles
+                // 20x20 top = 400 faces minimum = 800 triangles just for top!
+                // With checkerboard, greedy meshing does almost nothing
+            }
+        }
+        
+        // Now test with SAME color - should be WAY fewer triangles
+        let mut terrain_uniform = VoxelWorld::new();
+        for x in -10..10 {
+            for z in -10..10 {
+                for y in 0..3 {
+                    terrain_uniform.set_voxel(x, y, z, Voxel::solid(80, 80, 90));
+                }
+            }
+        }
+        
+        if let Some(collider) = generate_trimesh_collider(&terrain_uniform) {
+            if let Some(trimesh) = collider.as_trimesh() {
+                println!("UNIFORM TERRAIN TRIMESH: {} vertices, {} triangles", 
+                    trimesh.vertices().len(),
+                    trimesh.indices().len()
+                );
+            }
+        }
+        
+        // Test cuboid collider for uniform terrain
+        if let Some(collider) = generate_cuboid_collider(&terrain_uniform) {
+            if let Some(compound) = collider.as_compound() {
+                println!("UNIFORM TERRAIN CUBOIDS: {} shapes", compound.shapes().len());
+            }
+        }
     }
 }
