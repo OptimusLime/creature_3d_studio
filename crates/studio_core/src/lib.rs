@@ -23,7 +23,9 @@ pub mod scene_utils;
 pub mod screenshot;
 pub mod screenshot_sequence;
 pub mod voxel;
+pub mod voxel_fragment;
 pub mod voxel_mesh;
+pub mod voxel_physics;
 pub mod voxel_world_plugin;
 pub mod world_io;
 
@@ -73,6 +75,14 @@ pub use day_night::{
 pub use screenshot_sequence::{
     ScreenshotSequence, ScreenshotSequencePlugin, SequenceState,
     capture_screenshot_sequence,
+};
+pub use voxel_physics::{
+    generate_trimesh_collider, generate_chunk_colliders,
+};
+pub use voxel_fragment::{
+    VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,
+    StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
+    detect_settling_fragments,
 };
 
 /// Core plugin for shared functionality.
