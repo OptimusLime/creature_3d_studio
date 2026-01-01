@@ -10,7 +10,7 @@
 //! - **Chunk Position** (`ChunkPos`): Which chunk contains the voxel (world / CHUNK_SIZE)
 //! - **Local Position** (`usize, usize, usize`): Position within chunk (0 to CHUNK_SIZE-1)
 
-use bevy::prelude::Vec3;
+use bevy::prelude::{IVec3, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -847,6 +847,404 @@ impl VoxelWorld {
         }
 
         Some((min, max))
+    }
+
+    /// Extract voxels within an AABB, removing them from self.
+    /// 
+    /// Returns a new VoxelWorld with coordinates relative to `min` corner.
+    /// The AABB is defined as `[min, max)` - inclusive of min, exclusive of max.
+    /// 
+    /// # Arguments
+    /// * `min` - Minimum corner of the AABB (inclusive)
+    /// * `max` - Maximum corner of the AABB (exclusive)
+    /// 
+    /// # Returns
+    /// A new VoxelWorld containing the extracted voxels, with coordinates
+    /// shifted so that `min` becomes the origin (0, 0, 0).
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// use bevy::prelude::IVec3;
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+    /// 
+    /// let fragment = world.split_aabb(IVec3::new(5, 5, 5), IVec3::new(6, 6, 6));
+    /// 
+    /// assert!(world.get_voxel(5, 5, 5).is_none()); // Removed from original
+    /// assert!(fragment.get_voxel(0, 0, 0).is_some()); // At origin in fragment
+    /// ```
+    pub fn split_aabb(&mut self, min: IVec3, max: IVec3) -> VoxelWorld {
+        let mut fragment = VoxelWorld::new();
+        
+        // Early return if invalid bounds
+        if min.x >= max.x || min.y >= max.y || min.z >= max.z {
+            return fragment;
+        }
+        
+        // Calculate which chunks might contain voxels in this AABB
+        let chunk_min = ChunkPos::from_world(min.x, min.y, min.z);
+        let chunk_max = ChunkPos::from_world(max.x - 1, max.y - 1, max.z - 1);
+        
+        // Iterate through relevant chunks
+        for chunk_pos in ChunkPos::iter_range(chunk_min, chunk_max) {
+            let Some(chunk) = self.chunks.get(&chunk_pos) else {
+                continue;
+            };
+            
+            let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
+            
+            // Collect voxels to extract from this chunk
+            let mut to_extract: Vec<(i32, i32, i32, Voxel)> = Vec::new();
+            
+            for (lx, ly, lz, voxel) in chunk.iter() {
+                let wx = chunk_origin_x + lx as i32;
+                let wy = chunk_origin_y + ly as i32;
+                let wz = chunk_origin_z + lz as i32;
+                
+                // Check if within AABB (min inclusive, max exclusive)
+                if wx >= min.x && wx < max.x 
+                    && wy >= min.y && wy < max.y 
+                    && wz >= min.z && wz < max.z 
+                {
+                    to_extract.push((wx, wy, wz, voxel));
+                }
+            }
+            
+            // Move voxels to fragment (with coordinates relative to min)
+            for (wx, wy, wz, voxel) in to_extract {
+                // Add to fragment with coordinates relative to min
+                fragment.set_voxel(wx - min.x, wy - min.y, wz - min.z, voxel);
+            }
+        }
+        
+        // Remove extracted voxels from self
+        for (chunk_pos, chunk) in fragment.iter_chunks() {
+            let (frag_origin_x, frag_origin_y, frag_origin_z) = chunk_pos.world_origin();
+            
+            for (lx, ly, lz, _) in chunk.iter() {
+                // Convert fragment coordinates back to world coordinates
+                let fx = frag_origin_x + lx as i32;
+                let fy = frag_origin_y + ly as i32;
+                let fz = frag_origin_z + lz as i32;
+                
+                let wx = fx + min.x;
+                let wy = fy + min.y;
+                let wz = fz + min.z;
+                
+                self.clear_voxel(wx, wy, wz);
+            }
+        }
+        
+        // Prune empty chunks from self
+        self.prune_empty_chunks();
+        
+        fragment
+    }
+
+    /// Extract voxels within a sphere, removing them from self.
+    /// 
+    /// Returns a new VoxelWorld with coordinates relative to the sphere center.
+    /// Uses integer distance check: a voxel at position (x,y,z) is included if
+    /// `(x - center.x)² + (y - center.y)² + (z - center.z)² <= radius²`.
+    /// 
+    /// # Arguments
+    /// * `center` - Center of the sphere in world coordinates
+    /// * `radius` - Radius of the sphere (inclusive)
+    /// 
+    /// # Returns
+    /// A new VoxelWorld containing the extracted voxels, with coordinates
+    /// shifted so that `center` becomes the origin (0, 0, 0).
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// use bevy::prelude::IVec3;
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// // Create a 10x10x10 cube
+    /// for x in 0..10 {
+    ///     for y in 0..10 {
+    ///         for z in 0..10 {
+    ///             world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+    ///         }
+    ///     }
+    /// }
+    /// 
+    /// // Extract a sphere of radius 2 centered at (5, 5, 5)
+    /// let fragment = world.split_sphere(IVec3::new(5, 5, 5), 2);
+    /// 
+    /// // Center voxel should be at origin in fragment
+    /// assert!(fragment.get_voxel(0, 0, 0).is_some());
+    /// // Original should have a hole
+    /// assert!(world.get_voxel(5, 5, 5).is_none());
+    /// ```
+    pub fn split_sphere(&mut self, center: IVec3, radius: i32) -> VoxelWorld {
+        let mut fragment = VoxelWorld::new();
+        
+        if radius < 0 {
+            return fragment;
+        }
+        
+        let radius_sq = (radius as i64) * (radius as i64);
+        
+        // Calculate AABB that bounds the sphere
+        let min = IVec3::new(center.x - radius, center.y - radius, center.z - radius);
+        let max = IVec3::new(center.x + radius + 1, center.y + radius + 1, center.z + radius + 1);
+        
+        // Calculate which chunks might contain voxels in this sphere
+        let chunk_min = ChunkPos::from_world(min.x, min.y, min.z);
+        let chunk_max = ChunkPos::from_world(max.x - 1, max.y - 1, max.z - 1);
+        
+        // Iterate through relevant chunks
+        for chunk_pos in ChunkPos::iter_range(chunk_min, chunk_max) {
+            let Some(chunk) = self.chunks.get(&chunk_pos) else {
+                continue;
+            };
+            
+            let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
+            
+            // Collect voxels to extract from this chunk
+            let mut to_extract: Vec<(i32, i32, i32, Voxel)> = Vec::new();
+            
+            for (lx, ly, lz, voxel) in chunk.iter() {
+                let wx = chunk_origin_x + lx as i32;
+                let wy = chunk_origin_y + ly as i32;
+                let wz = chunk_origin_z + lz as i32;
+                
+                // Check if within sphere using squared distance
+                let dx = (wx - center.x) as i64;
+                let dy = (wy - center.y) as i64;
+                let dz = (wz - center.z) as i64;
+                let dist_sq = dx * dx + dy * dy + dz * dz;
+                
+                if dist_sq <= radius_sq {
+                    to_extract.push((wx, wy, wz, voxel));
+                }
+            }
+            
+            // Move voxels to fragment (with coordinates relative to center)
+            for (wx, wy, wz, voxel) in to_extract {
+                fragment.set_voxel(wx - center.x, wy - center.y, wz - center.z, voxel);
+            }
+        }
+        
+        // Remove extracted voxels from self
+        for (chunk_pos, chunk) in fragment.iter_chunks() {
+            let (frag_origin_x, frag_origin_y, frag_origin_z) = chunk_pos.world_origin();
+            
+            for (lx, ly, lz, _) in chunk.iter() {
+                // Convert fragment coordinates back to world coordinates
+                let fx = frag_origin_x + lx as i32;
+                let fy = frag_origin_y + ly as i32;
+                let fz = frag_origin_z + lz as i32;
+                
+                let wx = fx + center.x;
+                let wy = fy + center.y;
+                let wz = fz + center.z;
+                
+                self.clear_voxel(wx, wy, wz);
+            }
+        }
+        
+        // Prune empty chunks from self
+        self.prune_empty_chunks();
+        
+        fragment
+    }
+
+    /// Merge another VoxelWorld into self at the given offset.
+    /// 
+    /// Voxels from `other` are added to `self` with their positions shifted by `offset`.
+    /// If a voxel position already exists in self, it will be overwritten.
+    /// 
+    /// # Arguments
+    /// * `other` - The VoxelWorld to merge from
+    /// * `offset` - Position offset to apply to other's voxels
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// use bevy::prelude::IVec3;
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// let mut fragment = VoxelWorld::new();
+    /// fragment.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+    /// 
+    /// world.merge_from(&fragment, IVec3::new(10, 10, 10));
+    /// 
+    /// assert!(world.get_voxel(10, 10, 10).is_some());
+    /// ```
+    pub fn merge_from(&mut self, other: &VoxelWorld, offset: IVec3) {
+        for (chunk_pos, chunk) in other.iter_chunks() {
+            let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
+            
+            for (lx, ly, lz, voxel) in chunk.iter() {
+                let other_x = chunk_origin_x + lx as i32;
+                let other_y = chunk_origin_y + ly as i32;
+                let other_z = chunk_origin_z + lz as i32;
+                
+                // Apply offset to get position in self
+                let world_x = other_x + offset.x;
+                let world_y = other_y + offset.y;
+                let world_z = other_z + offset.z;
+                
+                self.set_voxel(world_x, world_y, world_z, voxel);
+            }
+        }
+    }
+
+    /// Shift all voxels by the given offset.
+    /// 
+    /// This is useful for recentering a VoxelWorld after extraction,
+    /// e.g., to place the centroid at the origin.
+    /// 
+    /// # Arguments
+    /// * `offset` - The offset to apply to all voxel positions
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// use bevy::prelude::IVec3;
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+    /// 
+    /// world.translate(IVec3::new(10, 20, 30));
+    /// 
+    /// assert!(world.get_voxel(0, 0, 0).is_none());
+    /// assert!(world.get_voxel(10, 20, 30).is_some());
+    /// ```
+    pub fn translate(&mut self, offset: IVec3) {
+        if offset == IVec3::ZERO {
+            return;
+        }
+        
+        // Collect all voxels with their current positions
+        let voxels: Vec<(i32, i32, i32, Voxel)> = self
+            .iter_chunks()
+            .flat_map(|(chunk_pos, chunk)| {
+                let (ox, oy, oz) = chunk_pos.world_origin();
+                chunk.iter().map(move |(lx, ly, lz, voxel)| {
+                    (ox + lx as i32, oy + ly as i32, oz + lz as i32, voxel)
+                })
+            })
+            .collect();
+        
+        // Clear all chunks
+        self.chunks.clear();
+        
+        // Re-insert at new positions
+        for (x, y, z, voxel) in voxels {
+            self.set_voxel(x + offset.x, y + offset.y, z + offset.z, voxel);
+        }
+    }
+
+    /// Get the centroid (center of mass) of all voxels.
+    /// 
+    /// Returns the average position of all voxels, with 0.5 added to each
+    /// component to represent the center of each voxel cube (not its corner).
+    /// 
+    /// # Returns
+    /// The centroid position in world coordinates, or None if the world is empty.
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+    /// world.set_voxel(2, 0, 0, Voxel::solid(255, 0, 0));
+    /// 
+    /// let centroid = world.centroid().unwrap();
+    /// // Average of (0.5, 0.5, 0.5) and (2.5, 0.5, 0.5) = (1.5, 0.5, 0.5)
+    /// assert!((centroid.x - 1.5).abs() < 0.01);
+    /// ```
+    pub fn centroid(&self) -> Option<Vec3> {
+        let mut sum_x: i64 = 0;
+        let mut sum_y: i64 = 0;
+        let mut sum_z: i64 = 0;
+        let mut count: u64 = 0;
+        
+        for (chunk_pos, chunk) in self.iter_chunks() {
+            let (ox, oy, oz) = chunk_pos.world_origin();
+            
+            for (lx, ly, lz, _) in chunk.iter() {
+                sum_x += (ox + lx as i32) as i64;
+                sum_y += (oy + ly as i32) as i64;
+                sum_z += (oz + lz as i32) as i64;
+                count += 1;
+            }
+        }
+        
+        if count == 0 {
+            return None;
+        }
+        
+        // Return centroid at center of voxels (add 0.5)
+        Some(Vec3::new(
+            (sum_x as f64 / count as f64 + 0.5) as f32,
+            (sum_y as f64 / count as f64 + 0.5) as f32,
+            (sum_z as f64 / count as f64 + 0.5) as f32,
+        ))
+    }
+
+    /// Check if merging would cause any voxel collisions.
+    /// 
+    /// Returns a list of world positions where both `self` and `other` (after offset)
+    /// have voxels. Useful for previewing merge operations or detecting if a fragment
+    /// can be placed without overwriting existing voxels.
+    /// 
+    /// # Arguments
+    /// * `other` - The VoxelWorld to check for collisions with
+    /// * `offset` - Position offset to apply to other's voxels
+    /// 
+    /// # Returns
+    /// A Vec of world positions where collisions would occur.
+    /// Empty vec means no collisions.
+    /// 
+    /// # Example
+    /// ```
+    /// use studio_core::voxel::{VoxelWorld, Voxel};
+    /// use bevy::prelude::IVec3;
+    /// 
+    /// let mut world = VoxelWorld::new();
+    /// world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+    /// 
+    /// let mut other = VoxelWorld::new();
+    /// other.set_voxel(0, 0, 0, Voxel::solid(0, 255, 0));
+    /// 
+    /// // No collision at offset (10, 0, 0)
+    /// assert!(world.check_merge_collisions(&other, IVec3::new(10, 0, 0)).is_empty());
+    /// 
+    /// // Collision at offset (5, 5, 5)
+    /// assert_eq!(world.check_merge_collisions(&other, IVec3::new(5, 5, 5)).len(), 1);
+    /// ```
+    pub fn check_merge_collisions(&self, other: &VoxelWorld, offset: IVec3) -> Vec<IVec3> {
+        let mut collisions = Vec::new();
+        
+        for (chunk_pos, chunk) in other.iter_chunks() {
+            let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
+            
+            for (lx, ly, lz, _) in chunk.iter() {
+                let other_x = chunk_origin_x + lx as i32;
+                let other_y = chunk_origin_y + ly as i32;
+                let other_z = chunk_origin_z + lz as i32;
+                
+                // Apply offset to get position in self
+                let world_x = other_x + offset.x;
+                let world_y = other_y + offset.y;
+                let world_z = other_z + offset.z;
+                
+                // Check if self has a voxel at this position
+                if self.get_voxel(world_x, world_y, world_z).is_some() {
+                    collisions.push(IVec3::new(world_x, world_y, world_z));
+                }
+            }
+        }
+        
+        collisions
     }
 
     /// Get the actual voxel bounding box in world coordinates.
@@ -1727,5 +2125,336 @@ mod tests {
         // From voxel at (31, 3, 27), offset (1, 1, 0) should return false (air above)
         let result = borders.is_neighbor_solid(31, 3, 27, 1, 1, 0);
         assert!(!result, "AO check (1,1,0) from floor voxel should find air above");
+    }
+
+    // ========================================================================
+    // split_aabb tests (Phase 22.1)
+    // ========================================================================
+
+    #[test]
+    fn test_split_aabb_basic() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        // Create 4x4x4 cube at origin
+        for x in 0..4 {
+            for y in 0..4 {
+                for z in 0..4 {
+                    world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+        assert_eq!(world.total_voxel_count(), 64);
+
+        // Split out 2x2x2 corner
+        let fragment = world.split_aabb(IVec3::ZERO, IVec3::new(2, 2, 2));
+
+        // Fragment has 8 voxels (2x2x2)
+        assert_eq!(fragment.total_voxel_count(), 8);
+        // Original has 64 - 8 = 56 voxels
+        assert_eq!(world.total_voxel_count(), 56);
+        // Fragment coordinates are relative to min (0,0,0)
+        assert!(fragment.get_voxel(0, 0, 0).is_some());
+        assert!(fragment.get_voxel(1, 1, 1).is_some());
+        assert!(fragment.get_voxel(2, 2, 2).is_none()); // exclusive upper bound
+    }
+
+    #[test]
+    fn test_split_aabb_empty_region() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(10, 10, 10, Voxel::solid(255, 0, 0));
+
+        // Split empty region
+        let fragment = world.split_aabb(IVec3::ZERO, IVec3::new(5, 5, 5));
+
+        assert_eq!(fragment.total_voxel_count(), 0);
+        assert_eq!(world.total_voxel_count(), 1); // Original unchanged
+    }
+
+    #[test]
+    fn test_split_aabb_negative_coordinates() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        // Voxels spanning negative to positive
+        for x in -2..2 {
+            for y in -2..2 {
+                for z in -2..2 {
+                    world.set_voxel(x, y, z, Voxel::solid(100, 100, 100));
+                }
+            }
+        }
+        assert_eq!(world.total_voxel_count(), 64);
+
+        // Split negative quadrant
+        let fragment = world.split_aabb(IVec3::new(-2, -2, -2), IVec3::ZERO);
+
+        assert_eq!(fragment.total_voxel_count(), 8);
+        // Fragment coords relative to min (-2,-2,-2), so (0,0,0) in fragment = (-2,-2,-2) in world
+        assert!(fragment.get_voxel(0, 0, 0).is_some());
+        assert!(fragment.get_voxel(1, 1, 1).is_some());
+    }
+
+    #[test]
+    fn test_split_aabb_preserves_voxel_data() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(5, 5, 5, Voxel::new(100, 150, 200, 128));
+
+        let fragment = world.split_aabb(IVec3::new(5, 5, 5), IVec3::new(6, 6, 6));
+
+        let voxel = fragment.get_voxel(0, 0, 0).unwrap();
+        assert_eq!(voxel.color, [100, 150, 200]);
+        assert_eq!(voxel.emission, 128);
+    }
+
+    #[test]
+    fn test_split_aabb_cross_chunk_boundary() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        // Voxels spanning chunk boundary (chunk size = 32)
+        for x in 30..34 {
+            world.set_voxel(x, 0, 0, Voxel::solid(255, 0, 0));
+        }
+        assert_eq!(world.chunk_count(), 2); // Chunks (0,0,0) and (1,0,0)
+
+        let fragment = world.split_aabb(IVec3::new(30, 0, 0), IVec3::new(34, 1, 1));
+
+        assert_eq!(fragment.total_voxel_count(), 4);
+        assert_eq!(world.total_voxel_count(), 0);
+    }
+
+    // ========================================================================
+    // split_sphere tests (Phase 22.2)
+    // ========================================================================
+
+    #[test]
+    fn test_split_sphere_basic() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        // Create solid 10x10x10 cube centered at (5,5,5)
+        for x in 0..10 {
+            for y in 0..10 {
+                for z in 0..10 {
+                    world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+
+        // Split sphere of radius 2 at center (5,5,5)
+        let fragment = world.split_sphere(IVec3::new(5, 5, 5), 2);
+
+        // Sphere of radius 2: approximately 33 voxels (4/3 * pi * 2^3 ~ 33)
+        // Exact count depends on discrete sampling
+        assert!(fragment.total_voxel_count() > 20, "Expected >20 voxels, got {}", fragment.total_voxel_count());
+        assert!(fragment.total_voxel_count() < 50, "Expected <50 voxels, got {}", fragment.total_voxel_count());
+
+        // Center voxel should be at (0,0,0) in fragment (relative to center)
+        assert!(fragment.get_voxel(0, 0, 0).is_some(), "Center voxel should exist at origin");
+
+        // Original should have hole
+        assert!(world.get_voxel(5, 5, 5).is_none(), "Original should have hole at center");
+    }
+
+    #[test]
+    fn test_split_sphere_at_edge() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        // Floor at y=0
+        for x in 0..20 {
+            for z in 0..20 {
+                world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+
+        // Sphere at floor level - should only get hemisphere
+        let fragment = world.split_sphere(IVec3::new(10, 0, 10), 3);
+
+        // Should get roughly half a sphere (floor cuts it) plus center point
+        // A sphere of radius 3 has ~113 voxels (4/3 * pi * 3^3)
+        // We only have 1 layer (y=0), so we get a circular slice
+        // Circle of radius 3: pi * 3^2 ~ 28 voxels
+        assert!(fragment.total_voxel_count() > 10, "Expected >10 voxels, got {}", fragment.total_voxel_count());
+        assert!(fragment.total_voxel_count() < 40, "Expected <40 voxels, got {}", fragment.total_voxel_count());
+    }
+
+    // ========================================================================
+    // merge_from tests (Phase 22.3)
+    // ========================================================================
+
+    #[test]
+    fn test_merge_from_empty_into_empty() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        let other = VoxelWorld::new();
+
+        world.merge_from(&other, IVec3::ZERO);
+
+        assert_eq!(world.total_voxel_count(), 0);
+    }
+
+    #[test]
+    fn test_merge_from_basic() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        let mut other = VoxelWorld::new();
+
+        other.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        other.set_voxel(1, 0, 0, Voxel::solid(0, 255, 0));
+
+        world.merge_from(&other, IVec3::new(10, 10, 10));
+
+        assert_eq!(world.total_voxel_count(), 2);
+        assert!(world.get_voxel(10, 10, 10).is_some());
+        assert!(world.get_voxel(11, 10, 10).is_some());
+    }
+
+    #[test]
+    fn test_merge_from_overwrites() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0)); // Red
+
+        let mut other = VoxelWorld::new();
+        other.set_voxel(0, 0, 0, Voxel::solid(0, 0, 255)); // Blue
+
+        world.merge_from(&other, IVec3::new(5, 5, 5));
+
+        let voxel = world.get_voxel(5, 5, 5).unwrap();
+        assert_eq!(voxel.color, [0, 0, 255]); // Should be blue (overwritten)
+    }
+
+    #[test]
+    fn test_merge_from_negative_offset() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        let mut other = VoxelWorld::new();
+
+        other.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+
+        world.merge_from(&other, IVec3::new(-10, -10, -10));
+
+        assert!(world.get_voxel(-5, -5, -5).is_some());
+    }
+
+    #[test]
+    fn test_split_then_merge_roundtrip() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        for x in 0..4 {
+            for y in 0..4 {
+                for z in 0..4 {
+                    world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+        let original_count = world.total_voxel_count();
+
+        // Split out a piece
+        let fragment = world.split_aabb(IVec3::new(1, 1, 1), IVec3::new(3, 3, 3));
+        let _fragment_count = fragment.total_voxel_count();
+
+        // Merge back at same location
+        world.merge_from(&fragment, IVec3::new(1, 1, 1));
+
+        assert_eq!(world.total_voxel_count(), original_count);
+    }
+
+    // ========================================================================
+    // translate and centroid tests (Phase 22.4)
+    // ========================================================================
+
+    #[test]
+    fn test_translate_basic() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        world.set_voxel(1, 0, 0, Voxel::solid(0, 255, 0));
+
+        world.translate(IVec3::new(10, 20, 30));
+
+        assert!(world.get_voxel(0, 0, 0).is_none());
+        assert!(world.get_voxel(10, 20, 30).is_some());
+        assert!(world.get_voxel(11, 20, 30).is_some());
+    }
+
+    #[test]
+    fn test_centroid_single_voxel() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(10, 20, 30, Voxel::solid(255, 0, 0));
+
+        let centroid = world.centroid().unwrap();
+
+        // Centroid should be center of voxel (10.5, 20.5, 30.5)
+        assert!((centroid.x - 10.5).abs() < 0.01);
+        assert!((centroid.y - 20.5).abs() < 0.01);
+        assert!((centroid.z - 30.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_centroid_symmetric() {
+        let mut world = VoxelWorld::new();
+        // 2x2x2 cube at origin
+        for x in 0..2 {
+            for y in 0..2 {
+                for z in 0..2 {
+                    world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+
+        let centroid = world.centroid().unwrap();
+
+        // Centroid should be at (1, 1, 1) - average of (0.5,0.5,0.5) to (1.5,1.5,1.5)
+        assert!((centroid.x - 1.0).abs() < 0.01);
+        assert!((centroid.y - 1.0).abs() < 0.01);
+        assert!((centroid.z - 1.0).abs() < 0.01);
+    }
+
+    // ========================================================================
+    // check_merge_collisions tests (Phase 22.5)
+    // ========================================================================
+
+    #[test]
+    fn test_check_merge_collisions_none() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+
+        let mut other = VoxelWorld::new();
+        other.set_voxel(0, 0, 0, Voxel::solid(0, 255, 0));
+
+        // No collision - different positions
+        let collisions = world.check_merge_collisions(&other, IVec3::new(10, 0, 0));
+        assert!(collisions.is_empty());
+    }
+
+    #[test]
+    fn test_check_merge_collisions_overlap() {
+        use bevy::prelude::IVec3;
+        
+        let mut world = VoxelWorld::new();
+        world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+
+        let mut other = VoxelWorld::new();
+        other.set_voxel(0, 0, 0, Voxel::solid(0, 255, 0));
+
+        // Collision at (5,5,5)
+        let collisions = world.check_merge_collisions(&other, IVec3::new(5, 5, 5));
+        assert_eq!(collisions.len(), 1);
+        assert_eq!(collisions[0], IVec3::new(5, 5, 5));
     }
 }
