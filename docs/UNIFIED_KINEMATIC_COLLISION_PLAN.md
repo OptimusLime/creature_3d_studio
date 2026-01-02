@@ -21,19 +21,15 @@ This violates the unified architecture. p23 should use `GpuCollisionAABB` compon
 4. `gpu_kinematic_collision_system` in `voxel_fragment.rs` - applies GPU collision results to kinematic bodies (ADDED)
 5. `GpuCollisionContacts` resource - holds per-entity collision contacts from GPU
 
-### Current Issue:
-The GPU collision compute shader is NOT generating contacts for `GpuCollisionAABB` entities.
-Debug logging shows:
-- Entity extraction works: "Extracted 1 entities for GPU collision (0 fragments, 1 AABBs)"
-- But contacts are 0: "gpu_kinematic_collision: 0 contacts, 1 entities in result"
+### Status: COMPLETE
 
-The compute shader likely isn't processing AABB entities correctly, or the readback isn't working.
-Need to debug the GPU collision node/shader.
+All phases done:
+1. ~~Phase 1: Add `gpu_kinematic_collision_system`~~ DONE
+2. ~~Phase 2: Rewrite p23 to use unified pipeline~~ DONE  
+3. ~~Phase 3: Clean up CPU KinematicController~~ DONE (kept as fallback with warning docs)
 
-### What's missing:
-1. ~~System to apply GPU collision results to `GpuCollisionAABB` entities~~ DONE
-2. Fix GPU collision shader to generate contacts for AABB entities
-3. p23 rewrite to use Rapier + `GpuCollisionAABB` (blocked by #2)
+Root cause bug fixed: AABB voxel size calculation was too small, missing terrain voxels.
+Fix: Added +1 padding to each dimension in `collision_extract.rs`.
 
 ## Naming Conventions
 

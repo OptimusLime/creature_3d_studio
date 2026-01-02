@@ -837,12 +837,34 @@ impl GpuCollisionAABB {
     }
 }
 
-/// Simple kinematic character controller for voxel worlds.
+/// CPU-based kinematic character controller for voxel worlds.
+///
+/// **NOTE:** This is a CPU fallback. For production use, prefer the unified GPU collision
+/// pipeline with `GpuCollisionAABB` + `RigidBody::KinematicPositionBased`. The GPU pipeline
+/// provides better performance and consistency with dynamic physics objects.
 ///
 /// Handles movement, gravity, and collision response using the voxel
 /// occupancy system. Does not use Rapier - pure voxel collision.
 ///
-/// ## Usage
+/// ## When to use this
+///
+/// - Testing without GPU (headless/CI environments)
+/// - Simple prototyping before GPU collision is set up
+/// - Platforms without compute shader support
+///
+/// ## Preferred approach (GPU pipeline)
+///
+/// ```ignore
+/// // Use GpuCollisionAABB + Rapier kinematic body instead:
+/// commands.spawn((
+///     RigidBody::KinematicPositionBased,
+///     Collider::cuboid(0.4, 0.9, 0.4),
+///     GpuCollisionAABB { half_extents: Vec3::new(0.4, 0.9, 0.4) },
+/// ));
+/// // gpu_kinematic_collision_system handles collision response automatically
+/// ```
+///
+/// ## CPU fallback usage
 ///
 /// ```ignore
 /// let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
