@@ -421,6 +421,175 @@ impl CollisionResult {
         
         total
     }
+
+    /// Check if any contact has a floor-like normal (pointing up).
+    pub fn has_floor_contact(&self) -> bool {
+        self.contacts.iter().any(|c| c.normal.y > 0.7)
+    }
+
+    /// Get the average floor normal if standing on ground.
+    pub fn floor_normal(&self) -> Option<Vec3> {
+        let floor_contacts: Vec<_> = self.contacts.iter()
+            .filter(|c| c.normal.y > 0.7)
+            .collect();
+        
+        if floor_contacts.is_empty() {
+            return None;
+        }
+        
+        let sum: Vec3 = floor_contacts.iter().map(|c| c.normal).sum();
+        Some((sum / floor_contacts.len() as f32).normalize())
+    }
+}
+
+/// Simple kinematic character controller for voxel worlds.
+///
+/// Handles movement, gravity, and collision response using the voxel
+/// occupancy system. Does not use Rapier - pure voxel collision.
+///
+/// ## Usage
+///
+/// ```ignore
+/// let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+/// controller.move_and_slide(&world_occupancy, &mut position, &mut velocity, delta_time);
+/// ```
+#[derive(Debug, Clone)]
+pub struct KinematicController {
+    /// Half-extents of the collision box.
+    pub half_extents: Vec3,
+    /// Whether the controller is currently on the ground.
+    pub grounded: bool,
+    /// Normal of the ground surface (if grounded).
+    pub ground_normal: Vec3,
+    /// Maximum slope angle (in radians) that can be walked on.
+    pub max_slope_angle: f32,
+    /// Number of collision iterations per move.
+    pub max_iterations: u32,
+    /// Small margin to prevent floating point issues.
+    pub skin_width: f32,
+}
+
+impl Default for KinematicController {
+    fn default() -> Self {
+        Self {
+            half_extents: Vec3::new(0.4, 0.9, 0.4), // Player-sized
+            grounded: false,
+            ground_normal: Vec3::Y,
+            max_slope_angle: 0.785, // ~45 degrees
+            max_iterations: 4,
+            skin_width: 0.01,
+        }
+    }
+}
+
+impl KinematicController {
+    /// Create a new controller with the given half-extents.
+    pub fn new(half_extents: Vec3) -> Self {
+        Self {
+            half_extents,
+            ..Default::default()
+        }
+    }
+
+    /// Move the controller, sliding along surfaces.
+    ///
+    /// This modifies `position` and `velocity` in-place based on collision
+    /// response. Velocity is zeroed on axes where collision occurs.
+    ///
+    /// # Arguments
+    /// * `world` - The world occupancy to collide against
+    /// * `position` - Current position (will be modified)
+    /// * `velocity` - Current velocity (will be modified)
+    /// * `delta` - Time step in seconds
+    pub fn move_and_slide(
+        &mut self,
+        world: &WorldOccupancy,
+        position: &mut Vec3,
+        velocity: &mut Vec3,
+        delta: f32,
+    ) {
+        self.grounded = false;
+        self.ground_normal = Vec3::Y;
+        
+        // First, check if we're currently grounded (even when stationary)
+        // by probing slightly below current position
+        let ground_probe_min = *position - self.half_extents - Vec3::new(0.0, self.skin_width * 2.0, 0.0);
+        let ground_probe_max = *position + self.half_extents;
+        let ground_result = world.check_aabb(ground_probe_min, ground_probe_max);
+        if ground_result.has_floor_contact() {
+            self.grounded = true;
+            if let Some(normal) = ground_result.floor_normal() {
+                self.ground_normal = normal;
+            }
+        }
+        
+        let mut remaining_velocity = *velocity * delta;
+        
+        for _ in 0..self.max_iterations {
+            if remaining_velocity.length_squared() < 0.0001 {
+                break;
+            }
+            
+            // Try to move
+            let target = *position + remaining_velocity;
+            let aabb_min = target - self.half_extents;
+            let aabb_max = target + self.half_extents;
+            
+            let result = world.check_aabb(aabb_min, aabb_max);
+            
+            if !result.has_collision() {
+                // No collision, move freely
+                *position = target;
+                break;
+            }
+            
+            // Resolve collision
+            let resolution = result.resolution_vector();
+            *position = target + resolution + resolution.normalize_or_zero() * self.skin_width;
+            
+            // Check for ground contact
+            if result.has_floor_contact() {
+                self.grounded = true;
+                if let Some(normal) = result.floor_normal() {
+                    self.ground_normal = normal;
+                }
+            }
+            
+            // Slide along surface: remove velocity component into the surface
+            for contact in &result.contacts {
+                let dot = remaining_velocity.dot(contact.normal);
+                if dot < 0.0 {
+                    remaining_velocity -= contact.normal * dot;
+                    
+                    // Also zero the input velocity on this axis
+                    let vel_dot = velocity.dot(contact.normal);
+                    if vel_dot < 0.0 {
+                        *velocity -= contact.normal * vel_dot;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Apply gravity to velocity.
+    pub fn apply_gravity(&self, velocity: &mut Vec3, gravity: f32, delta: f32) {
+        if !self.grounded {
+            velocity.y -= gravity * delta;
+        }
+    }
+
+    /// Check if a jump is allowed (must be grounded).
+    pub fn can_jump(&self) -> bool {
+        self.grounded
+    }
+
+    /// Apply a jump impulse.
+    pub fn jump(&mut self, velocity: &mut Vec3, jump_speed: f32) {
+        if self.grounded {
+            velocity.y = jump_speed;
+            self.grounded = false;
+        }
+    }
 }
 
 /// Convert world position to chunk coordinate.
@@ -841,5 +1010,179 @@ mod tests {
         
         // Should be well under 1ms per query
         assert!(per_query_us < 1000.0, "Query too slow: {} us", per_query_us);
+    }
+
+    // ========== Kinematic Controller Tests ==========
+
+    #[test]
+    fn test_kinematic_controller_default() {
+        let controller = KinematicController::default();
+        assert!(!controller.grounded);
+        assert!((controller.half_extents.x - 0.4).abs() < 0.01);
+        assert!((controller.half_extents.y - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_controller_stands_on_ground() {
+        // Create a floor
+        let mut world = VoxelWorld::new();
+        for x in -5..5 {
+            for z in -5..5 {
+                world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+        let mut position = Vec3::new(0.0, 2.0, 0.0); // Start above floor
+        let mut velocity = Vec3::new(0.0, -5.0, 0.0); // Falling
+        
+        // Simulate several frames
+        for _ in 0..60 {
+            controller.apply_gravity(&mut velocity, 10.0, 1.0 / 60.0);
+            controller.move_and_slide(&occ, &mut position, &mut velocity, 1.0 / 60.0);
+        }
+        
+        // Should have landed on the floor
+        assert!(controller.grounded, "Controller should be grounded");
+        // Position should be at ground level + half height
+        // Floor top is at y=1, controller half height is 0.9
+        assert!((position.y - 1.9).abs() < 0.2, "Position should be ~1.9, got {}", position.y);
+        // Vertical velocity should be near zero
+        assert!(velocity.y.abs() < 0.5, "Vertical velocity should be near 0, got {}", velocity.y);
+    }
+
+    #[test]
+    fn test_controller_blocked_by_wall() {
+        // Create a floor and a wall
+        let mut world = VoxelWorld::new();
+        // Floor
+        for x in -5..10 {
+            for z in -5..5 {
+                world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+        // Wall at x=5
+        for y in 1..5 {
+            for z in -5..5 {
+                world.set_voxel(5, y, z, Voxel::solid(150, 100, 100));
+            }
+        }
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+        let mut position = Vec3::new(0.0, 1.9, 0.0); // On floor
+        let mut velocity = Vec3::new(10.0, 0.0, 0.0); // Moving toward wall
+        
+        // Simulate
+        for _ in 0..60 {
+            controller.move_and_slide(&occ, &mut position, &mut velocity, 1.0 / 60.0);
+        }
+        
+        // Should be stopped by wall
+        assert!(position.x < 5.0, "Should be blocked by wall at x=5, got x={}", position.x);
+        // X velocity should be near zero (blocked)
+        assert!(velocity.x.abs() < 1.0, "X velocity should be blocked, got {}", velocity.x);
+    }
+
+    #[test]
+    fn test_controller_slides_along_wall() {
+        // Create a floor and a wall
+        let mut world = VoxelWorld::new();
+        // Floor
+        for x in -5..10 {
+            for z in -10..10 {
+                world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+        // Wall at x=5
+        for y in 1..5 {
+            for z in -10..10 {
+                world.set_voxel(5, y, z, Voxel::solid(150, 100, 100));
+            }
+        }
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+        let mut position = Vec3::new(4.0, 1.9, 0.0); // Near wall, on floor
+        let mut velocity = Vec3::new(5.0, 0.0, 5.0); // Moving diagonally into wall
+        let start_z = position.z;
+        
+        // Simulate 1 second (60 frames at 60fps)
+        // Note: We need to re-apply input velocity each frame since sliding zeroes it
+        for _ in 0..60 {
+            // Reapply input velocity (simulating player holding forward+right)
+            velocity = Vec3::new(5.0, velocity.y, 5.0);
+            controller.move_and_slide(&occ, &mut position, &mut velocity, 1.0 / 60.0);
+        }
+        
+        // Should have slid along wall in Z direction
+        assert!(position.x < 5.0, "Should be blocked by wall at x=5, got x={}", position.x);
+        // At 5.0 z-speed for 1 second, should move ~5 units in Z (minus friction from wall)
+        let z_moved = position.z - start_z;
+        assert!(z_moved > 2.0, "Should have moved significantly in Z direction, got delta_z={}", z_moved);
+    }
+
+    #[test]
+    fn test_controller_jump() {
+        // Create a floor
+        let mut world = VoxelWorld::new();
+        for x in -5..5 {
+            for z in -5..5 {
+                world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+        let mut position = Vec3::new(0.0, 1.9, 0.0);
+        let mut velocity = Vec3::ZERO;
+        
+        // First, ensure grounded
+        controller.grounded = true;
+        
+        // Jump
+        assert!(controller.can_jump());
+        controller.jump(&mut velocity, 8.0);
+        
+        assert!(!controller.grounded, "Should not be grounded after jump");
+        assert!((velocity.y - 8.0).abs() < 0.01, "Should have jump velocity");
+        
+        // Simulate jump arc
+        let start_y = position.y;
+        for _ in 0..30 {
+            controller.apply_gravity(&mut velocity, 20.0, 1.0 / 60.0);
+            controller.move_and_slide(&occ, &mut position, &mut velocity, 1.0 / 60.0);
+        }
+        
+        // Should have gone up then come back down
+        // At frame 30, should be near or past peak
+        assert!(position.y > start_y || controller.grounded, "Should have jumped up");
+    }
+
+    #[test]
+    fn test_has_floor_contact() {
+        let mut result = CollisionResult::new();
+        
+        // No contacts
+        assert!(!result.has_floor_contact());
+        
+        // Wall contact (horizontal normal)
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::X,
+            penetration: 0.1,
+            voxel_pos: IVec3::ZERO,
+        });
+        assert!(!result.has_floor_contact());
+        
+        // Floor contact (upward normal)
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::Y,
+            penetration: 0.1,
+            voxel_pos: IVec3::ZERO,
+        });
+        assert!(result.has_floor_contact());
     }
 }

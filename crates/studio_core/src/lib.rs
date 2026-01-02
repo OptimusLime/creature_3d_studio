@@ -90,6 +90,7 @@ pub use voxel_fragment::{
 pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
 pub use voxel_collision::{
     ChunkOccupancy, WorldOccupancy, CollisionPoint, CollisionResult,
+    KinematicController,
     world_pos_to_chunk_coord, world_pos_to_local, chunk_coord_to_world,
     OCCUPANCY_CHUNK_SIZE,
 };
