@@ -271,6 +271,156 @@ impl WorldOccupancy {
     pub fn total_occupied(&self) -> usize {
         self.chunks.values().map(|c| c.count_occupied()).sum()
     }
+
+    /// Check an AABB against the world, returning collision information.
+    ///
+    /// The AABB is specified in world coordinates as floating-point values.
+    /// This method checks all voxels that the AABB overlaps and returns
+    /// collision points with normals pointing outward from the colliding voxels.
+    ///
+    /// # Arguments
+    /// * `aabb_min` - Minimum corner of the AABB (world space)
+    /// * `aabb_max` - Maximum corner of the AABB (world space)
+    ///
+    /// # Returns
+    /// A `CollisionResult` containing all collision points.
+    pub fn check_aabb(&self, aabb_min: Vec3, aabb_max: Vec3) -> CollisionResult {
+        let mut result = CollisionResult::new();
+        
+        // Convert to integer bounds (expand to cover all potentially overlapping voxels)
+        let min_i = IVec3::new(
+            aabb_min.x.floor() as i32,
+            aabb_min.y.floor() as i32,
+            aabb_min.z.floor() as i32,
+        );
+        let max_i = IVec3::new(
+            aabb_max.x.ceil() as i32 - 1,
+            aabb_max.y.ceil() as i32 - 1,
+            aabb_max.z.ceil() as i32 - 1,
+        );
+        
+        // Check each voxel in the range
+        for x in min_i.x..=max_i.x {
+            for y in min_i.y..=max_i.y {
+                for z in min_i.z..=max_i.z {
+                    let voxel_pos = IVec3::new(x, y, z);
+                    if self.get_voxel(voxel_pos) {
+                        // Calculate the collision point and normal
+                        let contact = self.calculate_contact(aabb_min, aabb_max, voxel_pos);
+                        result.contacts.push(contact);
+                    }
+                }
+            }
+        }
+        
+        result
+    }
+
+    /// Calculate collision contact for a single voxel.
+    fn calculate_contact(&self, aabb_min: Vec3, aabb_max: Vec3, voxel_pos: IVec3) -> CollisionPoint {
+        let voxel_min = Vec3::new(voxel_pos.x as f32, voxel_pos.y as f32, voxel_pos.z as f32);
+        let voxel_max = voxel_min + Vec3::ONE;
+        
+        // Calculate overlap on each axis
+        let overlap_x_min = aabb_max.x - voxel_min.x;
+        let overlap_x_max = voxel_max.x - aabb_min.x;
+        let overlap_y_min = aabb_max.y - voxel_min.y;
+        let overlap_y_max = voxel_max.y - aabb_min.y;
+        let overlap_z_min = aabb_max.z - voxel_min.z;
+        let overlap_z_max = voxel_max.z - aabb_min.z;
+        
+        // Find minimum penetration axis
+        let penetrations = [
+            (overlap_x_min, Vec3::NEG_X), // AABB is to the +X of voxel
+            (overlap_x_max, Vec3::X),      // AABB is to the -X of voxel
+            (overlap_y_min, Vec3::NEG_Y),
+            (overlap_y_max, Vec3::Y),
+            (overlap_z_min, Vec3::NEG_Z),
+            (overlap_z_max, Vec3::Z),
+        ];
+        
+        let (penetration, normal) = penetrations
+            .iter()
+            .filter(|(p, _)| *p > 0.0)
+            .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(p, n)| (*p, *n))
+            .unwrap_or((0.0, Vec3::Y));
+        
+        // Contact point is at the center of the overlap region
+        let contact_pos = Vec3::new(
+            (aabb_min.x.max(voxel_min.x) + aabb_max.x.min(voxel_max.x)) / 2.0,
+            (aabb_min.y.max(voxel_min.y) + aabb_max.y.min(voxel_max.y)) / 2.0,
+            (aabb_min.z.max(voxel_min.z) + aabb_max.z.min(voxel_max.z)) / 2.0,
+        );
+        
+        CollisionPoint {
+            world_pos: contact_pos,
+            normal,
+            penetration,
+            voxel_pos,
+        }
+    }
+}
+
+/// A single collision contact point.
+#[derive(Debug, Clone, Copy)]
+pub struct CollisionPoint {
+    /// World-space position of the contact.
+    pub world_pos: Vec3,
+    /// Normal vector pointing away from the collided surface.
+    pub normal: Vec3,
+    /// Penetration depth (how far the AABB is inside the voxel).
+    pub penetration: f32,
+    /// The voxel position that caused this collision.
+    pub voxel_pos: IVec3,
+}
+
+/// Result of a collision query.
+#[derive(Debug, Clone, Default)]
+pub struct CollisionResult {
+    /// All contact points found.
+    pub contacts: Vec<CollisionPoint>,
+}
+
+impl CollisionResult {
+    /// Create an empty collision result.
+    pub fn new() -> Self {
+        Self { contacts: Vec::new() }
+    }
+
+    /// Check if there are any collisions.
+    pub fn has_collision(&self) -> bool {
+        !self.contacts.is_empty()
+    }
+
+    /// Get the number of contact points.
+    pub fn contact_count(&self) -> usize {
+        self.contacts.len()
+    }
+
+    /// Get the deepest penetration among all contacts.
+    pub fn max_penetration(&self) -> f32 {
+        self.contacts
+            .iter()
+            .map(|c| c.penetration)
+            .fold(0.0, f32::max)
+    }
+
+    /// Calculate the combined push-out vector to resolve all collisions.
+    ///
+    /// This averages all contact normals weighted by penetration depth.
+    pub fn resolution_vector(&self) -> Vec3 {
+        if self.contacts.is_empty() {
+            return Vec3::ZERO;
+        }
+        
+        let mut total = Vec3::ZERO;
+        for contact in &self.contacts {
+            total += contact.normal * contact.penetration;
+        }
+        
+        total
+    }
 }
 
 /// Convert world position to chunk coordinate.
@@ -522,5 +672,174 @@ mod tests {
             assert!(!occ.get(UVec3::new(0, 0, 0)));
             assert_eq!(occ.count_occupied(), 2);
         }
+    }
+
+    // ========== AABB Collision Tests ==========
+
+    #[test]
+    fn test_aabb_no_collision() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(10, 10, 10, Voxel::solid(255, 0, 0));
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // AABB in empty space
+        let result = occ.check_aabb(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+        
+        assert!(!result.has_collision());
+        assert_eq!(result.contact_count(), 0);
+    }
+
+    #[test]
+    fn test_aabb_collision_single_voxel() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // AABB overlapping the voxel
+        let result = occ.check_aabb(Vec3::new(4.5, 4.5, 4.5), Vec3::new(5.5, 5.5, 5.5));
+        
+        assert!(result.has_collision());
+        assert_eq!(result.contact_count(), 1);
+        assert_eq!(result.contacts[0].voxel_pos, IVec3::new(5, 5, 5));
+    }
+
+    #[test]
+    fn test_aabb_collision_multiple_voxels() {
+        let mut world = VoxelWorld::new();
+        // 2x2x1 floor
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        world.set_voxel(1, 0, 0, Voxel::solid(255, 0, 0));
+        world.set_voxel(0, 0, 1, Voxel::solid(255, 0, 0));
+        world.set_voxel(1, 0, 1, Voxel::solid(255, 0, 0));
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // AABB overlapping all 4 voxels
+        let result = occ.check_aabb(Vec3::new(0.25, 0.5, 0.25), Vec3::new(1.75, 1.5, 1.75));
+        
+        assert!(result.has_collision());
+        assert_eq!(result.contact_count(), 4);
+    }
+
+    #[test]
+    fn test_aabb_collision_cross_chunk() {
+        let mut world = VoxelWorld::new();
+        // Voxels at chunk boundary
+        world.set_voxel(31, 0, 0, Voxel::solid(255, 0, 0)); // Chunk (0,0,0)
+        world.set_voxel(32, 0, 0, Voxel::solid(0, 255, 0)); // Chunk (1,0,0)
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // AABB spanning the chunk boundary
+        let result = occ.check_aabb(Vec3::new(31.25, 0.25, 0.25), Vec3::new(32.75, 0.75, 0.75));
+        
+        assert!(result.has_collision());
+        assert_eq!(result.contact_count(), 2);
+    }
+
+    #[test]
+    fn test_collision_result_max_penetration() {
+        let mut result = CollisionResult::new();
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::Y,
+            penetration: 0.5,
+            voxel_pos: IVec3::ZERO,
+        });
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::Y,
+            penetration: 0.8,
+            voxel_pos: IVec3::ZERO,
+        });
+        
+        assert!((result.max_penetration() - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_collision_result_resolution_vector() {
+        let mut result = CollisionResult::new();
+        // Two contacts pushing up
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::Y,
+            penetration: 0.5,
+            voxel_pos: IVec3::ZERO,
+        });
+        result.contacts.push(CollisionPoint {
+            world_pos: Vec3::ZERO,
+            normal: Vec3::Y,
+            penetration: 0.3,
+            voxel_pos: IVec3::ZERO,
+        });
+        
+        let resolution = result.resolution_vector();
+        
+        // Should push up by total penetration
+        assert!(resolution.x.abs() < 0.001);
+        assert!((resolution.y - 0.8).abs() < 0.001);
+        assert!(resolution.z.abs() < 0.001);
+    }
+
+    #[test]
+    fn test_aabb_collision_penetration_depth() {
+        let mut world = VoxelWorld::new();
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // AABB with known penetration from above
+        // AABB bottom at y=0.7, voxel top at y=1.0 → penetration = 0.3
+        let result = occ.check_aabb(Vec3::new(0.25, 0.7, 0.25), Vec3::new(0.75, 1.7, 0.75));
+        
+        assert!(result.has_collision());
+        assert_eq!(result.contact_count(), 1);
+        
+        let contact = &result.contacts[0];
+        // Penetration should be 0.3 (voxel top - aabb bottom = 1.0 - 0.7)
+        assert!((contact.penetration - 0.3).abs() < 0.01, "Expected 0.3, got {}", contact.penetration);
+        // Normal should point up (pushing AABB out of voxel)
+        assert_eq!(contact.normal, Vec3::Y);
+    }
+
+    #[test]
+    fn test_aabb_collision_benchmark() {
+        use std::time::Instant;
+        
+        // Create a larger terrain
+        let mut world = VoxelWorld::new();
+        for x in 0..20 {
+            for z in 0..20 {
+                for y in 0..3 {
+                    world.set_voxel(x, y, z, Voxel::solid(100, 100, 100));
+                }
+            }
+        }
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // Benchmark AABB collision queries
+        let iterations = 1000;
+        let start = Instant::now();
+        
+        for i in 0..iterations {
+            let x = (i % 18) as f32 + 0.5;
+            let z = ((i / 18) % 18) as f32 + 0.5;
+            let _ = occ.check_aabb(
+                Vec3::new(x, 2.5, z),
+                Vec3::new(x + 1.0, 4.5, z + 1.0),
+            );
+        }
+        
+        let elapsed = start.elapsed();
+        let per_query_us = elapsed.as_micros() as f64 / iterations as f64;
+        
+        println!("AABB collision benchmark: {} queries in {:?}", iterations, elapsed);
+        println!("  Per query: {:.2} us", per_query_us);
+        
+        // Should be well under 1ms per query
+        assert!(per_query_us < 1000.0, "Query too slow: {} us", per_query_us);
     }
 }
