@@ -44,6 +44,16 @@ use super::gtao_depth_prefilter::{
 use super::gtao_denoise::{
     init_gtao_denoise_pipeline, prepare_gtao_denoised_textures, GtaoDenoiseNode,
 };
+use super::collision_extract::{
+    ExtractedFragments, ExtractedTerrainChunks,
+    extract_fragments_system, extract_terrain_occupancy_system,
+};
+use super::collision_prepare::{
+    init_gpu_occupancy, upload_terrain_to_gpu, prepare_collision_bind_groups,
+    init_collision_pipeline,
+};
+use super::collision_node::run_collision_compute_system;
+use super::collision_readback::GpuCollisionReadbackPlugin;
 use crate::debug_screenshot::DebugModes;
 
 /// Plugin that enables deferred rendering for voxels.
@@ -86,6 +96,9 @@ impl Plugin for DeferredRenderingPlugin {
         
         // Extract BloomConfig resource to render world (for enabling/disabling bloom)
         app.add_plugins(ExtractResourcePlugin::<BloomConfig>::default());
+        
+        // Add GPU collision readback plugin (creates shared resource in both worlds)
+        app.add_plugins(GpuCollisionReadbackPlugin);
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -98,13 +111,19 @@ impl Plugin for DeferredRenderingPlugin {
         
         // Initialize GTAO frame counter for TAA noise index (XeGTAO.h L196)
         render_app.init_resource::<GtaoFrameCount>();
+        
+        // Initialize GPU collision extraction resources in render world
+        render_app.init_resource::<ExtractedFragments>();
+        render_app.init_resource::<ExtractedTerrainChunks>();
 
-        // Add extraction systems for deferred meshes, point lights, and moon config
+        // Add extraction systems for deferred meshes, point lights, moon config, and collision
         render_app.add_systems(ExtractSchedule, (
             extract_deferred_meshes, 
             extract_point_lights,
             extract_moon_config,
             update_gtao_frame_count,
+            extract_fragments_system,
+            extract_terrain_occupancy_system,
         ));
 
         // Add prepare systems
@@ -198,6 +217,32 @@ impl Plugin for DeferredRenderingPlugin {
                     .after(init_gtao_denoise_pipeline),
             ),
         );
+        
+        // GPU collision systems
+        // init_gpu_occupancy creates the GPU texture arrays for terrain
+        // init_collision_pipeline creates the compute pipeline
+        // upload_terrain_to_gpu uploads terrain chunks when dirty
+        // prepare_collision_bind_groups prepares per-frame fragment data
+        // run_collision_compute_system runs the compute shader and reads back results
+        render_app.add_systems(
+            Render,
+            (
+                init_gpu_occupancy.in_set(RenderSystems::Prepare),
+                init_collision_pipeline
+                    .in_set(RenderSystems::Prepare)
+                    .after(init_gpu_occupancy),
+                upload_terrain_to_gpu
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_gpu_occupancy),
+                prepare_collision_bind_groups
+                    .in_set(RenderSystems::PrepareResources)
+                    .after(init_collision_pipeline)
+                    .after(upload_terrain_to_gpu),
+                run_collision_compute_system
+                    .in_set(RenderSystems::Render)
+                    .after(prepare_collision_bind_groups),
+            ),
+        );
 
         // Add render graph nodes
         render_app
@@ -284,6 +329,6 @@ impl Plugin for DeferredRenderingPlugin {
                 Node3d::MainTransparentPass,
             ),
         );
-
+        
     }
 }

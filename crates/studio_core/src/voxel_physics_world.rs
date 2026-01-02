@@ -49,7 +49,19 @@
 //! ```
 
 use bevy::prelude::*;
-use crate::voxel_collision::WorldOccupancy;
+use crate::voxel_collision::{WorldOccupancy, FragmentOccupancy};
+
+/// Type of physics body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BodyKind {
+    /// Kinematic body - player-style movement, no rotation.
+    /// Controlled via input velocity and jump.
+    #[default]
+    Kinematic,
+    /// Dynamic body - fragment-style physics with rotation.
+    /// Affected by gravity and collisions, can tumble.
+    Dynamic,
+}
 
 /// Handle to a kinematic body in the physics world.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,36 +97,50 @@ impl Default for PhysicsConfig {
     }
 }
 
-/// A kinematic body in the physics world.
+/// A physics body in the physics world.
+///
+/// Can be either `Kinematic` (player-style, no rotation) or `Dynamic` (fragment-style with rotation).
 #[derive(Debug, Clone)]
-pub struct KinematicBody {
+pub struct PhysicsBody {
+    /// What kind of body this is.
+    pub kind: BodyKind,
     /// World-space position (center of AABB).
     pub position: Vec3,
+    /// Rotation (identity for Kinematic bodies).
+    pub rotation: Quat,
     /// Current velocity (includes gravity effects).
     pub velocity: Vec3,
+    /// Angular velocity in radians/sec (zero for Kinematic bodies).
+    pub angular_velocity: Vec3,
     /// Half-extents of the collision box.
     pub half_extents: Vec3,
     /// Whether the body is currently on the ground.
     pub grounded: bool,
     /// Normal of the ground surface (if grounded).
     pub ground_normal: Vec3,
+    /// Voxel occupancy for Dynamic bodies (None for Kinematic).
+    pub occupancy: Option<FragmentOccupancy>,
     /// Input velocity from player/AI control (horizontal movement).
-    /// This is applied each frame before physics step.
+    /// This is applied each frame before physics step. Only used for Kinematic bodies.
     input_velocity: Vec3,
-    /// Whether a jump was requested this frame.
+    /// Whether a jump was requested this frame. Only used for Kinematic bodies.
     jump_requested: bool,
-    /// Jump speed to apply if jump is requested.
+    /// Jump speed to apply if jump is requested. Only used for Kinematic bodies.
     jump_speed: f32,
 }
 
-impl Default for KinematicBody {
+impl Default for PhysicsBody {
     fn default() -> Self {
         Self {
+            kind: BodyKind::Kinematic,
             position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
             velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
             half_extents: Vec3::new(0.4, 0.9, 0.4), // Player-sized
             grounded: false,
             ground_normal: Vec3::Y,
+            occupancy: None,
             input_velocity: Vec3::ZERO,
             jump_requested: false,
             jump_speed: 0.0,
@@ -122,37 +148,59 @@ impl Default for KinematicBody {
     }
 }
 
-impl KinematicBody {
-    /// Create a player-sized body at the given position.
+impl PhysicsBody {
+    /// Create a player-sized kinematic body at the given position.
     pub fn player(position: Vec3) -> Self {
         Self {
+            kind: BodyKind::Kinematic,
             position,
             half_extents: Vec3::new(0.4, 0.9, 0.4),
             ..Default::default()
         }
     }
 
-    /// Create a body with custom half-extents.
+    /// Create a kinematic body with custom half-extents.
     pub fn with_extents(position: Vec3, half_extents: Vec3) -> Self {
         Self {
+            kind: BodyKind::Kinematic,
             position,
             half_extents,
             ..Default::default()
         }
     }
+
+    /// Create a dynamic body with voxel occupancy for collision.
+    ///
+    /// Dynamic bodies have rotation and angular velocity, and use the
+    /// fragment occupancy data for voxel-accurate collision detection.
+    pub fn dynamic(position: Vec3, occupancy: FragmentOccupancy) -> Self {
+        let aabb_size = occupancy.aabb_size();
+        Self {
+            kind: BodyKind::Dynamic,
+            position,
+            rotation: Quat::IDENTITY,
+            half_extents: aabb_size * 0.5,
+            occupancy: Some(occupancy),
+            ..Default::default()
+        }
+    }
 }
 
-/// Physics simulation for kinematic bodies in a voxel world.
+/// Type alias for backwards compatibility.
+pub type KinematicBody = PhysicsBody;
+
+/// Physics simulation for bodies in a voxel world.
 ///
 /// This provides a self-contained physics world that:
 /// - Uses fixed timestep for deterministic simulation
 /// - Handles gravity and collision response internally
-/// - Provides simple API for player/AI control
+/// - Provides simple API for player/AI control (Kinematic bodies)
+/// - Simulates tumbling voxel fragments (Dynamic bodies)
 pub struct VoxelPhysicsWorld {
     /// Voxel occupancy data for collision queries.
     occupancy: WorldOccupancy,
-    /// All kinematic bodies in the world.
-    bodies: Vec<KinematicBody>,
+    /// All physics bodies in the world.
+    bodies: Vec<PhysicsBody>,
     /// Physics configuration.
     config: PhysicsConfig,
     /// Accumulator for fixed timestep.
@@ -175,21 +223,28 @@ impl VoxelPhysicsWorld {
         Self::new(occupancy, PhysicsConfig::default())
     }
 
-    /// Add a kinematic body to the world.
-    pub fn add_body(&mut self, body: KinematicBody) -> BodyHandle {
+    /// Add a physics body to the world.
+    pub fn add_body(&mut self, body: PhysicsBody) -> BodyHandle {
         let handle = BodyHandle(self.bodies.len());
         self.bodies.push(body);
         handle
     }
 
     /// Get a body by handle.
-    pub fn get_body(&self, handle: BodyHandle) -> Option<&KinematicBody> {
+    pub fn get_body(&self, handle: BodyHandle) -> Option<&PhysicsBody> {
         self.bodies.get(handle.0)
     }
 
     /// Get a mutable body by handle.
-    pub fn get_body_mut(&mut self, handle: BodyHandle) -> Option<&mut KinematicBody> {
+    pub fn get_body_mut(&mut self, handle: BodyHandle) -> Option<&mut PhysicsBody> {
         self.bodies.get_mut(handle.0)
+    }
+
+    /// Get the transform (position and rotation) of a body.
+    ///
+    /// This is useful for syncing physics state to rendering transforms.
+    pub fn get_transform(&self, handle: BodyHandle) -> Option<(Vec3, Quat)> {
+        self.bodies.get(handle.0).map(|b| (b.position, b.rotation))
     }
 
     /// Set the input velocity for a body (horizontal movement from player/AI).
@@ -252,34 +307,128 @@ impl VoxelPhysicsWorld {
         for i in 0..self.bodies.len() {
             let body = &mut self.bodies[i];
             
-            // Apply input velocity (horizontal movement from player)
-            body.velocity.x = body.input_velocity.x;
-            body.velocity.z = body.input_velocity.z;
-
-            // Process jump request
-            if body.jump_requested && body.grounded {
-                body.velocity.y = body.jump_speed;
-                body.grounded = false;
-            }
-            body.jump_requested = false;
-
-            // Apply gravity
-            if !body.grounded {
-                body.velocity += gravity * dt;
-            } else {
-                // Clamp downward velocity when grounded
-                if body.velocity.y < 0.0 {
-                    body.velocity.y = 0.0;
+            match body.kind {
+                BodyKind::Kinematic => {
+                    Self::step_kinematic_body(&self.occupancy, body, dt, gravity, collision_iterations);
+                }
+                BodyKind::Dynamic => {
+                    Self::step_dynamic_body(&self.occupancy, body, dt, gravity, collision_iterations);
                 }
             }
-
-            // Move and collide - inline the logic to avoid borrow issues
-            Self::move_body_internal(&self.occupancy, body, dt, collision_iterations);
         }
     }
 
-    /// Move a body and resolve collisions (static method to avoid borrow issues).
-    fn move_body_internal(occupancy: &WorldOccupancy, body: &mut KinematicBody, dt: f32, collision_iterations: u32) {
+    /// Step a kinematic body (player-style, no rotation).
+    fn step_kinematic_body(
+        occupancy: &WorldOccupancy,
+        body: &mut PhysicsBody,
+        dt: f32,
+        gravity: Vec3,
+        collision_iterations: u32,
+    ) {
+        // Apply input velocity (horizontal movement from player)
+        body.velocity.x = body.input_velocity.x;
+        body.velocity.z = body.input_velocity.z;
+
+        // Process jump request
+        if body.jump_requested && body.grounded {
+            body.velocity.y = body.jump_speed;
+            body.grounded = false;
+        }
+        body.jump_requested = false;
+
+        // Apply gravity
+        if !body.grounded {
+            body.velocity += gravity * dt;
+        } else {
+            // Clamp downward velocity when grounded
+            if body.velocity.y < 0.0 {
+                body.velocity.y = 0.0;
+            }
+        }
+
+        // Move and collide
+        Self::move_kinematic_body(occupancy, body, dt, collision_iterations);
+    }
+
+    /// Step a dynamic body (fragment-style with rotation).
+    fn step_dynamic_body(
+        occupancy: &WorldOccupancy,
+        body: &mut PhysicsBody,
+        dt: f32,
+        gravity: Vec3,
+        collision_iterations: u32,
+    ) {
+        // Apply gravity (always, dynamic bodies don't have "grounded" prevention)
+        body.velocity += gravity * dt;
+
+        // Apply angular velocity to rotation
+        if body.angular_velocity.length_squared() > 0.0001 {
+            let angle = body.angular_velocity.length() * dt;
+            let axis = body.angular_velocity.normalize_or_zero();
+            if axis.length_squared() > 0.0 {
+                body.rotation = Quat::from_axis_angle(axis, angle) * body.rotation;
+                body.rotation = body.rotation.normalize();
+            }
+        }
+
+        // Move
+        body.position += body.velocity * dt;
+
+        // Collision using fragment occupancy (if present)
+        let Some(ref fragment_occupancy) = body.occupancy else {
+            // No occupancy data - fallback to AABB collision (shouldn't normally happen)
+            return;
+        };
+
+        body.grounded = false;
+
+        for _ in 0..collision_iterations {
+            let result = occupancy.check_fragment(
+                fragment_occupancy,
+                body.position,
+                body.rotation,
+            );
+
+            if !result.has_collision() {
+                break;
+            }
+
+            let resolution = result.resolution_vector();
+            body.position += resolution;
+
+            // Floor contact detection and response
+            if result.has_floor_contact() {
+                body.grounded = true;
+                body.ground_normal = result.average_normal();
+                
+                // Damping on floor contact
+                if body.velocity.y < 0.0 {
+                    body.velocity.y *= -0.2; // Slight bounce, mostly absorbed
+                }
+                body.velocity.x *= 0.95; // Friction
+                body.velocity.z *= 0.95;
+                body.angular_velocity *= 0.9; // Angular damping
+            }
+
+            // Torque from off-center contact (causes tumbling)
+            let avg_contact = result.average_contact_position();
+            let lever = avg_contact - body.position;
+            if lever.length_squared() > 0.01 {
+                let torque = lever.cross(resolution.normalize_or_zero()) * resolution.length() * 0.5;
+                body.angular_velocity += torque * dt;
+            }
+        }
+
+        // Clamp angular velocity to prevent spinning too fast
+        let max_angular = 10.0;
+        if body.angular_velocity.length() > max_angular {
+            body.angular_velocity = body.angular_velocity.normalize() * max_angular;
+        }
+    }
+
+    /// Move a kinematic body and resolve collisions using AABB checks.
+    fn move_kinematic_body(occupancy: &WorldOccupancy, body: &mut PhysicsBody, dt: f32, collision_iterations: u32) {
         let mut remaining_velocity = body.velocity * dt;
         let was_grounded = body.grounded;
         body.grounded = false;
@@ -688,5 +837,132 @@ mod tests {
 
         assert!(state.grounded, "Should be grounded after 3 seconds of falling");
         assert!((state.position.y - 3.9).abs() < 0.3, "Should land at ~3.9, got {}", state.position.y);
+    }
+
+    // ========== Dynamic Body Tests ==========
+
+    #[test]
+    fn test_dynamic_body_falls_and_lands() {
+        let terrain = create_floor_world();
+        let occupancy = WorldOccupancy::from_voxel_world(&terrain);
+        let mut physics = VoxelPhysicsWorld::with_default_config(occupancy);
+
+        // Create a 2x2x2 fragment occupancy (small cube)
+        let mut frag_world = VoxelWorld::new();
+        for x in 0..2 {
+            for y in 0..2 {
+                for z in 0..2 {
+                    frag_world.set_voxel(x, y, z, Voxel::solid(255, 0, 0));
+                }
+            }
+        }
+        let frag_occupancy = FragmentOccupancy::from_voxel_world(&frag_world);
+
+        // Add dynamic body above the floor
+        let body = physics.add_body(PhysicsBody::dynamic(Vec3::new(0.0, 10.0, 0.0), frag_occupancy));
+
+        println!("Dynamic body test - starting at y=10.0");
+        
+        // Simulate 3 seconds (should be enough to fall and settle)
+        for i in 0..180 {
+            physics.step(1.0 / 60.0);
+            
+            if i % 30 == 0 {
+                let state = physics.get_body(body).unwrap();
+                println!("Frame {}: pos.y={:.3}, vel.y={:.3}, grounded={}", 
+                    i, state.position.y, state.velocity.y, state.grounded);
+            }
+        }
+
+        let state = physics.get_body(body).unwrap();
+        println!("Final: pos={:?}, grounded={}", state.position, state.grounded);
+
+        // Should have fallen and landed
+        // Floor top is at y=3.0, fragment is 2 units tall, center should be at ~4.0
+        assert!(state.grounded, "Dynamic body should land on floor");
+        assert!(state.position.y < 6.0, "Should have fallen from y=10, got {}", state.position.y);
+        assert!(state.position.y > 3.0, "Should be above floor top (y=3), got {}", state.position.y);
+    }
+
+    #[test]
+    fn test_dynamic_body_rotation() {
+        let terrain = create_floor_world();
+        let occupancy = WorldOccupancy::from_voxel_world(&terrain);
+        let mut physics = VoxelPhysicsWorld::with_default_config(occupancy);
+
+        // Create a single voxel fragment
+        let mut frag_world = VoxelWorld::new();
+        frag_world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        let frag_occupancy = FragmentOccupancy::from_voxel_world(&frag_world);
+
+        // Add dynamic body with initial angular velocity (spinning around Y)
+        let mut body_data = PhysicsBody::dynamic(Vec3::new(0.0, 20.0, 0.0), frag_occupancy);
+        body_data.angular_velocity = Vec3::new(0.0, 5.0, 0.0); // 5 rad/s around Y
+        let body = physics.add_body(body_data);
+
+        let initial_rot = physics.get_body(body).unwrap().rotation;
+        println!("Initial rotation: {:?}", initial_rot);
+
+        // Simulate 1 second (60 frames)
+        for _ in 0..60 {
+            physics.step(1.0 / 60.0);
+        }
+
+        let state = physics.get_body(body).unwrap();
+        let final_rot = state.rotation;
+        let angle_diff = initial_rot.angle_between(final_rot);
+
+        println!("Final rotation: {:?}", final_rot);
+        println!("Angle difference: {:.3} radians", angle_diff);
+
+        // Should have rotated significantly (5 rad/s * 1s = 5 radians, but clamped/damped)
+        assert!(angle_diff > 0.5, "Should have rotated at least 0.5 radians, got {}", angle_diff);
+    }
+
+    #[test]
+    fn test_dynamic_body_kind_is_dynamic() {
+        let mut frag_world = VoxelWorld::new();
+        frag_world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        let frag_occupancy = FragmentOccupancy::from_voxel_world(&frag_world);
+
+        let body = PhysicsBody::dynamic(Vec3::new(0.0, 10.0, 0.0), frag_occupancy);
+        
+        assert_eq!(body.kind, BodyKind::Dynamic);
+        assert!(body.occupancy.is_some());
+        assert_eq!(body.rotation, Quat::IDENTITY);
+        assert_eq!(body.angular_velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn test_kinematic_body_kind_is_kinematic() {
+        let body = PhysicsBody::player(Vec3::new(0.0, 10.0, 0.0));
+        
+        assert_eq!(body.kind, BodyKind::Kinematic);
+        assert!(body.occupancy.is_none());
+        assert_eq!(body.rotation, Quat::IDENTITY);
+        assert_eq!(body.angular_velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn test_get_transform() {
+        let terrain = create_floor_world();
+        let occupancy = WorldOccupancy::from_voxel_world(&terrain);
+        let mut physics = VoxelPhysicsWorld::with_default_config(occupancy);
+
+        // Create a dynamic body with non-identity rotation
+        let mut frag_world = VoxelWorld::new();
+        frag_world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+        let frag_occupancy = FragmentOccupancy::from_voxel_world(&frag_world);
+
+        let mut body_data = PhysicsBody::dynamic(Vec3::new(5.0, 15.0, 3.0), frag_occupancy);
+        body_data.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_4);
+        let body = physics.add_body(body_data);
+
+        let (pos, rot) = physics.get_transform(body).unwrap();
+        
+        assert!((pos.x - 5.0).abs() < 0.001);
+        assert!((pos.y - 15.0).abs() < 0.001);
+        assert!((pos.z - 3.0).abs() < 0.001);
+        assert!((rot.angle_between(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))).abs() < 0.001);
     }
 }

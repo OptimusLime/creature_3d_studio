@@ -25,6 +25,7 @@ pub mod screenshot;
 pub mod screenshot_sequence;
 pub mod voxel;
 pub mod voxel_collision;
+pub mod voxel_collision_gpu;
 pub mod voxel_fragment;
 pub mod voxel_mesh;
 pub mod voxel_physics;
@@ -35,7 +36,7 @@ pub mod world_io;
 pub use creature_script::{execute_creature_script, load_creature_script};
 pub use deferred::{
     DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredPointLight, DeferredRenderable,
-    DeferredRenderingPlugin, MoonConfig, PrimaryShadowCaster,
+    DeferredRenderingPlugin, MoonConfig, PrimaryShadowCaster, GpuCollisionContacts,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
@@ -86,7 +87,9 @@ pub use voxel_physics::{
 pub use voxel_fragment::{
     VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,
     StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
-    detect_settling_fragments,
+    detect_settling_fragments, TerrainOccupancy, FragmentCollisionConfig,
+    fragment_terrain_collision_system, clear_fragment_forces, GpuCollisionMode,
+    gpu_fragment_terrain_collision_system,
 };
 pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
 pub use voxel_collision::{
@@ -96,7 +99,11 @@ pub use voxel_collision::{
     OCCUPANCY_CHUNK_SIZE,
 };
 pub use voxel_physics_world::{
-    VoxelPhysicsWorld, PhysicsConfig, KinematicBody, BodyHandle,
+    VoxelPhysicsWorld, PhysicsConfig, PhysicsBody, KinematicBody, BodyHandle, BodyKind,
+};
+pub use voxel_collision_gpu::{
+    GpuWorldOccupancy, GpuCollisionPipeline, GpuCollisionResult, GpuContact,
+    GpuFragmentData, CollisionUniforms, MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
 };
 
 /// Core plugin for shared functionality.

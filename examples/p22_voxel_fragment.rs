@@ -1,15 +1,17 @@
 //! Phase 22: Voxel Fragment Physics Demo
 //!
 //! Demonstrates dynamic voxel fragments with physics:
-//! - Static terrain with trimesh collider
+//! - Static terrain with occupancy-based collision (Phase 6)
 //! - Falling voxel fragments with physics simulation
-//! - Collision between fragments and terrain
+//! - Collision between fragments and terrain using voxel occupancy
 //!
 //! Run with: `cargo run --example p22_voxel_fragment`
 //!
 //! Press SPACE to spawn a new fragment above the terrain.
 //! Press R to reset all fragments.
 //! Press B to run benchmark (spawns 1, 2, 4, 8 fragments and measures physics time)
+//! Press C to toggle collision system (CPU occupancy vs Rapier trimesh)
+//! Press G to toggle GPU collision (GPU compute shader vs CPU)
 //!
 //! Screenshots saved to: screenshots/voxel_fragment/
 
@@ -18,11 +20,13 @@ use bevy::diagnostic::DiagnosticsStore;
 use bevy_rapier3d::prelude::*;
 use std::time::Instant;
 use studio_core::{
-    generate_trimesh_collider, spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin,
+    spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin,
     VoxelMaterial, VoxelMaterialPlugin, VoxelWorld,
     build_world_meshes_cross_chunk, DeferredRenderingPlugin,
     OrbitCameraPlugin, OrbitCamera,
-    BenchmarkPlugin,
+    BenchmarkPlugin, TerrainOccupancy, FragmentCollisionConfig,
+    GpuCollisionMode, VoxelPhysicsWorld, PhysicsConfig, PhysicsBody, BodyHandle,
+    WorldOccupancy, FragmentOccupancy,
 };
 
 // Simple random number generator state (avoid external dependency)
@@ -62,6 +66,11 @@ fn main() {
             reset_fragments,
             run_benchmark,
             log_physics_stats,
+            toggle_collision_system,
+            toggle_gpu_collision,
+            toggle_unified_physics,
+            step_unified_physics,
+            sync_unified_physics_to_transforms,
         ))
         .insert_resource(FragmentSpawnConfig::default())
         .insert_resource(BenchmarkState::default())
@@ -83,6 +92,18 @@ impl Default for FragmentSpawnConfig {
         }
     }
 }
+
+/// Resource wrapping VoxelPhysicsWorld for unified physics.
+#[derive(Resource)]
+struct PhysicsWorldRes(VoxelPhysicsWorld);
+
+/// Component to track body handle in VoxelPhysicsWorld.
+#[derive(Component)]
+struct PhysicsBodyHandle(BodyHandle);
+
+/// Whether to use VoxelPhysicsWorld (true) or Rapier (false) for fragment physics.
+#[derive(Resource)]
+struct UseUnifiedPhysics(bool);
 
 /// Resource to hold the voxel material handle
 #[derive(Resource)]
@@ -125,23 +146,34 @@ fn setup(
         }
     }
     
-    // Generate terrain collider (Rapier trimesh for now, Phase 5-6 will use GPU occupancy)
-    let terrain_collider = generate_trimesh_collider(&terrain)
-        .expect("Terrain should produce a collider");
+    // Initialize terrain occupancy for fragment collision (Phase 6)
+    commands.insert_resource(TerrainOccupancy::from_voxel_world(&terrain));
+    
+    // Initialize VoxelPhysicsWorld for unified physics (Phase 3+)
+    let world_occupancy = WorldOccupancy::from_voxel_world(&terrain);
+    let physics_config = PhysicsConfig {
+        gravity: Vec3::new(0.0, -25.0, 0.0),
+        ..default()
+    };
+    commands.insert_resource(PhysicsWorldRes(VoxelPhysicsWorld::new(world_occupancy, physics_config)));
+    commands.insert_resource(UseUnifiedPhysics(true)); // Enable unified physics by default
+    
+    // NOTE: We no longer need Rapier terrain collider - VoxelPhysicsWorld handles
+    // fragment-terrain collision via occupancy. The trimesh was only needed when
+    // using Rapier for physics. Fragment-fragment collision would still need Rapier
+    // but we're not implementing that yet (fragments don't collide with each other).
     
     // Create voxel material
     let material = materials.add(VoxelMaterial { ambient: 0.1 });
     commands.insert_resource(VoxelMaterialHandle(material.clone()));
     
-    // Spawn terrain mesh and collider
+    // Spawn terrain mesh (no Rapier collider needed for unified physics)
     let chunk_meshes = build_world_meshes_cross_chunk(&terrain);
     
     commands.spawn((
         Name::new("Terrain"),
         Transform::default(),
         Visibility::default(),
-        RigidBody::Fixed,
-        terrain_collider,
     )).with_children(|parent| {
         for chunk_mesh in chunk_meshes {
             let translation = chunk_mesh.translation();
@@ -183,7 +215,9 @@ fn setup(
     });
     
     info!("Press SPACE to spawn a fragment, R to reset, P for physics stats");
-    info!("Using Rapier trimesh for terrain collision (Phase 5-6 will add GPU occupancy)");
+    info!("Press C to toggle occupancy collision on/off");
+    info!("Press U to toggle unified physics (VoxelPhysicsWorld vs Rapier)");
+    info!("Using unified VoxelPhysicsWorld for fragment physics");
 }
 
 /// Marker component for spawned fragments
@@ -197,6 +231,8 @@ fn spawn_fragment_on_space(
     keyboard: Res<ButtonInput<KeyCode>>,
     config: Res<FragmentSpawnConfig>,
     material_handle: Res<VoxelMaterialHandle>,
+    mut physics_world: ResMut<PhysicsWorldRes>,
+    use_unified: Res<UseUnifiedPhysics>,
 ) {
     if keyboard.just_pressed(KeyCode::Space) {
         // Create a small voxel fragment
@@ -229,6 +265,9 @@ fn spawn_fragment_on_space(
             (simple_random() - 0.5) * 2.0,
         );
         
+        // Create fragment occupancy for VoxelPhysicsWorld
+        let frag_occupancy = FragmentOccupancy::from_voxel_world(&fragment_data);
+        
         if let Some(entity) = spawn_fragment_with_mesh(
             &mut commands,
             &mut meshes,
@@ -237,8 +276,24 @@ fn spawn_fragment_on_space(
             impulse,
             material_handle.0.clone(),
         ) {
-            commands.entity(entity).insert((SpawnedFragment, Name::new("Fragment")));
-            info!("Spawned fragment at {:?}", position);
+            let mut entity_commands = commands.entity(entity);
+            entity_commands.insert((SpawnedFragment, Name::new("Fragment")));
+            
+            // If using unified physics, add to VoxelPhysicsWorld and make Rapier kinematic
+            if use_unified.0 {
+                // Create dynamic body in VoxelPhysicsWorld
+                let mut body = PhysicsBody::dynamic(position, frag_occupancy);
+                body.velocity = impulse; // Apply initial impulse as velocity
+                let handle = physics_world.0.add_body(body);
+                
+                // Track the handle and switch to kinematic (so Rapier doesn't fight)
+                entity_commands.insert(PhysicsBodyHandle(handle));
+                entity_commands.insert(RigidBody::KinematicPositionBased);
+                
+                info!("Spawned unified physics fragment at {:?}", position);
+            } else {
+                info!("Spawned Rapier fragment at {:?}", position);
+            }
         }
     }
 }
@@ -413,6 +468,82 @@ fn run_benchmark(
             state.results.push((target_fragments, avg_time));
             state.stage += 1;
             state.start_time = None;
+        }
+    }
+}
+
+/// Toggle collision system on/off when C is pressed
+fn toggle_collision_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut config: ResMut<FragmentCollisionConfig>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        config.enabled = !config.enabled;
+        if config.enabled {
+            info!("Occupancy collision ENABLED - fragments collide with terrain voxels");
+        } else {
+            info!("Occupancy collision DISABLED - fragments only use Rapier colliders");
+        }
+    }
+}
+
+/// Toggle GPU collision mode when G is pressed
+fn toggle_gpu_collision(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut gpu_mode: ResMut<GpuCollisionMode>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyG) {
+        gpu_mode.enabled = !gpu_mode.enabled;
+        if gpu_mode.enabled {
+            info!("GPU collision ENABLED - using compute shader for collision detection");
+        } else {
+            info!("GPU collision DISABLED - using CPU collision detection");
+        }
+    }
+}
+
+/// Toggle unified physics mode when U is pressed
+fn toggle_unified_physics(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut use_unified: ResMut<UseUnifiedPhysics>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyU) {
+        use_unified.0 = !use_unified.0;
+        if use_unified.0 {
+            info!("Unified physics ENABLED - new fragments use VoxelPhysicsWorld");
+        } else {
+            info!("Unified physics DISABLED - new fragments use Rapier directly");
+        }
+    }
+}
+
+/// Step the unified physics world
+fn step_unified_physics(
+    mut physics_world: ResMut<PhysicsWorldRes>,
+    time: Res<Time>,
+    use_unified: Res<UseUnifiedPhysics>,
+) {
+    if !use_unified.0 {
+        return;
+    }
+    
+    physics_world.0.step(time.delta_secs());
+}
+
+/// Sync unified physics state to Transform components
+fn sync_unified_physics_to_transforms(
+    physics_world: Res<PhysicsWorldRes>,
+    mut fragments: Query<(&PhysicsBodyHandle, &mut Transform)>,
+    use_unified: Res<UseUnifiedPhysics>,
+) {
+    if !use_unified.0 {
+        return;
+    }
+    
+    for (handle, mut transform) in fragments.iter_mut() {
+        if let Some((pos, rot)) = physics_world.0.get_transform(handle.0) {
+            transform.translation = pos;
+            transform.rotation = rot;
         }
     }
 }

@@ -367,6 +367,11 @@ impl WorldOccupancy {
         self.chunks.values().map(|c| c.count_occupied()).sum()
     }
 
+    /// Iterate over all chunks with their coordinates.
+    pub fn iter_chunks(&self) -> impl Iterator<Item = (IVec3, &ChunkOccupancy)> {
+        self.chunks.iter().map(|(&coord, chunk)| (coord, chunk))
+    }
+
     /// Check an AABB against the world, returning collision information.
     ///
     /// The AABB is specified in world coordinates as floating-point values.
@@ -663,7 +668,7 @@ impl FragmentCollisionResult {
 /// This stores bit-packed occupancy for arbitrary-sized voxel regions.
 ///
 /// Used for checking fragment collision against world terrain.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FragmentOccupancy {
     /// Bit-packed occupancy data.
     data: Vec<u32>,
@@ -782,6 +787,11 @@ impl FragmentOccupancy {
     /// Check if fragment is empty.
     pub fn is_empty(&self) -> bool {
         self.data.iter().all(|&x| x == 0)
+    }
+
+    /// Get raw u32 slice for GPU upload.
+    pub fn as_u32_slice(&self) -> &[u32] {
+        &self.data
     }
 
     /// Iterate over all occupied positions.

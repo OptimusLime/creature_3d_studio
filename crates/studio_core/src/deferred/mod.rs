@@ -60,6 +60,10 @@ mod gtao;
 mod gtao_node;
 mod gtao_depth_prefilter;
 mod gtao_denoise;
+mod collision_extract;
+mod collision_prepare;
+mod collision_node;
+mod collision_readback;
 
 pub use bloom::*;
 pub use bloom_node::*;
@@ -79,3 +83,7 @@ pub use gtao::*;
 pub use gtao_node::*;
 pub use gtao_depth_prefilter::*;
 pub use gtao_denoise::*;
+pub use collision_extract::*;
+pub use collision_prepare::*;
+pub use collision_node::*;
+pub use collision_readback::*;

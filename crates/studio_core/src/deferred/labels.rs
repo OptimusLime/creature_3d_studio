@@ -23,4 +23,6 @@ pub enum DeferredLabel {
     LightingPass,
     /// Bloom pass: post-process bloom effect on HDR output
     BloomPass,
+    /// GPU collision compute: runs voxel collision on GPU
+    CollisionCompute,
 }
