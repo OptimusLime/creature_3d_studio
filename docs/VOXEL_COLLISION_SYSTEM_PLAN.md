@@ -177,37 +177,130 @@ cargo test -p studio_core aabb_collision -- --nocapture
 
 ---
 
-## Phase 3: Kinematic Character Controller
+## Phase 3: Voxel Physics World (REFACTORED)
 
-**Outcome:** A capsule/box can walk on voxel terrain using occupancy queries. Proves the collision system works for gameplay.
+> **STATUS: REQUIRES REFACTOR** - Initial implementation was broken.
+> See `docs/KINEMATIC_CONTROLLER_REFACTOR.md` for details.
 
-### Tasks
+**Outcome:** A proper `VoxelPhysicsWorld` with physics-engine-like API. Fixed timestep. No physics logic in examples.
 
-1. Add to `voxel_collision.rs`:
-   ```rust
-   pub struct KinematicController {
-       pub half_extents: Vec3,  // For box, or height/radius for capsule
-       pub grounded: bool,
-       pub ground_normal: Vec3,
-   }
-   
-   impl KinematicController {
-       /// Move controller, sliding along surfaces
-       pub fn move_and_slide(
-           &mut self,
-           world: &WorldOccupancy,
-           position: &mut Vec3,
-           velocity: &mut Vec3,
-           delta: f32,
-       );
-   }
-   ```
+### Phase 3.1: VoxelPhysicsWorld API
 
-2. Create `examples/p23_kinematic_controller.rs`:
-   - Load terrain
-   - Spawn kinematic controller (visible as wireframe box)
-   - WASD moves, Space jumps
-   - Controller walks on terrain, can't pass through voxels
+**File:** `crates/studio_core/src/voxel_physics_world.rs`
+
+```rust
+pub struct VoxelPhysicsWorld {
+    occupancy: WorldOccupancy,
+    bodies: Vec<KinematicBody>,
+    config: PhysicsConfig,
+    accumulator: f32,
+}
+
+pub struct PhysicsConfig {
+    pub fixed_timestep: f32,      // 1/60
+    pub gravity: Vec3,            // (0, -25, 0)
+    pub max_steps_per_frame: u32, // 4
+}
+
+pub struct KinematicBody {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub half_extents: Vec3,
+    pub grounded: bool,
+    pub input_velocity: Vec3,  // From player input, separate from physics velocity
+}
+
+impl VoxelPhysicsWorld {
+    pub fn new(occupancy: WorldOccupancy, config: PhysicsConfig) -> Self;
+    pub fn step(&mut self, delta: f32);  // Uses fixed timestep internally
+    pub fn add_body(&mut self, body: KinematicBody) -> BodyHandle;
+    pub fn get_body(&self, handle: BodyHandle) -> Option<&KinematicBody>;
+    pub fn set_body_input(&mut self, handle: BodyHandle, velocity: Vec3);
+    pub fn jump(&mut self, handle: BodyHandle, speed: f32) -> bool;
+}
+```
+
+**Verification:**
+```bash
+cargo test -p studio_core voxel_physics_world -- --nocapture
+# Test: body at y=10 lands at y≈3.9 after 3 seconds of simulation
+```
+
+### Phase 3.2: Fixed Timestep Implementation
+
+```rust
+impl VoxelPhysicsWorld {
+    pub fn step(&mut self, delta: f32) {
+        self.accumulator += delta;
+        let mut steps = 0;
+        while self.accumulator >= self.config.fixed_timestep 
+              && steps < self.config.max_steps_per_frame {
+            self.step_fixed();
+            self.accumulator -= self.config.fixed_timestep;
+            steps += 1;
+        }
+    }
+}
+```
+
+**Verification:**
+```rust
+#[test]
+fn test_determinism_at_different_framerates() {
+    // Simulate at 30fps (33ms steps) and 120fps (8ms steps)
+    // Final position should be identical
+}
+```
+
+### Phase 3.3: Example Uses API Only
+
+`examples/p23_kinematic_controller.rs` should contain:
+- NO gravity calculations
+- NO velocity manipulation
+- ONLY: `physics.set_body_input()`, `physics.jump()`, `physics.step()`
+
+```rust
+fn physics_step(time: Res<Time>, mut physics: ResMut<VoxelPhysicsWorld>) {
+    physics.step(time.delta_secs());
+}
+
+fn sync_transforms(physics: Res<VoxelPhysicsWorld>, mut query: Query<(&Player, &mut Transform)>) {
+    for (player, mut transform) in query.iter_mut() {
+        if let Some(body) = physics.get_body(player.body_handle) {
+            transform.translation = body.position;
+        }
+    }
+}
+```
+
+**Verification:**
+```bash
+cargo run --example p23_kinematic_controller
+# Player falls, lands on ground, can walk with WASD, can jump
+# NO JITTER. NO FALLING THROUGH FLOOR.
+```
+
+### Phase 3.4: Comprehensive Tests
+
+Required tests (must all pass before Phase 4):
+1. `test_body_falls_and_lands`
+2. `test_body_stops_at_wall`
+3. `test_body_slides_along_wall`  
+4. `test_body_jumps_when_grounded`
+5. `test_body_cannot_jump_in_air`
+6. `test_fixed_timestep_determinism`
+7. `test_cross_chunk_collision`
+
+---
+
+### Files Changed (Phase 3 Refactor)
+
+| File | Action |
+|------|--------|
+| `src/voxel_physics_world.rs` | NEW - Physics simulation with fixed timestep |
+| `src/voxel_collision.rs` | MODIFY - Remove KinematicController (move to physics_world) |
+| `src/lib.rs` | MODIFY - Export VoxelPhysicsWorld |
+| `examples/p23_kinematic_controller.rs` | REWRITE - Use VoxelPhysicsWorld API |
    - Display FPS via BenchmarkPlugin
 
 3. Tests:

@@ -182,7 +182,12 @@ pub struct VoxelWorldConfig {
     pub day_night_cycle: Option<DayNightCycle>,
     /// Screenshot sequence configuration
     pub screenshot_sequence: Option<ScreenshotSequence>,
+    /// Interactive mode - disables auto-exit, enables benchmark
+    pub interactive: bool,
 }
+
+/// Stored update systems for interactive mode.
+type UpdateSystemFn = Box<dyn FnOnce(&mut App) + Send + Sync>;
 
 /// Builder for creating a VoxelWorld app with minimal boilerplate.
 pub struct VoxelWorldApp {
@@ -191,6 +196,10 @@ pub struct VoxelWorldApp {
     setup_callback: Option<Box<dyn FnOnce(&mut Commands, &VoxelWorld) + Send + Sync>>,
     /// Whether deferred bloom is enabled (default: true)
     deferred_bloom_enabled: bool,
+    /// Custom update systems to add (for interactive mode)
+    update_systems: Vec<UpdateSystemFn>,
+    /// Custom plugins to add
+    custom_plugins: Vec<Box<dyn FnOnce(&mut App) + Send + Sync>>,
 }
 
 impl VoxelWorldApp {
@@ -214,10 +223,13 @@ impl VoxelWorldApp {
                 moon_config: None,
                 day_night_cycle: None,
                 screenshot_sequence: None,
+                interactive: false,
             },
             world_source: WorldSource::Empty,
             setup_callback: None,
             deferred_bloom_enabled: true,
+            update_systems: Vec::new(),
+            custom_plugins: Vec::new(),
         }
     }
 
@@ -416,6 +428,62 @@ impl VoxelWorldApp {
         self
     }
 
+    /// Enable interactive mode (no auto-exit, adds benchmark FPS display).
+    ///
+    /// Use this for examples where the user controls the camera or player.
+    pub fn with_interactive(mut self) -> Self {
+        self.config.interactive = true;
+        self.config.screenshot = None; // No screenshots in interactive mode
+        self
+    }
+
+    /// Add custom update systems for interactive mode.
+    ///
+    /// The closure receives the App and can add any systems needed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// .with_update_systems(|app| {
+    ///     app.add_systems(Update, (player_input, physics_step).chain());
+    /// })
+    /// ```
+    pub fn with_update_systems<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(&mut App) + Send + Sync + 'static,
+    {
+        self.update_systems.push(Box::new(f));
+        self
+    }
+
+    /// Add a custom plugin.
+    ///
+    /// # Example
+    /// ```ignore
+    /// .with_plugin(|app| {
+    ///     app.add_plugins(MyCustomPlugin);
+    /// })
+    /// ```
+    pub fn with_plugin<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(&mut App) + Send + Sync + 'static,
+    {
+        self.custom_plugins.push(Box::new(f));
+        self
+    }
+
+    /// Insert a resource into the app.
+    ///
+    /// # Example
+    /// ```ignore
+    /// .with_resource(MyConfig::default())
+    /// ```
+    pub fn with_resource<R: Resource>(mut self, resource: R) -> Self {
+        self.custom_plugins.push(Box::new(move |app: &mut App| {
+            app.insert_resource(resource);
+        }));
+        self
+    }
+
     /// Add a custom setup callback.
     pub fn with_setup<F>(mut self, callback: F) -> Self
     where
@@ -438,6 +506,7 @@ impl VoxelWorldApp {
         let resolution = self.config.resolution;
         let clear_color = self.config.clear_color;
         let use_deferred = self.config.use_deferred;
+        let interactive = self.config.interactive;
         let screenshot_path = self.config.screenshot.as_ref().map(|s| s.path.clone());
 
         let mut app = App::new();
@@ -458,6 +527,12 @@ impl VoxelWorldApp {
         // Deferred rendering plugin (optional)
         if use_deferred {
             app.add_plugins(DeferredRenderingPlugin);
+        }
+
+        // Benchmark plugin for interactive mode
+        if interactive {
+            use crate::benchmark::BenchmarkPlugin;
+            app.add_plugins(BenchmarkPlugin);
         }
 
         // Override moon config if specified (must happen after DeferredRenderingPlugin)
@@ -493,6 +568,11 @@ impl VoxelWorldApp {
             app.init_resource::<DebugModes>();
         }
 
+        // Add custom plugins
+        for plugin_fn in self.custom_plugins {
+            plugin_fn(&mut app);
+        }
+
         // Resources
         app.insert_resource(ClearColor(clear_color));
         app.insert_resource(VoxelWorldAppConfig(self.config));
@@ -509,21 +589,29 @@ impl VoxelWorldApp {
 
         // Systems
         app.add_systems(Startup, setup_world);
-        // Only add simple screenshot system if not using debug screenshots
-        if !has_debug_screenshots {
+        
+        // Only add screenshot/exit system if NOT in interactive mode and not using debug screenshots
+        if !interactive && !has_debug_screenshots {
             app.add_systems(Update, screenshot_and_exit);
+        }
+
+        // Add custom update systems
+        for system_fn in self.update_systems {
+            system_fn(&mut app);
         }
 
         // Run
         app.run();
 
-        // Verify screenshot if requested
-        if let Some(ref ss_config) = screenshot_path {
-            if Path::new(ss_config).exists() {
-                println!("SUCCESS: Screenshot saved to {}", ss_config);
-            } else {
-                println!("FAILED: Screenshot was not created at {}", ss_config);
-                std::process::exit(1);
+        // Verify screenshot if requested (only in non-interactive mode)
+        if !interactive {
+            if let Some(ref ss_config) = screenshot_path {
+                if Path::new(ss_config).exists() {
+                    println!("SUCCESS: Screenshot saved to {}", ss_config);
+                } else {
+                    println!("FAILED: Screenshot was not created at {}", ss_config);
+                    std::process::exit(1);
+                }
             }
         }
     }

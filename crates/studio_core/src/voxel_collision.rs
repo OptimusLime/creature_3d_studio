@@ -406,20 +406,40 @@ impl CollisionResult {
             .fold(0.0, f32::max)
     }
 
-    /// Calculate the combined push-out vector to resolve all collisions.
+    /// Calculate the push-out vector to resolve collisions.
     ///
-    /// This averages all contact normals weighted by penetration depth.
+    /// This finds the minimum translation needed to separate the AABB from
+    /// all colliding voxels. When hitting multiple voxels (e.g., a floor made
+    /// of many voxels), we only need to push out by the maximum penetration
+    /// in each direction, not the sum.
     pub fn resolution_vector(&self) -> Vec3 {
         if self.contacts.is_empty() {
             return Vec3::ZERO;
         }
         
-        let mut total = Vec3::ZERO;
+        // Track maximum penetration for each of the 6 cardinal directions
+        let mut max_push = [0.0f32; 6]; // +X, -X, +Y, -Y, +Z, -Z
+        
         for contact in &self.contacts {
-            total += contact.normal * contact.penetration;
+            let n = contact.normal;
+            let p = contact.penetration;
+            
+            // Determine which axis this contact primarily pushes on
+            // and accumulate the maximum push needed in that direction
+            if n.x > 0.7 { max_push[0] = max_push[0].max(p); }
+            else if n.x < -0.7 { max_push[1] = max_push[1].max(p); }
+            else if n.y > 0.7 { max_push[2] = max_push[2].max(p); }
+            else if n.y < -0.7 { max_push[3] = max_push[3].max(p); }
+            else if n.z > 0.7 { max_push[4] = max_push[4].max(p); }
+            else if n.z < -0.7 { max_push[5] = max_push[5].max(p); }
         }
         
-        total
+        // Combine opposing directions on each axis
+        Vec3::new(
+            max_push[0] - max_push[1], // Net X push
+            max_push[2] - max_push[3], // Net Y push
+            max_push[4] - max_push[5], // Net Z push
+        )
     }
 
     /// Check if any contact has a floor-like normal (pointing up).
@@ -508,22 +528,10 @@ impl KinematicController {
         velocity: &mut Vec3,
         delta: f32,
     ) {
+        let mut remaining_velocity = *velocity * delta;
+        let was_grounded = self.grounded;
         self.grounded = false;
         self.ground_normal = Vec3::Y;
-        
-        // First, check if we're currently grounded (even when stationary)
-        // by probing slightly below current position
-        let ground_probe_min = *position - self.half_extents - Vec3::new(0.0, self.skin_width * 2.0, 0.0);
-        let ground_probe_max = *position + self.half_extents;
-        let ground_result = world.check_aabb(ground_probe_min, ground_probe_max);
-        if ground_result.has_floor_contact() {
-            self.grounded = true;
-            if let Some(normal) = ground_result.floor_normal() {
-                self.ground_normal = normal;
-            }
-        }
-        
-        let mut remaining_velocity = *velocity * delta;
         
         for _ in 0..self.max_iterations {
             if remaining_velocity.length_squared() < 0.0001 {
@@ -543,9 +551,9 @@ impl KinematicController {
                 break;
             }
             
-            // Resolve collision
+            // Resolve collision - just use the resolution, no extra skin_width
             let resolution = result.resolution_vector();
-            *position = target + resolution + resolution.normalize_or_zero() * self.skin_width;
+            *position = target + resolution;
             
             // Check for ground contact
             if result.has_floor_contact() {
@@ -553,19 +561,62 @@ impl KinematicController {
                 if let Some(normal) = result.floor_normal() {
                     self.ground_normal = normal;
                 }
+                // Zero vertical velocity when hitting ground
+                if velocity.y < 0.0 {
+                    velocity.y = 0.0;
+                }
             }
             
-            // Slide along surface: remove velocity component into the surface
+            // Slide along surface: find the primary blocking normal
+            let mut best_normal = Vec3::ZERO;
+            let mut best_dot = 0.0f32;
+            
             for contact in &result.contacts {
                 let dot = remaining_velocity.dot(contact.normal);
-                if dot < 0.0 {
-                    remaining_velocity -= contact.normal * dot;
-                    
-                    // Also zero the input velocity on this axis
-                    let vel_dot = velocity.dot(contact.normal);
-                    if vel_dot < 0.0 {
-                        *velocity -= contact.normal * vel_dot;
-                    }
+                if dot < best_dot {
+                    best_dot = dot;
+                    best_normal = contact.normal;
+                }
+            }
+            
+            // Remove velocity component into the blocking surface
+            if best_dot < 0.0 {
+                remaining_velocity -= best_normal * best_dot;
+                
+                // Also adjust velocity for this axis
+                let vel_dot = velocity.dot(best_normal);
+                if vel_dot < 0.0 {
+                    *velocity -= best_normal * vel_dot;
+                }
+            }
+        }
+        
+        // Ground check: probe slightly below to detect ground when stationary
+        if !self.grounded {
+            let probe_distance = 0.05; // Small probe distance
+            let ground_probe_min = *position - self.half_extents - Vec3::new(0.0, probe_distance, 0.0);
+            let ground_probe_max = *position + self.half_extents;
+            let ground_result = world.check_aabb(ground_probe_min, ground_probe_max);
+            if ground_result.has_floor_contact() {
+                self.grounded = true;
+                if let Some(normal) = ground_result.floor_normal() {
+                    self.ground_normal = normal;
+                }
+            }
+        }
+        
+        // Snap to ground if we were grounded and moving down a small slope
+        if was_grounded && !self.grounded && velocity.y <= 0.0 {
+            let snap_distance = 0.2;
+            let snap_probe_min = *position - self.half_extents - Vec3::new(0.0, snap_distance, 0.0);
+            let snap_probe_max = *position + self.half_extents;
+            let snap_result = world.check_aabb(snap_probe_min, snap_probe_max);
+            if snap_result.has_floor_contact() {
+                // Snap down to ground
+                let resolution = snap_result.resolution_vector();
+                if resolution.y > 0.0 && resolution.y < snap_distance {
+                    position.y += resolution.y - snap_distance;
+                    self.grounded = true;
                 }
             }
         }
@@ -930,7 +981,7 @@ mod tests {
     #[test]
     fn test_collision_result_resolution_vector() {
         let mut result = CollisionResult::new();
-        // Two contacts pushing up
+        // Two contacts pushing up (same direction)
         result.contacts.push(CollisionPoint {
             world_pos: Vec3::ZERO,
             normal: Vec3::Y,
@@ -946,9 +997,9 @@ mod tests {
         
         let resolution = result.resolution_vector();
         
-        // Should push up by total penetration
+        // Should push up by MAX penetration (not sum!) to avoid over-correction
         assert!(resolution.x.abs() < 0.001);
-        assert!((resolution.y - 0.8).abs() < 0.001);
+        assert!((resolution.y - 0.5).abs() < 0.001, "Expected 0.5, got {}", resolution.y);
         assert!(resolution.z.abs() < 0.001);
     }
 
@@ -1044,17 +1095,18 @@ mod tests {
         assert!(occ.get_voxel(IVec3::new(0, 2, 0)), "Floor should exist at (0,2,0)");
         assert!(!occ.get_voxel(IVec3::new(0, 3, 0)), "No floor at (0,3,0)");
         
-        // Same starting position as example
+        // Same starting position as example (y=10)
         let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
-        let mut position = Vec3::new(0.0, 5.0, 0.0);
+        let mut position = Vec3::new(0.0, 10.0, 0.0);
         let mut velocity = Vec3::ZERO;
         
         println!("Starting position: {:?}", position);
         println!("Player bottom: {}", position.y - 0.9);
         println!("Floor top: 3.0 (voxels at y=0,1,2 occupy up to y=3)");
+        println!("Expected landing y: 3.0 + 0.9 = 3.9");
         
-        // Simulate with same gravity as example (25.0)
-        for i in 0..120 {
+        // Simulate with same gravity as example (25.0) - need more frames from y=10
+        for i in 0..180 {
             // Same gravity logic as example
             if !controller.grounded {
                 velocity.y -= 25.0 * (1.0 / 60.0);

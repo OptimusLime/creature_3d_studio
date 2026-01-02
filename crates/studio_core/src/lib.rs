@@ -28,6 +28,7 @@ pub mod voxel_collision;
 pub mod voxel_fragment;
 pub mod voxel_mesh;
 pub mod voxel_physics;
+pub mod voxel_physics_world;
 pub mod voxel_world_plugin;
 pub mod world_io;
 
@@ -93,6 +94,9 @@ pub use voxel_collision::{
     KinematicController,
     world_pos_to_chunk_coord, world_pos_to_local, chunk_coord_to_world,
     OCCUPANCY_CHUNK_SIZE,
+};
+pub use voxel_physics_world::{
+    VoxelPhysicsWorld, PhysicsConfig, KinematicBody, BodyHandle,
 };
 
 /// Core plugin for shared functionality.

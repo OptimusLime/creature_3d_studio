@@ -53,9 +53,11 @@ impl ViewNode for GBufferPassNode {
         // Get the geometry pipeline
         let pipeline_cache = world.resource::<PipelineCache>();
         let Some(geometry_pipeline) = world.get_resource::<GBufferGeometryPipeline>() else {
+            bevy::log::warn!("GBufferPassNode: No GBufferGeometryPipeline resource");
             return Ok(());
         };
         let Some(pipeline) = pipeline_cache.get_render_pipeline(geometry_pipeline.pipeline_id) else {
+            bevy::log::warn!("GBufferPassNode: Pipeline not ready");
             return Ok(());
         };
 

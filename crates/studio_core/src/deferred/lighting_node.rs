@@ -74,12 +74,12 @@ impl ViewNode for LightingPassNode {
         let lighting_pipeline = world.get_resource::<LightingPipeline>();
         
         let Some(lighting_pipeline) = lighting_pipeline else {
-            // Pipeline not ready yet
+            bevy::log::warn!("LightingPassNode: No LightingPipeline resource");
             return Ok(());
         };
         
         let Some(pipeline) = pipeline_cache.get_render_pipeline(lighting_pipeline.pipeline_id) else {
-            // Pipeline still compiling
+            bevy::log::warn!("LightingPassNode: Pipeline not ready");
             return Ok(());
         };
 
@@ -250,7 +250,6 @@ impl ViewNode for LightingPassNode {
         // Prefer denoised texture if available, otherwise fall back to raw GTAO
         let gtao_bind_group = if let Some(denoised) = gtao_denoised {
             // Use XeGTAO denoised output
-            info!("Lighting: Using DENOISED GTAO texture");
             Some(render_context.render_device().create_bind_group(
                 "lighting_gtao_denoised_bind_group",
                 &lighting_pipeline.gtao_layout,
