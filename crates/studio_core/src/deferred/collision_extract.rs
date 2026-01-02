@@ -1,14 +1,14 @@
-//! Fragment extraction for GPU collision.
+//! Fragment and AABB extraction for GPU collision.
 //!
-//! This module extracts VoxelFragment data from the main world to the render world
-//! for GPU collision detection.
+//! This module extracts VoxelFragment and GpuCollisionAABB data from the main world
+//! to the render world for GPU collision detection.
 
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
 use bevy::render::Extract;
 
 use crate::voxel_fragment::VoxelFragment;
-use crate::voxel_collision::ChunkOccupancy;
+use crate::voxel_collision::{ChunkOccupancy, GpuCollisionAABB};
 
 /// Extracted fragment data for GPU collision.
 #[derive(Clone)]
@@ -19,10 +19,14 @@ pub struct ExtractedFragment {
     pub position: Vec3,
     /// Rotation quaternion
     pub rotation: Quat,
-    /// Size in voxels
+    /// Size in voxels (for AABB: ceil of half_extents * 2)
     pub size: UVec3,
-    /// Bit-packed occupancy data (copied from FragmentOccupancy)
+    /// Bit-packed occupancy data (copied from FragmentOccupancy).
+    /// Empty for AABB entities - shader treats empty occupancy as fully solid.
     pub occupancy_data: Vec<u32>,
+    /// Whether this is an AABB (true) or voxel fragment (false).
+    /// AABB entities have no rotation applied and use half_extents directly.
+    pub is_aabb: bool,
 }
 
 /// Resource containing all extracted fragments for the current frame.
@@ -60,16 +64,22 @@ impl ExtractResource for ExtractedTerrainChunks {
     }
 }
 
-/// System to extract fragment data from main world to render world.
+/// System to extract fragment and AABB data from main world to render world.
 ///
 /// Runs in ExtractSchedule to copy fragment transforms and occupancy data
 /// to the render world for GPU collision processing.
+///
+/// Extracts both:
+/// - `VoxelFragment` entities (dynamic voxel fragments with occupancy)
+/// - `GpuCollisionAABB` entities (kinematic characters with AABB collision)
 pub fn extract_fragments_system(
     mut extracted: ResMut<ExtractedFragments>,
     fragments: Extract<Query<(Entity, &VoxelFragment, &Transform)>>,
+    aabbs: Extract<Query<(Entity, &GpuCollisionAABB, &Transform), Without<VoxelFragment>>>,
 ) {
     extracted.fragments.clear();
     
+    // Extract VoxelFragment entities
     for (entity, fragment, transform) in fragments.iter() {
         extracted.fragments.push(ExtractedFragment {
             entity,
@@ -77,11 +87,36 @@ pub fn extract_fragments_system(
             rotation: transform.rotation,
             size: fragment.occupancy.size,
             occupancy_data: fragment.occupancy.as_u32_slice().to_vec(),
+            is_aabb: false,
+        });
+    }
+    
+    // Extract GpuCollisionAABB entities
+    for (entity, aabb, transform) in aabbs.iter() {
+        // Convert half_extents to voxel size (round up to ensure coverage)
+        let size = UVec3::new(
+            (aabb.half_extents.x * 2.0).ceil() as u32,
+            (aabb.half_extents.y * 2.0).ceil() as u32,
+            (aabb.half_extents.z * 2.0).ceil() as u32,
+        );
+        
+        extracted.fragments.push(ExtractedFragment {
+            entity,
+            position: transform.translation,
+            rotation: Quat::IDENTITY, // AABBs don't rotate
+            size,
+            occupancy_data: Vec::new(), // Empty = fully solid in shader
+            is_aabb: true,
         });
     }
     
     if !extracted.fragments.is_empty() {
-        trace!("Extracted {} fragments for GPU collision", extracted.fragments.len());
+        trace!(
+            "Extracted {} entities for GPU collision ({} fragments, {} AABBs)",
+            extracted.fragments.len(),
+            fragments.iter().count(),
+            aabbs.iter().count()
+        );
     }
 }
 

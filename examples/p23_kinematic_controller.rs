@@ -1,7 +1,7 @@
 //! Phase 23: Kinematic Character Controller Demo
 //!
 //! Demonstrates a kinematic character controller walking on voxel terrain
-//! using the VoxelPhysicsWorld API with fixed timestep simulation.
+//! using CPU-based voxel occupancy collision (no terrain trimesh collider).
 //!
 //! Run with: `cargo run --example p23_kinematic_controller`
 //!
@@ -14,22 +14,19 @@ use bevy::prelude::*;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use studio_core::{
     VoxelWorldApp, WorldSource,
-    VoxelPhysicsWorld, PhysicsConfig, KinematicBody, BodyHandle,
-    WorldOccupancy,
     Voxel, VoxelWorld,
     VoxelMaterial, DeferredRenderable,
+    WorldOccupancy, KinematicController,
+    ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION, ATTRIBUTE_VOXEL_AO,
 };
 
 fn main() {
     // Build terrain
     let terrain = build_terrain();
     
-    // Create physics world from terrain
+    // Create terrain occupancy for collision detection BEFORE starting the app
+    // This avoids needing access to the world during startup
     let occupancy = WorldOccupancy::from_voxel_world(&terrain);
-    let mut physics = VoxelPhysicsWorld::new(occupancy, PhysicsConfig::default());
-    
-    // Add player body at y=10 (will fall and land on floor)
-    let player_body = physics.add_body(KinematicBody::player(Vec3::new(0.0, 10.0, 0.0)));
 
     // Check for --test flag to run in screenshot mode
     let test_mode = std::env::args().any(|arg| arg == "--test");
@@ -39,22 +36,24 @@ fn main() {
         .with_world(WorldSource::World(terrain))
         .with_deferred(true)
         .with_greedy_meshing(true)
-        .with_emissive_lights(true) // Spawn lights from emissive crystals
-        .with_shadow_light(Vec3::new(5.0, 15.0, 5.0)) // Add shadow-casting light
-        .with_camera_position(Vec3::new(0.0, 15.0, 20.0), Vec3::new(0.0, 5.0, 0.0)) // Let VoxelWorldApp spawn camera
-        .with_resource(PhysicsWorld(physics))
-        .with_resource(PlayerBodyHandle(player_body))
+        .with_emissive_lights(true)
+        .with_shadow_light(Vec3::new(5.0, 15.0, 5.0))
+        .with_camera_position(Vec3::new(0.0, 15.0, 20.0), Vec3::new(0.0, 5.0, 0.0))
         .with_resource(MovementConfig::default())
+        .with_resource(TerrainCollision(occupancy))
+        .with_resource(NeedPlayerSpawn)
         .with_setup(|_commands, _world| {
             info!("Controls: WASD to move, Space to jump, Right-click + mouse to look");
         })
         .with_update_systems(|app| {
-            app.add_systems(Startup, spawn_player_mesh);
+            // Use PostStartup to ensure we run after VoxelWorldApp's setup
+            app.add_systems(PostStartup, spawn_player_system);
             app.add_systems(Update, (
+                spawn_player_deferred, // Fallback if PostStartup didn't run yet
                 attach_player_camera,
                 player_input,
-                physics_step,
-                sync_transforms,
+                apply_gravity_system,
+                move_player,
                 camera_follow,
             ).chain());
         });
@@ -130,15 +129,10 @@ fn build_terrain() -> VoxelWorld {
 // ============================================================================
 
 #[derive(Resource)]
-struct PhysicsWorld(VoxelPhysicsWorld);
-
-#[derive(Resource)]
-struct PlayerBodyHandle(BodyHandle);
-
-#[derive(Resource)]
 struct MovementConfig {
     move_speed: f32,
     jump_speed: f32,
+    gravity: f32,
 }
 
 impl Default for MovementConfig {
@@ -146,12 +140,26 @@ impl Default for MovementConfig {
         Self {
             move_speed: 8.0,
             jump_speed: 10.0,
+            gravity: 25.0,
         }
     }
 }
 
+/// Component holding the player's kinematic controller state.
 #[derive(Component)]
-struct Player;
+struct Player {
+    controller: KinematicController,
+    velocity: Vec3,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            controller: KinematicController::new(Vec3::new(0.4, 0.9, 0.4)),
+            velocity: Vec3::ZERO,
+        }
+    }
+}
 
 #[derive(Component)]
 struct PlayerCamera {
@@ -170,40 +178,77 @@ impl Default for PlayerCamera {
     }
 }
 
+/// Resource holding terrain occupancy for collision detection.
+#[derive(Resource)]
+struct TerrainCollision(WorldOccupancy);
+
+/// Marker resource indicating we need to spawn the player.
+#[derive(Resource)]
+struct NeedPlayerSpawn;
+
 // ============================================================================
 // Systems
 // ============================================================================
 
-/// Spawn the player mesh - a box that participates in deferred rendering
-fn spawn_player_mesh(
+/// PostStartup system to spawn player after world setup is complete
+fn spawn_player_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<VoxelMaterial>>,
-    physics: Res<PhysicsWorld>,
-    player_handle: Res<PlayerBodyHandle>,
+    need_spawn: Option<Res<NeedPlayerSpawn>>,
 ) {
-    // Get player dimensions from physics body
-    let body = physics.0.get_body(player_handle.0).expect("Player body should exist");
-    let half = body.half_extents;
+    if need_spawn.is_none() {
+        return;
+    }
     
-    // Create a box mesh with voxel attributes (color, emission, AO)
-    let mesh = create_player_box_mesh(half, [0.2, 0.8, 0.9]); // Cyan color
+    spawn_player(&mut commands, &mut meshes, &mut materials);
+    commands.remove_resource::<NeedPlayerSpawn>();
+}
+
+/// Deferred spawn system - handles case where PostStartup system didn't run yet
+fn spawn_player_deferred(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<VoxelMaterial>>,
+    need_spawn: Option<Res<NeedPlayerSpawn>>,
+    players: Query<&Player>,
+) {
+    // Only spawn if marked and no player exists yet
+    if need_spawn.is_none() || !players.is_empty() {
+        return;
+    }
+    
+    spawn_player(&mut commands, &mut meshes, &mut materials);
+    commands.remove_resource::<NeedPlayerSpawn>();
+}
+
+fn spawn_player(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<VoxelMaterial>>,
+) {
+    let half_extents = Vec3::new(0.4, 0.9, 0.4);
+    let start_pos = Vec3::new(0.0, 10.0, 0.0);
+    
+    // Create player mesh
+    let mesh = create_player_box_mesh(half_extents, [0.2, 0.8, 0.9]);
     
     commands.spawn((
         Name::new("Player"),
-        Player,
+        Player::default(),
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(VoxelMaterial::default())),
         DeferredRenderable,
-        Transform::from_translation(body.position),
+        Transform::from_translation(start_pos),
     ));
+    
+    info!("Spawned player at {:?}", start_pos);
 }
 
 /// Create a box mesh with voxel vertex attributes
 fn create_player_box_mesh(half: Vec3, color: [f32; 3]) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
-    use studio_core::{ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION, ATTRIBUTE_VOXEL_AO};
     
     let w = half.x;
     let h = half.y;
@@ -274,15 +319,16 @@ fn attach_player_camera(
     }
 }
 
+/// Handle player input and calculate desired velocity.
 fn player_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     config: Res<MovementConfig>,
-    mut physics: ResMut<PhysicsWorld>,
-    player_handle: Res<PlayerBodyHandle>,
+    mut player_query: Query<&mut Player>,
     mut camera_query: Query<&mut PlayerCamera>,
 ) {
+    let Ok(mut player) = player_query.single_mut() else { return };
     let Ok(mut camera) = camera_query.single_mut() else { return };
     
     // Movement input
@@ -299,12 +345,14 @@ fn player_input(
         input_dir = input_dir.normalize();
     }
     
-    // Set input velocity on physics body
-    physics.0.set_body_input_velocity(player_handle.0, input_dir * config.move_speed);
+    // Set horizontal velocity from input
+    player.velocity.x = input_dir.x * config.move_speed;
+    player.velocity.z = input_dir.z * config.move_speed;
     
-    // Jump request
-    if keyboard.just_pressed(KeyCode::Space) {
-        physics.0.jump(player_handle.0, config.jump_speed);
+    // Jump (only when grounded)
+    if keyboard.just_pressed(KeyCode::Space) && player.controller.can_jump() {
+        player.velocity.y = config.jump_speed;
+        player.controller.grounded = false;
     }
     
     // Camera look (when right mouse button held)
@@ -315,22 +363,51 @@ fn player_input(
     }
 }
 
-fn physics_step(time: Res<Time>, mut physics: ResMut<PhysicsWorld>) {
-    physics.0.step(time.delta_secs());
-}
-
-fn sync_transforms(
-    physics: Res<PhysicsWorld>,
-    player_handle: Res<PlayerBodyHandle>,
-    mut player_query: Query<&mut Transform, With<Player>>,
+/// Apply gravity to player velocity.
+fn apply_gravity_system(
+    time: Res<Time>,
+    config: Res<MovementConfig>,
+    mut player_query: Query<&mut Player>,
 ) {
-    if let Some(body) = physics.0.get_body(player_handle.0) {
-        for mut transform in player_query.iter_mut() {
-            transform.translation = body.position;
+    let dt = time.delta_secs();
+    
+    for mut player in player_query.iter_mut() {
+        // Apply gravity if not grounded
+        if !player.controller.grounded {
+            player.velocity.y -= config.gravity * dt;
         }
     }
 }
 
+/// Move player using kinematic controller collision.
+fn move_player(
+    time: Res<Time>,
+    terrain: Option<Res<TerrainCollision>>,
+    mut player_query: Query<(&mut Player, &mut Transform)>,
+) {
+    let Some(terrain) = terrain else { return };
+    let dt = time.delta_secs();
+    
+    for (mut player, mut transform) in player_query.iter_mut() {
+        // Extract mutable references to work around borrow checker
+        let mut pos = transform.translation;
+        let mut vel = player.velocity;
+        
+        // Use the kinematic controller's move_and_slide for proper collision response
+        player.controller.move_and_slide(
+            &terrain.0,
+            &mut pos,
+            &mut vel,
+            dt,
+        );
+        
+        // Write back
+        transform.translation = pos;
+        player.velocity = vel;
+    }
+}
+
+/// Camera follows player
 fn camera_follow(
     player_query: Query<&Transform, With<Player>>,
     mut camera_query: Query<(&mut Transform, &PlayerCamera), Without<Player>>,
@@ -348,5 +425,3 @@ fn camera_follow(
     camera_transform.translation = target_pos + offset;
     camera_transform.look_at(target_pos, Vec3::Y);
 }
-
-

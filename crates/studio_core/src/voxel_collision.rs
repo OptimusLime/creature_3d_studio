@@ -812,6 +812,31 @@ impl FragmentOccupancy {
     }
 }
 
+/// Component marking an entity for GPU AABB collision detection.
+///
+/// This is used for entities that need GPU collision detection but don't have
+/// voxel occupancy data (like kinematic character controllers). The GPU shader
+/// checks the AABB against terrain voxels and returns contact points.
+///
+/// The entity must also have a `Transform` component for position extraction.
+#[derive(Component, Clone, Debug)]
+pub struct GpuCollisionAABB {
+    /// Half-extents of the AABB collision box.
+    pub half_extents: Vec3,
+}
+
+impl GpuCollisionAABB {
+    /// Create a new GPU collision AABB with the given half-extents.
+    pub fn new(half_extents: Vec3) -> Self {
+        Self { half_extents }
+    }
+
+    /// Create a player-sized AABB (0.4 x 0.9 x 0.4 half-extents).
+    pub fn player() -> Self {
+        Self::new(Vec3::new(0.4, 0.9, 0.4))
+    }
+}
+
 /// Simple kinematic character controller for voxel worlds.
 ///
 /// Handles movement, gravity, and collision response using the voxel
@@ -866,12 +891,34 @@ impl KinematicController {
     /// This modifies `position` and `velocity` in-place based on collision
     /// response. Velocity is zeroed on axes where collision occurs.
     ///
+    /// Uses substepping to prevent tunneling through terrain on large timesteps.
+    ///
     /// # Arguments
     /// * `world` - The world occupancy to collide against
     /// * `position` - Current position (will be modified)
     /// * `velocity` - Current velocity (will be modified)
     /// * `delta` - Time step in seconds
     pub fn move_and_slide(
+        &mut self,
+        world: &WorldOccupancy,
+        position: &mut Vec3,
+        velocity: &mut Vec3,
+        delta: f32,
+    ) {
+        // Substep large movements to prevent tunneling
+        // Max movement per substep is half the smallest half-extent (ensures we can't skip through walls)
+        let max_step_distance = self.half_extents.min_element() * 0.5;
+        let total_movement = (*velocity * delta).length();
+        let substeps = ((total_movement / max_step_distance).ceil() as u32).max(1).min(16);
+        let substep_delta = delta / substeps as f32;
+        
+        for _ in 0..substeps {
+            self.move_and_slide_substep(world, position, velocity, substep_delta);
+        }
+    }
+    
+    /// Internal substep for move_and_slide.
+    fn move_and_slide_substep(
         &mut self,
         world: &WorldOccupancy,
         position: &mut Vec3,
