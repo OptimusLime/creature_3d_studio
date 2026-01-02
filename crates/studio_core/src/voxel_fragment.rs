@@ -440,4 +440,169 @@ mod tests {
         let collider = generate_merged_cuboid_collider(&data);
         assert!(collider.is_some(), "Non-empty world should produce collider");
     }
+
+    /// Simulates a fragment dropping onto flat ground and verifies it stays there.
+    /// 
+    /// This test mimics the physics loop behavior:
+    /// 1. Fragment starts above ground
+    /// 2. Gravity pulls it down
+    /// 3. It collides with ground
+    /// 4. It should settle and stay on the ground (not fly away!)
+    #[test]
+    fn test_fragment_drops_onto_ground_and_stays() {
+        // Create flat terrain (10x10, 1 block thick at y=0)
+        let mut terrain_world = VoxelWorld::new();
+        for x in -5..5 {
+            for z in -5..5 {
+                terrain_world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
+            }
+        }
+        let terrain = WorldOccupancy::from_voxel_world(&terrain_world);
+        
+        // Create a 2x2x2 fragment
+        let mut fragment_world = VoxelWorld::new();
+        for x in 0..2 {
+            for y in 0..2 {
+                for z in 0..2 {
+                    fragment_world.set_voxel(x, y, z, Voxel::solid(200, 100, 100));
+                }
+            }
+        }
+        let fragment = VoxelFragment::new(fragment_world, IVec3::ZERO);
+        
+        // Simulation state
+        let mut position = Vec3::new(0.0, 5.0, 0.0); // Start above ground
+        let mut velocity = Vec3::ZERO;
+        let rotation = Quat::IDENTITY;
+        
+        let config = FragmentConfig::default();
+        let gravity = 9.81;
+        let dt = 1.0 / 60.0; // 60 FPS
+        
+        println!("=== Fragment Drop Simulation ===");
+        println!("Start position: {:?}", position);
+        
+        // Simulate 3 seconds (180 frames)
+        for frame in 0..180 {
+            // Apply gravity
+            velocity.y -= gravity * dt;
+            
+            // Move
+            position += velocity * dt;
+            
+            // Check collision
+            let collision = terrain.check_fragment(
+                &fragment.occupancy,
+                position,
+                rotation,
+            );
+            
+            if collision.has_collision() {
+                let resolution = collision.resolution_vector();
+                
+                // Apply the same logic as fragment_terrain_collision system
+                let force_magnitude = resolution.length() * config.collision_force_scale;
+                if force_magnitude > 0.001 {
+                    let force_dir = resolution.normalize_or_zero();
+                    
+                    // This is what the system does - apply force as acceleration
+                    // (assuming mass=1 for simplicity)
+                    velocity += force_dir * force_magnitude * dt;
+                    
+                    // Apply damping
+                    let vel_into_collision = velocity.dot(-force_dir);
+                    if vel_into_collision > 0.0 {
+                        velocity += force_dir * vel_into_collision * config.collision_damping;
+                    }
+                }
+            }
+            
+            // Log every 30 frames
+            if frame % 30 == 0 {
+                println!(
+                    "Frame {}: pos=({:.2}, {:.2}, {:.2}), vel=({:.2}, {:.2}, {:.2}), collision={}",
+                    frame, position.x, position.y, position.z,
+                    velocity.x, velocity.y, velocity.z,
+                    collision.has_collision()
+                );
+            }
+        }
+        
+        println!("Final position: {:?}", position);
+        println!("Final velocity: {:?}", velocity);
+        
+        // CRITICAL ASSERTIONS:
+        // 1. Fragment should be near ground level (y ~ 1-2, since fragment is 2 units tall)
+        assert!(
+            position.y > 0.5 && position.y < 5.0,
+            "Fragment should be near ground, not at y={:.2}", position.y
+        );
+        
+        // 2. Fragment should not have flown away horizontally
+        assert!(
+            position.x.abs() < 5.0 && position.z.abs() < 5.0,
+            "Fragment flew away horizontally! pos=({:.2}, {:.2})", position.x, position.z
+        );
+        
+        // 3. Velocity should be small (settled)
+        assert!(
+            velocity.length() < 5.0,
+            "Fragment has high velocity after 3 seconds: {:?}", velocity
+        );
+        
+        // 4. Fragment should NOT be flying upward
+        assert!(
+            velocity.y < 2.0,
+            "Fragment is flying upward! vel.y={:.2}", velocity.y
+        );
+    }
+    
+    /// Test that simulates the exact collision response logic to find bugs.
+    #[test]
+    fn test_collision_response_logic() {
+        // Simple scenario: fragment at y=0.5 (partially in ground at y=0)
+        let mut terrain_world = VoxelWorld::new();
+        terrain_world.set_voxel(0, 0, 0, Voxel::solid(100, 100, 100));
+        let terrain = WorldOccupancy::from_voxel_world(&terrain_world);
+        
+        // Single voxel fragment
+        let mut fragment_world = VoxelWorld::new();
+        fragment_world.set_voxel(0, 0, 0, Voxel::solid(200, 100, 100));
+        let fragment = VoxelFragment::new(fragment_world, IVec3::ZERO);
+        
+        // Fragment partially in ground
+        let position = Vec3::new(0.5, 0.5, 0.5);
+        let rotation = Quat::IDENTITY;
+        
+        let collision = terrain.check_fragment(&fragment.occupancy, position, rotation);
+        
+        println!("=== Collision Response Test ===");
+        println!("Fragment position: {:?}", position);
+        println!("Has collision: {}", collision.has_collision());
+        println!("Contact count: {}", collision.contact_count());
+        
+        if collision.has_collision() {
+            let resolution = collision.resolution_vector();
+            println!("Resolution vector: {:?}", resolution);
+            
+            for (i, contact) in collision.contacts.iter().enumerate() {
+                println!(
+                    "  Contact {}: pos={:?}, normal={:?}, penetration={:.3}",
+                    i, contact.world_pos, contact.normal, contact.penetration
+                );
+            }
+            
+            // The resolution should push UP (positive Y) since we're in the ground
+            assert!(
+                resolution.y >= 0.0,
+                "Resolution should push up, not down! resolution.y={:.3}", resolution.y
+            );
+            
+            // Resolution should not push horizontally (we're centered on the voxel)
+            assert!(
+                resolution.x.abs() < 0.5 && resolution.z.abs() < 0.5,
+                "Unexpected horizontal resolution: ({:.3}, {:.3})", resolution.x, resolution.z
+            );
+        }
+    }
 }

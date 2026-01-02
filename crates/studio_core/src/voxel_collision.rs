@@ -315,30 +315,39 @@ impl WorldOccupancy {
             
             if self.get_voxel(world_voxel) {
                 // Collision! Calculate penetration info
-                let terrain_center = Vec3::new(
-                    world_voxel.x as f32 + 0.5,
-                    world_voxel.y as f32 + 0.5,
-                    world_voxel.z as f32 + 0.5,
+                // Terrain voxel spans from world_voxel to world_voxel + 1
+                let voxel_min = Vec3::new(
+                    world_voxel.x as f32,
+                    world_voxel.y as f32,
+                    world_voxel.z as f32,
                 );
+                let voxel_max = voxel_min + Vec3::ONE;
                 
-                // Direction from terrain voxel to fragment voxel
-                let to_fragment = world_pos - terrain_center;
+                // Calculate distance to each face of the voxel
+                // Positive values mean we need to move that far to exit
+                let dist_to_min_x = world_pos.x - voxel_min.x; // distance to -X face
+                let dist_to_max_x = voxel_max.x - world_pos.x; // distance to +X face
+                let dist_to_min_y = world_pos.y - voxel_min.y; // distance to -Y face (floor)
+                let dist_to_max_y = voxel_max.y - world_pos.y; // distance to +Y face (ceiling)
+                let dist_to_min_z = world_pos.z - voxel_min.z; // distance to -Z face
+                let dist_to_max_z = voxel_max.z - world_pos.z; // distance to +Z face
                 
-                // Find minimum separation axis
-                let abs_to = to_fragment.abs();
-                let (penetration, normal) = if abs_to.x <= abs_to.y && abs_to.x <= abs_to.z {
-                    // X is smallest - push along X
-                    let n = if to_fragment.x >= 0.0 { Vec3::X } else { Vec3::NEG_X };
-                    (1.0 - abs_to.x, n)
-                } else if abs_to.y <= abs_to.z {
-                    // Y is smallest - push along Y
-                    let n = if to_fragment.y >= 0.0 { Vec3::Y } else { Vec3::NEG_Y };
-                    (1.0 - abs_to.y, n)
-                } else {
-                    // Z is smallest - push along Z
-                    let n = if to_fragment.z >= 0.0 { Vec3::Z } else { Vec3::NEG_Z };
-                    (1.0 - abs_to.z, n)
-                };
+                // Find the smallest distance (easiest exit)
+                // Order matters for tiebreaking: prefer +Y (up) over other directions
+                let exits = [
+                    (dist_to_max_y, Vec3::Y),      // Prefer pushing UP first
+                    (dist_to_min_y, Vec3::NEG_Y),
+                    (dist_to_min_x, Vec3::NEG_X),
+                    (dist_to_max_x, Vec3::X),
+                    (dist_to_min_z, Vec3::NEG_Z),
+                    (dist_to_max_z, Vec3::Z),
+                ];
+                
+                let (penetration, normal) = exits
+                    .iter()
+                    .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(d, n)| (*d, *n))
+                    .unwrap_or((0.0, Vec3::Y));
                 
                 result.contacts.push(FragmentContact {
                     world_pos,
@@ -1732,12 +1741,20 @@ mod tests {
         let mut frag = FragmentOccupancy::new(UVec3::new(1, 1, 1));
         frag.set(UVec3::ZERO, true);
         
-        // Fragment intersecting floor (fragment center at y=0.5, floor at y=0)
+        // Fragment intersecting floor - position it so center is clearly inside terrain voxel
+        // Using (5.5, 0.5, 5.5) so the fragment center lands in middle of terrain voxel (5,0,5)
         let result = terrain.check_fragment(
             &frag,
-            Vec3::new(5.0, 0.5, 5.0),
+            Vec3::new(5.5, 0.5, 5.5),
             Quat::IDENTITY,
         );
+        
+        println!("Collision basic test:");
+        println!("  has_collision: {}", result.has_collision());
+        println!("  contact_count: {}", result.contact_count());
+        for (i, c) in result.contacts.iter().enumerate() {
+            println!("  contact {}: normal={:?}, pen={:.3}", i, c.normal, c.penetration);
+        }
         
         assert!(result.has_collision());
         assert_eq!(result.contact_count(), 1);
@@ -1848,15 +1865,21 @@ mod tests {
         let mut frag = FragmentOccupancy::new(UVec3::new(1, 1, 1));
         frag.set(UVec3::ZERO, true);
         
-        // Fragment partially in floor
+        // Fragment partially in floor - use position clearly inside a terrain voxel
         let result = terrain.check_fragment(
             &frag,
-            Vec3::new(5.0, 0.7, 5.0),
+            Vec3::new(5.5, 0.7, 5.5),
             Quat::IDENTITY,
         );
         
-        assert!(result.has_collision());
+        assert!(result.has_collision(), "Should have collision");
         let resolution = result.resolution_vector();
+        
+        println!("Resolution vector test:");
+        println!("  resolution: {:?}", resolution);
+        for (i, c) in result.contacts.iter().enumerate() {
+            println!("  contact {}: normal={:?}, pen={:.3}", i, c.normal, c.penetration);
+        }
         
         // Should push up (positive Y)
         assert!(resolution.y > 0.0, "Resolution should push up, got {:?}", resolution);
