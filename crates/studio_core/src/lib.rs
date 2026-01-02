@@ -13,6 +13,7 @@
 
 use bevy::prelude::*;
 
+pub mod benchmark;
 pub mod chunk_streaming;
 pub mod creature_script;
 pub mod day_night;
@@ -23,6 +24,7 @@ pub mod scene_utils;
 pub mod screenshot;
 pub mod screenshot_sequence;
 pub mod voxel;
+pub mod voxel_collision;
 pub mod voxel_fragment;
 pub mod voxel_mesh;
 pub mod voxel_physics;
@@ -84,6 +86,12 @@ pub use voxel_fragment::{
     VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,
     StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
     detect_settling_fragments,
+};
+pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
+pub use voxel_collision::{
+    ChunkOccupancy, WorldOccupancy,
+    world_pos_to_chunk_coord, world_pos_to_local, chunk_coord_to_world,
+    OCCUPANCY_CHUNK_SIZE,
 };
 
 /// Core plugin for shared functionality.

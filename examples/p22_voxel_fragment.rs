@@ -14,7 +14,7 @@
 //! Screenshots saved to: screenshots/voxel_fragment/
 
 use bevy::prelude::*;
-use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::diagnostic::DiagnosticsStore;
 use bevy_rapier3d::prelude::*;
 use std::time::Instant;
 use studio_core::{
@@ -22,6 +22,7 @@ use studio_core::{
     VoxelMaterial, VoxelMaterialPlugin, VoxelWorld,
     build_world_meshes_cross_chunk, DeferredRenderingPlugin,
     OrbitCameraPlugin, OrbitCamera,
+    BenchmarkPlugin,
 };
 
 // Simple random number generator state (avoid external dependency)
@@ -44,8 +45,8 @@ fn main() {
             }),
             ..default()
         }))
-        // Diagnostics
-        .add_plugins(FrameTimeDiagnosticsPlugin::default())
+        // Benchmark (includes FrameTimeDiagnosticsPlugin)
+        .add_plugins(BenchmarkPlugin)
         // Physics
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
@@ -59,12 +60,10 @@ fn main() {
         .add_systems(Update, (
             spawn_fragment_on_space, 
             reset_fragments,
-            display_fps,
             run_benchmark,
             log_physics_stats,
         ))
         .insert_resource(FragmentSpawnConfig::default())
-        .insert_resource(PhysicsStats::default())
         .insert_resource(BenchmarkState::default())
         .run();
 }
@@ -256,64 +255,6 @@ fn reset_fragments(
             commands.entity(entity).despawn();
         }
         info!("Reset {} fragments", count);
-    }
-}
-
-/// Physics performance stats
-#[derive(Resource, Default)]
-struct PhysicsStats {
-    last_report: f32,
-    frame_count: u32,
-}
-
-/// Display FPS and physics info
-fn display_fps(
-    diagnostics: Res<DiagnosticsStore>,
-    fragments: Query<(&Collider, &Velocity), With<SpawnedFragment>>,
-    terrain_colliders: Query<&Collider, Without<SpawnedFragment>>,
-    time: Res<Time>,
-    mut stats: ResMut<PhysicsStats>,
-) {
-    stats.frame_count += 1;
-    stats.last_report += time.delta_secs();
-    
-    // Report every 2 seconds
-    if stats.last_report >= 2.0 {
-        let fps = diagnostics
-            .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
-            .and_then(|d| d.smoothed())
-            .unwrap_or(0.0);
-        
-        let frame_time = diagnostics
-            .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FRAME_TIME)
-            .and_then(|d| d.smoothed())
-            .unwrap_or(0.0);
-        
-        let fragment_count = fragments.iter().count();
-        
-        // Count triangles in terrain collider
-        let mut terrain_tris = 0;
-        for collider in terrain_colliders.iter() {
-            if let Some(trimesh) = collider.as_trimesh() {
-                terrain_tris += trimesh.indices().len();
-            }
-        }
-        
-        // Count triangles in fragment colliders
-        let mut fragment_tris = 0;
-        for (collider, _) in fragments.iter() {
-            if let Some(trimesh) = collider.as_trimesh() {
-                fragment_tris += trimesh.indices().len();
-            }
-        }
-        
-        info!(
-            "FPS: {:.1} | Frame: {:.2}ms | Fragments: {} | Terrain tris: {} | Fragment tris: {}",
-            fps, frame_time, fragment_count, terrain_tris, fragment_tris
-        );
-        
-        stats.last_report = 0.0;
-        stats.frame_count = 0;
     }
 }
 
