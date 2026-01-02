@@ -18,11 +18,11 @@ use bevy::diagnostic::DiagnosticsStore;
 use bevy_rapier3d::prelude::*;
 use std::time::Instant;
 use studio_core::{
-    generate_trimesh_collider, spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin,
+    spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin, FragmentConfig,
     VoxelMaterial, VoxelMaterialPlugin, VoxelWorld,
     build_world_meshes_cross_chunk, DeferredRenderingPlugin,
     OrbitCameraPlugin, OrbitCamera,
-    BenchmarkPlugin,
+    BenchmarkPlugin, TerrainOccupancy,
 };
 
 // Simple random number generator state (avoid external dependency)
@@ -126,23 +126,24 @@ fn setup(
         }
     }
     
-    // Generate terrain collider
-    let terrain_collider = generate_trimesh_collider(&terrain)
-        .expect("Terrain should produce a collider");
+    // Create terrain occupancy for fragment collision (faster than trimesh!)
+    let terrain_occupancy = TerrainOccupancy::from_voxel_world(&terrain);
+    commands.insert_resource(terrain_occupancy);
+    info!("Terrain occupancy created with {} chunks", 
+        terrain.iter_chunks().count());
     
     // Create voxel material
     let material = materials.add(VoxelMaterial { ambient: 0.1 });
     commands.insert_resource(VoxelMaterialHandle(material.clone()));
     
-    // Spawn terrain mesh and collider
+    // Spawn terrain mesh (no physics collider needed - we use occupancy!)
     let chunk_meshes = build_world_meshes_cross_chunk(&terrain);
     
     commands.spawn((
         Name::new("Terrain"),
         Transform::default(),
         Visibility::default(),
-        RigidBody::Fixed,
-        terrain_collider,
+        // No RigidBody or Collider - fragments use occupancy collision instead
     )).with_children(|parent| {
         for chunk_mesh in chunk_meshes {
             let translation = chunk_mesh.translation();
@@ -183,7 +184,8 @@ fn setup(
         affects_lightmapped_meshes: false,
     });
     
-    info!("Press SPACE to spawn a fragment, R to reset");
+    info!("Press SPACE to spawn a fragment, R to reset, P for physics stats");
+    info!("Fragments use OCCUPANCY collision with terrain (fast!) and Rapier for fragment-fragment");
 }
 
 /// Marker component for spawned fragments
@@ -262,32 +264,39 @@ fn reset_fragments(
 fn log_physics_stats(
     keyboard: Res<ButtonInput<KeyCode>>,
     fragments: Query<(&Collider, &Transform, &Velocity), With<SpawnedFragment>>,
-    terrain: Query<&Collider, Without<SpawnedFragment>>,
+    terrain_occ: Option<Res<TerrainOccupancy>>,
+    config: Res<FragmentConfig>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyP) {
         info!("=== PHYSICS STATS ===");
+        info!("Collision mode: {}", 
+            if config.use_occupancy_collision { "OCCUPANCY (fast)" } else { "RAPIER (slow)" });
         
         // Terrain info
-        for collider in terrain.iter() {
-            if let Some(trimesh) = collider.as_trimesh() {
-                info!("Terrain: {} vertices, {} triangles", 
-                    trimesh.vertices().len(),
-                    trimesh.indices().len()
-                );
-            }
+        if let Some(ref occ) = terrain_occ {
+            info!("Terrain: {} chunks, {} occupied voxels", 
+                occ.0.chunk_count(),
+                occ.0.total_occupied()
+            );
         }
         
         // Fragment info
         for (i, (collider, transform, velocity)) in fragments.iter().enumerate() {
-            if let Some(trimesh) = collider.as_trimesh() {
-                info!(
-                    "Fragment {}: {} tris, pos={:?}, vel={:.2}",
-                    i,
-                    trimesh.indices().len(),
-                    transform.translation,
-                    velocity.linvel.length()
-                );
-            }
+            let collider_info = if collider.as_compound().is_some() {
+                "compound cuboids".to_string()
+            } else if let Some(trimesh) = collider.as_trimesh() {
+                format!("{} tris", trimesh.indices().len())
+            } else {
+                "unknown".to_string()
+            };
+            
+            info!(
+                "Fragment {}: {}, pos={:?}, vel={:.2}",
+                i,
+                collider_info,
+                transform.translation,
+                velocity.linvel.length()
+            );
         }
     }
 }

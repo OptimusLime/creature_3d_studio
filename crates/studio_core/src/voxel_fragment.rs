@@ -38,6 +38,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use crate::voxel::VoxelWorld;
+use crate::voxel_collision::{FragmentOccupancy, WorldOccupancy};
 use crate::voxel_mesh::build_world_meshes_cross_chunk;
 use crate::voxel_physics::generate_merged_cuboid_collider;
 
@@ -54,15 +55,19 @@ pub struct VoxelFragment {
     pub settling_frames: u32,
     /// Original world position when broken off (for debugging/tracking)
     pub origin: IVec3,
+    /// Occupancy data for fast terrain collision
+    pub occupancy: FragmentOccupancy,
 }
 
 impl VoxelFragment {
     /// Create a new fragment from voxel data.
     pub fn new(data: VoxelWorld, origin: IVec3) -> Self {
+        let occupancy = FragmentOccupancy::from_voxel_world(&data);
         Self {
             data,
             settling_frames: 0,
             origin,
+            occupancy,
         }
     }
     
@@ -90,6 +95,12 @@ pub struct FragmentConfig {
     pub settle_velocity_threshold: f32,
     /// Maximum fragments before forcing oldest to settle
     pub max_active_fragments: usize,
+    /// Enable occupancy-based terrain collision (faster than Rapier trimesh)
+    pub use_occupancy_collision: bool,
+    /// Force multiplier for collision response
+    pub collision_force_scale: f32,
+    /// Damping applied when colliding with terrain
+    pub collision_damping: f32,
 }
 
 impl Default for FragmentConfig {
@@ -98,7 +109,23 @@ impl Default for FragmentConfig {
             settle_threshold_frames: 60, // 1 second at 60fps
             settle_velocity_threshold: 0.1,
             max_active_fragments: 32,
+            use_occupancy_collision: true,
+            collision_force_scale: 50.0,
+            collision_damping: 0.8,
         }
+    }
+}
+
+/// Resource holding the terrain's occupancy data for fragment collision.
+///
+/// This should be updated whenever the terrain changes.
+#[derive(Resource, Default)]
+pub struct TerrainOccupancy(pub WorldOccupancy);
+
+impl TerrainOccupancy {
+    /// Create from a VoxelWorld.
+    pub fn from_voxel_world(world: &VoxelWorld) -> Self {
+        Self(WorldOccupancy::from_voxel_world(world))
     }
 }
 
@@ -113,8 +140,10 @@ pub struct VoxelFragmentBundle {
     pub view_visibility: ViewVisibility,
     pub rigid_body: RigidBody,
     pub collider: Collider,
+    pub collision_groups: CollisionGroups,
     pub velocity: Velocity,
     pub external_impulse: ExternalImpulse,
+    pub external_force: ExternalForce,
     pub gravity_scale: GravityScale,
     pub sleeping: Sleeping,
     pub ccd: Ccd,
@@ -161,11 +190,13 @@ pub fn spawn_fragment(
         view_visibility: ViewVisibility::default(),
         rigid_body: RigidBody::Dynamic,
         collider,
+        collision_groups: collision_groups::fragment_groups(),
         velocity: Velocity::default(),
         external_impulse: ExternalImpulse {
             impulse,
             torque_impulse: Vec3::ZERO,
         },
+        external_force: ExternalForce::default(),
         gravity_scale: GravityScale(1.0),
         sleeping: Sleeping::disabled(),
         ccd: Ccd::enabled(),
@@ -219,11 +250,13 @@ pub fn spawn_fragment_with_mesh(
         view_visibility: ViewVisibility::default(),
         rigid_body: RigidBody::Dynamic,
         collider,
+        collision_groups: collision_groups::fragment_groups(),
         velocity: Velocity::default(),
         external_impulse: ExternalImpulse {
             impulse,
             torque_impulse: Vec3::ZERO,
         },
+        external_force: ExternalForce::default(),
         gravity_scale: GravityScale(1.0),
         sleeping: Sleeping::disabled(),
         ccd: Ccd::enabled(),
@@ -262,13 +295,97 @@ pub fn detect_settling_fragments(
     }
 }
 
+/// System to handle fragment-terrain collision using occupancy data.
+///
+/// This is much faster than Rapier trimesh collision for voxel terrain.
+/// It checks each fragment's voxels against the terrain occupancy and applies
+/// forces to push the fragment out of the terrain.
+pub fn fragment_terrain_collision(
+    config: Res<FragmentConfig>,
+    terrain: Option<Res<TerrainOccupancy>>,
+    mut fragments: Query<(
+        &VoxelFragment,
+        &Transform,
+        &mut Velocity,
+        &mut ExternalForce,
+    )>,
+) {
+    // Skip if occupancy collision is disabled or no terrain loaded
+    if !config.use_occupancy_collision {
+        return;
+    }
+    
+    let Some(terrain) = terrain else {
+        return;
+    };
+    
+    for (fragment, transform, mut velocity, mut force) in fragments.iter_mut() {
+        // Check fragment against terrain
+        let collision = terrain.0.check_fragment(
+            &fragment.occupancy,
+            transform.translation,
+            transform.rotation,
+        );
+        
+        if !collision.has_collision() {
+            continue;
+        }
+        
+        // Calculate resolution force
+        let resolution = collision.resolution_vector();
+        
+        // Apply force to push fragment out of terrain
+        // Scale by number of contacts to avoid over-correction
+        let force_magnitude = resolution.length() * config.collision_force_scale;
+        if force_magnitude > 0.001 {
+            let force_dir = resolution.normalize_or_zero();
+            force.force += force_dir * force_magnitude;
+            
+            // Apply damping to velocity in the collision direction
+            let vel_into_collision = velocity.linvel.dot(-force_dir);
+            if vel_into_collision > 0.0 {
+                velocity.linvel += force_dir * vel_into_collision * config.collision_damping;
+            }
+        }
+        
+        // Apply torque if collision is off-center
+        let avg_contact = collision.average_contact_position();
+        let to_contact = avg_contact - transform.translation;
+        if to_contact.length_squared() > 0.01 {
+            let torque = to_contact.cross(resolution) * config.collision_force_scale * 0.1;
+            force.torque += torque;
+        }
+    }
+}
+
+/// Collision groups for fragment physics.
+///
+/// When using occupancy-based terrain collision:
+/// - Fragments are in GROUP_2, filter GROUP_2 (only collide with other fragments)
+/// - Terrain uses default groups (no fragment collision through Rapier)
+pub mod collision_groups {
+    use bevy_rapier3d::prelude::*;
+    
+    /// Group for dynamic fragments
+    pub const FRAGMENT_GROUP: Group = Group::GROUP_2;
+    
+    /// Collision filter for fragments - only collide with other fragments
+    pub fn fragment_groups() -> CollisionGroups {
+        CollisionGroups::new(FRAGMENT_GROUP, FRAGMENT_GROUP)
+    }
+}
+
 /// Plugin for voxel fragment physics.
 pub struct VoxelFragmentPlugin;
 
 impl Plugin for VoxelFragmentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FragmentConfig>()
-            .add_systems(Update, detect_settling_fragments);
+            .init_resource::<TerrainOccupancy>()
+            .add_systems(Update, (
+                detect_settling_fragments,
+                fragment_terrain_collision,
+            ));
     }
 }
 
