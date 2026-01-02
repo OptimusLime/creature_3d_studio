@@ -88,7 +88,7 @@ pub use voxel_fragment::{
     StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
     detect_settling_fragments, TerrainOccupancy, FragmentCollisionConfig,
     fragment_terrain_collision_system, clear_fragment_forces, GpuCollisionMode,
-    gpu_fragment_terrain_collision_system,
+    gpu_fragment_terrain_collision_system, gpu_kinematic_collision_system,
 };
 pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
 pub use voxel_collision::{

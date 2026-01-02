@@ -543,6 +543,74 @@ pub fn gpu_fragment_terrain_collision_system(
     }
 }
 
+/// GPU collision system for kinematic bodies with GpuCollisionAABB.
+///
+/// This system handles collision response for kinematic bodies (like player characters)
+/// that use the GPU collision pipeline via `GpuCollisionAABB` component.
+///
+/// Unlike dynamic fragments which receive forces, kinematic bodies have their
+/// position directly adjusted based on collision resolution.
+pub fn gpu_kinematic_collision_system(
+    gpu_mode: Option<Res<GpuCollisionMode>>,
+    gpu_contacts: Option<Res<GpuCollisionContacts>>,
+    collision_config: Res<FragmentCollisionConfig>,
+    mut kinematics: Query<
+        (Entity, &crate::voxel_collision::GpuCollisionAABB, &mut Transform),
+        Without<VoxelFragment>,
+    >,
+) {
+    // Only run if GPU mode is enabled
+    let Some(gpu_mode) = gpu_mode else {
+        return;
+    };
+    if !gpu_mode.enabled {
+        return;
+    }
+    
+    let Some(gpu_contacts) = gpu_contacts else {
+        return;
+    };
+    
+    if !collision_config.enabled {
+        return;
+    }
+    
+    // Get GPU collision results
+    let collision_result = gpu_contacts.get();
+    
+    if collision_result.contacts.is_empty() {
+        return;
+    }
+    
+    // Build entity-to-index map for quick lookup
+    let entity_to_idx: std::collections::HashMap<Entity, u32> = collision_result
+        .fragment_entities
+        .iter()
+        .enumerate()
+        .map(|(idx, &entity)| (entity, idx as u32))
+        .collect();
+    
+    // Process each kinematic body by entity lookup
+    for (entity, _aabb, mut transform) in kinematics.iter_mut() {
+        // Look up this entity's index from the GPU results
+        let Some(&fragment_idx) = entity_to_idx.get(&entity) else {
+            // This entity wasn't in the GPU collision batch
+            continue;
+        };
+        
+        // Get resolution vector for this entity from GPU results
+        let resolution = collision_result.resolution_vector_for_fragment(fragment_idx);
+        
+        // Skip if no collision
+        if resolution.length_squared() < collision_config.min_penetration * collision_config.min_penetration {
+            continue;
+        }
+        
+        // For kinematic bodies, directly adjust position (they don't respond to forces)
+        transform.translation += resolution;
+    }
+}
+
 /// Plugin for voxel fragment physics.
 pub struct VoxelFragmentPlugin;
 
@@ -558,8 +626,12 @@ impl Plugin for VoxelFragmentPlugin {
                 fragment_terrain_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
                     mode.map_or(true, |m| !m.enabled)
                 }),
-                // Run GPU collision if enabled
+                // Run GPU collision for fragments if enabled
                 gpu_fragment_terrain_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
+                    mode.map_or(false, |m| m.enabled)
+                }),
+                // Run GPU collision for kinematic bodies if enabled
+                gpu_kinematic_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
                     mode.map_or(false, |m| m.enabled)
                 }),
                 detect_settling_fragments,

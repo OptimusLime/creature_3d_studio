@@ -12,17 +12,28 @@ Currently we have two collision paths:
 
 This violates the unified architecture. p23 should use `GpuCollisionAABB` component and have GPU collision results applied to a Rapier kinematic body.
 
-## Current State
+## Current State (Updated)
 
 ### What exists:
 1. `GpuCollisionAABB` component in `voxel_collision.rs` - marks entities for GPU collision
 2. `collision_extract.rs` - extracts both `VoxelFragment` AND `GpuCollisionAABB` entities to render world
-3. `gpu_fragment_terrain_collision_system` in `voxel_fragment.rs` - applies GPU collision results, but ONLY queries `VoxelFragment` entities
-4. `GpuCollisionContacts` resource - holds per-entity collision contacts from GPU
+3. `gpu_fragment_terrain_collision_system` in `voxel_fragment.rs` - applies GPU collision results to fragments
+4. `gpu_kinematic_collision_system` in `voxel_fragment.rs` - applies GPU collision results to kinematic bodies (ADDED)
+5. `GpuCollisionContacts` resource - holds per-entity collision contacts from GPU
+
+### Current Issue:
+The GPU collision compute shader is NOT generating contacts for `GpuCollisionAABB` entities.
+Debug logging shows:
+- Entity extraction works: "Extracted 1 entities for GPU collision (0 fragments, 1 AABBs)"
+- But contacts are 0: "gpu_kinematic_collision: 0 contacts, 1 entities in result"
+
+The compute shader likely isn't processing AABB entities correctly, or the readback isn't working.
+Need to debug the GPU collision node/shader.
 
 ### What's missing:
-1. System to apply GPU collision results to `GpuCollisionAABB` entities (kinematic bodies)
-2. p23 rewrite to use Rapier + `GpuCollisionAABB`
+1. ~~System to apply GPU collision results to `GpuCollisionAABB` entities~~ DONE
+2. Fix GPU collision shader to generate contacts for AABB entities
+3. p23 rewrite to use Rapier + `GpuCollisionAABB` (blocked by #2)
 
 ## Naming Conventions
 

@@ -1,7 +1,7 @@
 //! Phase 23: Kinematic Character Controller Demo
 //!
 //! Demonstrates a kinematic character controller walking on voxel terrain
-//! using CPU-based voxel occupancy collision (no terrain trimesh collider).
+//! using the unified GPU collision pipeline: GPU collision → Rapier integration.
 //!
 //! Run with: `cargo run --example p23_kinematic_controller`
 //!
@@ -12,48 +12,52 @@
 
 use bevy::prelude::*;
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy_rapier3d::prelude::*;
 use studio_core::{
     VoxelWorldApp, WorldSource,
     Voxel, VoxelWorld,
     VoxelMaterial, DeferredRenderable,
-    WorldOccupancy, KinematicController,
+    GpuCollisionAABB, VoxelFragmentPlugin, TerrainOccupancy, GpuCollisionMode,
     ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION, ATTRIBUTE_VOXEL_AO,
 };
 
 fn main() {
     // Build terrain
     let terrain = build_terrain();
-    
-    // Create terrain occupancy for collision detection BEFORE starting the app
-    // This avoids needing access to the world during startup
-    let occupancy = WorldOccupancy::from_voxel_world(&terrain);
 
     // Check for --test flag to run in screenshot mode
     let test_mode = std::env::args().any(|arg| arg == "--test");
     
     let mut app = VoxelWorldApp::new("Phase 23: Kinematic Character Controller")
         .with_resolution(1280, 720)
-        .with_world(WorldSource::World(terrain))
+        .with_world(WorldSource::World(terrain.clone()))
         .with_deferred(true)
         .with_greedy_meshing(true)
         .with_emissive_lights(true)
         .with_shadow_light(Vec3::new(5.0, 15.0, 5.0))
         .with_camera_position(Vec3::new(0.0, 15.0, 20.0), Vec3::new(0.0, 5.0, 0.0))
         .with_resource(MovementConfig::default())
-        .with_resource(TerrainCollision(occupancy))
+        .with_resource(TerrainOccupancy::from_voxel_world(&terrain))
+        .with_resource(GpuCollisionMode { enabled: true })
         .with_resource(NeedPlayerSpawn)
+        .with_plugin(|app| {
+            // Add Rapier physics
+            app.add_plugins(RapierPhysicsPlugin::<NoUserData>::default());
+            // Add VoxelFragmentPlugin for GPU collision systems
+            app.add_plugins(VoxelFragmentPlugin);
+        })
         .with_setup(|_commands, _world| {
             info!("Controls: WASD to move, Space to jump, Right-click + mouse to look");
+            info!("Using unified GPU collision pipeline");
         })
         .with_update_systems(|app| {
-            // Use PostStartup to ensure we run after VoxelWorldApp's setup
             app.add_systems(PostStartup, spawn_player_system);
             app.add_systems(Update, (
-                spawn_player_deferred, // Fallback if PostStartup didn't run yet
+                spawn_player_deferred,
                 attach_player_camera,
                 player_input,
-                apply_gravity_system,
-                move_player,
+                apply_gravity,
+                apply_player_velocity,
                 camera_follow,
             ).chain());
         });
@@ -145,18 +149,20 @@ impl Default for MovementConfig {
     }
 }
 
-/// Component holding the player's kinematic controller state.
+/// Component for player-specific state.
 #[derive(Component)]
 struct Player {
-    controller: KinematicController,
+    /// Current velocity (we track this manually for kinematic bodies)
     velocity: Vec3,
+    /// Whether player is on ground (detected from GPU collision)
+    grounded: bool,
 }
 
 impl Default for Player {
     fn default() -> Self {
         Self {
-            controller: KinematicController::new(Vec3::new(0.4, 0.9, 0.4)),
             velocity: Vec3::ZERO,
+            grounded: false,
         }
     }
 }
@@ -177,10 +183,6 @@ impl Default for PlayerCamera {
         }
     }
 }
-
-/// Resource holding terrain occupancy for collision detection.
-#[derive(Resource)]
-struct TerrainCollision(WorldOccupancy);
 
 /// Marker resource indicating we need to spawn the player.
 #[derive(Resource)]
@@ -213,7 +215,6 @@ fn spawn_player_deferred(
     need_spawn: Option<Res<NeedPlayerSpawn>>,
     players: Query<&Player>,
 ) {
-    // Only spawn if marked and no player exists yet
     if need_spawn.is_none() || !players.is_empty() {
         return;
     }
@@ -236,13 +237,19 @@ fn spawn_player(
     commands.spawn((
         Name::new("Player"),
         Player::default(),
+        // Rapier kinematic body - position is controlled directly, not by physics
+        RigidBody::KinematicPositionBased,
+        Collider::cuboid(half_extents.x, half_extents.y, half_extents.z),
+        // GpuCollisionAABB marks this entity for GPU collision detection
+        GpuCollisionAABB::new(half_extents),
+        // Rendering
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(VoxelMaterial::default())),
         DeferredRenderable,
         Transform::from_translation(start_pos),
     ));
     
-    info!("Spawned player at {:?}", start_pos);
+    info!("Spawned player at {:?} with GPU collision AABB", start_pos);
 }
 
 /// Create a box mesh with voxel vertex attributes
@@ -350,9 +357,9 @@ fn player_input(
     player.velocity.z = input_dir.z * config.move_speed;
     
     // Jump (only when grounded)
-    if keyboard.just_pressed(KeyCode::Space) && player.controller.can_jump() {
+    if keyboard.just_pressed(KeyCode::Space) && player.grounded {
         player.velocity.y = config.jump_speed;
-        player.controller.grounded = false;
+        player.grounded = false;
     }
     
     // Camera look (when right mouse button held)
@@ -364,7 +371,7 @@ fn player_input(
 }
 
 /// Apply gravity to player velocity.
-fn apply_gravity_system(
+fn apply_gravity(
     time: Res<Time>,
     config: Res<MovementConfig>,
     mut player_query: Query<&mut Player>,
@@ -372,38 +379,47 @@ fn apply_gravity_system(
     let dt = time.delta_secs();
     
     for mut player in player_query.iter_mut() {
-        // Apply gravity if not grounded
-        if !player.controller.grounded {
+        if !player.grounded {
             player.velocity.y -= config.gravity * dt;
         }
     }
 }
 
-/// Move player using kinematic controller collision.
-fn move_player(
+/// Apply player velocity to transform (kinematic body).
+/// GPU collision system (`gpu_kinematic_collision_system`) will handle collision response
+/// by adjusting the transform after this runs.
+fn apply_player_velocity(
     time: Res<Time>,
-    terrain: Option<Res<TerrainCollision>>,
     mut player_query: Query<(&mut Player, &mut Transform)>,
+    gpu_contacts: Option<Res<studio_core::GpuCollisionContacts>>,
 ) {
-    let Some(terrain) = terrain else { return };
     let dt = time.delta_secs();
     
+    // Clamp dt to prevent tunneling on large timesteps
+    let clamped_dt = dt.min(0.05);
+    
     for (mut player, mut transform) in player_query.iter_mut() {
-        // Extract mutable references to work around borrow checker
-        let mut pos = transform.translation;
-        let mut vel = player.velocity;
+        // Apply velocity
+        transform.translation += player.velocity * clamped_dt;
         
-        // Use the kinematic controller's move_and_slide for proper collision response
-        player.controller.move_and_slide(
-            &terrain.0,
-            &mut pos,
-            &mut vel,
-            dt,
-        );
-        
-        // Write back
-        transform.translation = pos;
-        player.velocity = vel;
+        // Check GPU contacts for grounded state
+        // The gpu_kinematic_collision_system runs after this and adjusts position,
+        // but we can check contacts here to update grounded state
+        if let Some(ref contacts) = gpu_contacts {
+            let result = contacts.get();
+            // Find our entity in the contacts
+            for (idx, &entity) in result.fragment_entities.iter().enumerate() {
+                // We can't easily get our entity here, so we check all floor contacts
+                // TODO: Better approach would be to store entity ID in Player component
+                if result.has_floor_contact_for_fragment(idx as u32) {
+                    player.grounded = true;
+                    if player.velocity.y < 0.0 {
+                        player.velocity.y = 0.0;
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 
