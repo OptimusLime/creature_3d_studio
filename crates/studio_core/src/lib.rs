@@ -29,7 +29,6 @@ pub mod voxel_collision_gpu;
 pub mod voxel_fragment;
 pub mod voxel_mesh;
 pub mod voxel_physics;
-pub mod voxel_physics_world;
 pub mod voxel_world_plugin;
 pub mod world_io;
 
@@ -93,13 +92,9 @@ pub use voxel_fragment::{
 };
 pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
 pub use voxel_collision::{
-    ChunkOccupancy, WorldOccupancy, CollisionPoint, CollisionResult,
-    KinematicController, FragmentOccupancy, FragmentContact, FragmentCollisionResult,
+    ChunkOccupancy, WorldOccupancy, FragmentOccupancy, FragmentContact, FragmentCollisionResult,
     world_pos_to_chunk_coord, world_pos_to_local, chunk_coord_to_world,
     OCCUPANCY_CHUNK_SIZE,
-};
-pub use voxel_physics_world::{
-    VoxelPhysicsWorld, PhysicsConfig, PhysicsBody, KinematicBody, BodyHandle, BodyKind,
 };
 pub use voxel_collision_gpu::{
     GpuWorldOccupancy, GpuCollisionPipeline, GpuCollisionResult, GpuContact,
