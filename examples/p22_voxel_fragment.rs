@@ -18,11 +18,11 @@ use bevy::diagnostic::DiagnosticsStore;
 use bevy_rapier3d::prelude::*;
 use std::time::Instant;
 use studio_core::{
-    spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin, FragmentConfig,
+    generate_trimesh_collider, spawn_fragment_with_mesh, Voxel, VoxelFragmentPlugin,
     VoxelMaterial, VoxelMaterialPlugin, VoxelWorld,
     build_world_meshes_cross_chunk, DeferredRenderingPlugin,
     OrbitCameraPlugin, OrbitCamera,
-    BenchmarkPlugin, TerrainOccupancy,
+    BenchmarkPlugin,
 };
 
 // Simple random number generator state (avoid external dependency)
@@ -94,7 +94,6 @@ fn setup(
     mut materials: ResMut<Assets<VoxelMaterial>>,
 ) {
     // Create terrain - USE UNIFORM COLORS for greedy meshing to work!
-    // Checkerboard pattern defeats greedy meshing: 1760 tris vs 32 tris!
     let mut terrain = VoxelWorld::new();
     
     // Ground platform (20x20, 3 blocks thick) - SINGLE COLOR
@@ -126,24 +125,23 @@ fn setup(
         }
     }
     
-    // Create terrain occupancy for fragment collision (faster than trimesh!)
-    let terrain_occupancy = TerrainOccupancy::from_voxel_world(&terrain);
-    commands.insert_resource(terrain_occupancy);
-    info!("Terrain occupancy created with {} chunks", 
-        terrain.iter_chunks().count());
+    // Generate terrain collider (Rapier trimesh for now, Phase 5-6 will use GPU occupancy)
+    let terrain_collider = generate_trimesh_collider(&terrain)
+        .expect("Terrain should produce a collider");
     
     // Create voxel material
     let material = materials.add(VoxelMaterial { ambient: 0.1 });
     commands.insert_resource(VoxelMaterialHandle(material.clone()));
     
-    // Spawn terrain mesh (no physics collider needed - we use occupancy!)
+    // Spawn terrain mesh and collider
     let chunk_meshes = build_world_meshes_cross_chunk(&terrain);
     
     commands.spawn((
         Name::new("Terrain"),
         Transform::default(),
         Visibility::default(),
-        // No RigidBody or Collider - fragments use occupancy collision instead
+        RigidBody::Fixed,
+        terrain_collider,
     )).with_children(|parent| {
         for chunk_mesh in chunk_meshes {
             let translation = chunk_mesh.translation();
@@ -185,7 +183,7 @@ fn setup(
     });
     
     info!("Press SPACE to spawn a fragment, R to reset, P for physics stats");
-    info!("Fragments use OCCUPANCY collision with terrain (fast!) and Rapier for fragment-fragment");
+    info!("Using Rapier trimesh for terrain collision (Phase 5-6 will add GPU occupancy)");
 }
 
 /// Marker component for spawned fragments
@@ -264,20 +262,19 @@ fn reset_fragments(
 fn log_physics_stats(
     keyboard: Res<ButtonInput<KeyCode>>,
     fragments: Query<(&Collider, &Transform, &Velocity), With<SpawnedFragment>>,
-    terrain_occ: Option<Res<TerrainOccupancy>>,
-    config: Res<FragmentConfig>,
+    terrain: Query<&Collider, Without<SpawnedFragment>>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyP) {
         info!("=== PHYSICS STATS ===");
-        info!("Collision mode: {}", 
-            if config.use_occupancy_collision { "OCCUPANCY (fast)" } else { "RAPIER (slow)" });
         
         // Terrain info
-        if let Some(ref occ) = terrain_occ {
-            info!("Terrain: {} chunks, {} occupied voxels", 
-                occ.0.chunk_count(),
-                occ.0.total_occupied()
-            );
+        for collider in terrain.iter() {
+            if let Some(trimesh) = collider.as_trimesh() {
+                info!("Terrain: {} vertices, {} triangles", 
+                    trimesh.vertices().len(),
+                    trimesh.indices().len()
+                );
+            }
         }
         
         // Fragment info

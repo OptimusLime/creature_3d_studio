@@ -86,8 +86,7 @@ pub use voxel_physics::{
 pub use voxel_fragment::{
     VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,
     StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
-    detect_settling_fragments, fragment_terrain_collision,
-    TerrainOccupancy, collision_groups,
+    detect_settling_fragments,
 };
 pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
 pub use voxel_collision::{
