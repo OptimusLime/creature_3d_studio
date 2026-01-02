@@ -1023,6 +1023,59 @@ mod tests {
     }
 
     #[test]
+    fn test_controller_p23_scenario() {
+        // Exact scenario from p23_kinematic_controller example
+        let mut world = VoxelWorld::new();
+        
+        // Ground platform (30x30, 3 blocks thick) - same as example
+        for x in -15..15 {
+            for z in -15..15 {
+                for y in 0..3 {
+                    world.set_voxel(x, y, z, Voxel::solid(80, 120, 80));
+                }
+            }
+        }
+        
+        let occ = WorldOccupancy::from_voxel_world(&world);
+        
+        // Check occupancy is correct
+        assert!(occ.get_voxel(IVec3::new(0, 0, 0)), "Floor should exist at (0,0,0)");
+        assert!(occ.get_voxel(IVec3::new(0, 1, 0)), "Floor should exist at (0,1,0)");
+        assert!(occ.get_voxel(IVec3::new(0, 2, 0)), "Floor should exist at (0,2,0)");
+        assert!(!occ.get_voxel(IVec3::new(0, 3, 0)), "No floor at (0,3,0)");
+        
+        // Same starting position as example
+        let mut controller = KinematicController::new(Vec3::new(0.4, 0.9, 0.4));
+        let mut position = Vec3::new(0.0, 5.0, 0.0);
+        let mut velocity = Vec3::ZERO;
+        
+        println!("Starting position: {:?}", position);
+        println!("Player bottom: {}", position.y - 0.9);
+        println!("Floor top: 3.0 (voxels at y=0,1,2 occupy up to y=3)");
+        
+        // Simulate with same gravity as example (25.0)
+        for i in 0..120 {
+            // Same gravity logic as example
+            if !controller.grounded {
+                velocity.y -= 25.0 * (1.0 / 60.0);
+            }
+            
+            controller.move_and_slide(&occ, &mut position, &mut velocity, 1.0 / 60.0);
+            
+            if i % 20 == 0 {
+                println!("Frame {}: pos.y={:.3}, vel.y={:.3}, grounded={}", 
+                    i, position.y, velocity.y, controller.grounded);
+            }
+        }
+        
+        println!("Final: pos={:?}, grounded={}", position, controller.grounded);
+        
+        // Should have landed on floor at y ≈ 3.9 (floor top 3.0 + half height 0.9)
+        assert!(controller.grounded, "Should be grounded after 2 seconds of falling");
+        assert!((position.y - 3.9).abs() < 0.3, "Should land at ~3.9, got {}", position.y);
+    }
+
+    #[test]
     fn test_controller_stands_on_ground() {
         // Create a floor
         let mut world = VoxelWorld::new();

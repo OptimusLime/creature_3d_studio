@@ -186,10 +186,11 @@ fn setup(
     });
     
     // Spawn player (represented as a wireframe capsule later, for now just a marker)
+    // Start at y=10 to give plenty of room to fall and land
     commands.spawn((
         Name::new("Player"),
         Player::default(),
-        Transform::from_xyz(0.0, 5.0, 0.0),
+        Transform::from_xyz(0.0, 10.0, 0.0),
     ));
     
     // Camera
@@ -197,7 +198,7 @@ fn setup(
         Name::new("Camera"),
         Camera3d::default(),
         PlayerCamera::default(),
-        Transform::from_xyz(0.0, 10.0, 15.0).looking_at(Vec3::new(0.0, 5.0, 0.0), Vec3::Y),
+        Transform::from_xyz(0.0, 15.0, 20.0).looking_at(Vec3::new(0.0, 10.0, 0.0), Vec3::Y),
     ));
     
     // Light
