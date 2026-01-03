@@ -42,9 +42,9 @@
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+use crate::deferred::GpuCollisionContacts;
 use crate::voxel::VoxelWorld;
 use crate::voxel_collision::FragmentOccupancy;
-use crate::deferred::GpuCollisionContacts;
 use crate::voxel_mesh::build_world_meshes_cross_chunk;
 use crate::voxel_physics::generate_merged_cuboid_collider;
 
@@ -76,7 +76,7 @@ impl VoxelFragment {
             occupancy,
         }
     }
-    
+
     /// Check if this fragment is considered settled (ready to merge).
     pub fn is_settled(&self, config: &FragmentConfig) -> bool {
         self.settling_frames >= config.settle_threshold_frames
@@ -155,33 +155,35 @@ pub fn spawn_fragment(
 ) -> Option<Entity> {
     // Generate collider from voxel data - use merged cuboids for better performance
     let collider = generate_merged_cuboid_collider(&data)?;
-    
+
     // Calculate origin as integer position
     let origin = IVec3::new(
         position.x.round() as i32,
         position.y.round() as i32,
         position.z.round() as i32,
     );
-    
-    let entity = commands.spawn(VoxelFragmentBundle {
-        fragment: VoxelFragment::new(data, origin),
-        transform: Transform::from_translation(position),
-        global_transform: GlobalTransform::default(),
-        visibility: Visibility::default(),
-        inherited_visibility: InheritedVisibility::default(),
-        view_visibility: ViewVisibility::default(),
-        rigid_body: RigidBody::Dynamic,
-        collider,
-        velocity: Velocity::default(),
-        external_impulse: ExternalImpulse {
-            impulse,
-            torque_impulse: Vec3::ZERO,
-        },
-        gravity_scale: GravityScale(1.0),
-        sleeping: Sleeping::disabled(),
-        ccd: Ccd::enabled(),
-    }).id();
-    
+
+    let entity = commands
+        .spawn(VoxelFragmentBundle {
+            fragment: VoxelFragment::new(data, origin),
+            transform: Transform::from_translation(position),
+            global_transform: GlobalTransform::default(),
+            visibility: Visibility::default(),
+            inherited_visibility: InheritedVisibility::default(),
+            view_visibility: ViewVisibility::default(),
+            rigid_body: RigidBody::Dynamic,
+            collider,
+            velocity: Velocity::default(),
+            external_impulse: ExternalImpulse {
+                impulse,
+                torque_impulse: Vec3::ZERO,
+            },
+            gravity_scale: GravityScale(1.0),
+            sleeping: Sleeping::disabled(),
+            ccd: Ccd::enabled(),
+        })
+        .id();
+
     Some(entity)
 }
 
@@ -212,45 +214,48 @@ pub fn spawn_fragment_with_mesh(
     // Generate collider - use merged cuboids for better performance
     let collider = generate_merged_cuboid_collider(&data)?;
     let chunk_meshes = build_world_meshes_cross_chunk(&data);
-    
+
     // Calculate origin as integer position
     let origin = IVec3::new(
         position.x.round() as i32,
         position.y.round() as i32,
         position.z.round() as i32,
     );
-    
+
     // Spawn parent with physics
-    let entity = commands.spawn(VoxelFragmentBundle {
-        fragment: VoxelFragment::new(data, origin),
-        transform: Transform::from_translation(position),
-        global_transform: GlobalTransform::default(),
-        visibility: Visibility::default(),
-        inherited_visibility: InheritedVisibility::default(),
-        view_visibility: ViewVisibility::default(),
-        rigid_body: RigidBody::Dynamic,
-        collider,
-        velocity: Velocity::default(),
-        external_impulse: ExternalImpulse {
-            impulse,
-            torque_impulse: Vec3::ZERO,
-        },
-        gravity_scale: GravityScale(1.0),
-        sleeping: Sleeping::disabled(),
-        ccd: Ccd::enabled(),
-    }).with_children(|parent| {
-        // Spawn mesh children for each chunk
-        for chunk_mesh in chunk_meshes {
-            let translation = chunk_mesh.translation();
-            let mesh_handle = meshes.add(chunk_mesh.mesh);
-            parent.spawn((
-                Mesh3d(mesh_handle),
-                MeshMaterial3d(material.clone()),
-                Transform::from_translation(translation),
-            ));
-        }
-    }).id();
-    
+    let entity = commands
+        .spawn(VoxelFragmentBundle {
+            fragment: VoxelFragment::new(data, origin),
+            transform: Transform::from_translation(position),
+            global_transform: GlobalTransform::default(),
+            visibility: Visibility::default(),
+            inherited_visibility: InheritedVisibility::default(),
+            view_visibility: ViewVisibility::default(),
+            rigid_body: RigidBody::Dynamic,
+            collider,
+            velocity: Velocity::default(),
+            external_impulse: ExternalImpulse {
+                impulse,
+                torque_impulse: Vec3::ZERO,
+            },
+            gravity_scale: GravityScale(1.0),
+            sleeping: Sleeping::disabled(),
+            ccd: Ccd::enabled(),
+        })
+        .with_children(|parent| {
+            // Spawn mesh children for each chunk
+            for chunk_mesh in chunk_meshes {
+                let translation = chunk_mesh.translation();
+                let mesh_handle = meshes.add(chunk_mesh.mesh);
+                parent.spawn((
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(material.clone()),
+                    Transform::from_translation(translation),
+                ));
+            }
+        })
+        .id();
+
     Some(entity)
 }
 
@@ -264,7 +269,7 @@ pub fn detect_settling_fragments(
 ) {
     for (mut fragment, velocity) in fragments.iter_mut() {
         let speed = velocity.linvel.length() + velocity.angvel.length();
-        
+
         if speed < config.settle_velocity_threshold {
             fragment.settling_frames += 1;
         } else {
@@ -280,7 +285,7 @@ pub fn detect_settling_fragments(
 use crate::voxel_collision::WorldOccupancy;
 
 /// Resource holding the terrain occupancy data for collision detection.
-/// 
+///
 /// This must be initialized by the application with terrain data before
 /// fragment collision will work.
 #[derive(Resource, Default)]
@@ -304,15 +309,15 @@ pub struct FragmentCollisionConfig {
     /// Force multiplier for collision response.
     /// Higher values = stronger push-out force.
     pub force_multiplier: f32,
-    
+
     /// Damping applied when in contact with terrain.
     /// Helps fragments settle instead of bouncing forever.
     pub contact_damping: f32,
-    
+
     /// Minimum penetration to trigger collision response.
     /// Helps avoid jitter from tiny penetrations.
     pub min_penetration: f32,
-    
+
     /// Enable collision system (for toggling CPU/GPU in benchmarks).
     pub enabled: bool,
 }
@@ -320,9 +325,9 @@ pub struct FragmentCollisionConfig {
 impl Default for FragmentCollisionConfig {
     fn default() -> Self {
         Self {
-            force_multiplier: 500.0,  // Strong enough to counter gravity
-            contact_damping: 0.8,      // Dampen velocity on contact
-            min_penetration: 0.01,     // Ignore tiny penetrations
+            force_multiplier: 500.0, // Strong enough to counter gravity
+            contact_damping: 0.8,    // Dampen velocity on contact
+            min_penetration: 0.01,   // Ignore tiny penetrations
             enabled: true,
         }
     }
@@ -359,7 +364,7 @@ pub fn fragment_terrain_collision_system(
     if !collision_config.enabled {
         return;
     }
-    
+
     for (fragment, transform, mut velocity, mut external_force) in fragments.iter_mut() {
         // Check fragment against terrain using occupancy collision
         let collision_result = terrain.occupancy.check_fragment(
@@ -367,45 +372,45 @@ pub fn fragment_terrain_collision_system(
             transform.translation,
             transform.rotation,
         );
-        
+
         if !collision_result.has_collision() {
             continue;
         }
-        
+
         // Calculate resolution vector (direction and magnitude to push out)
         let resolution = collision_result.resolution_vector();
-        
+
         // Skip tiny penetrations to avoid jitter
         if resolution.length() < collision_config.min_penetration {
             continue;
         }
-        
+
         // Apply force proportional to penetration
         // Force = resolution_direction * penetration * multiplier
         let force = resolution * collision_config.force_multiplier;
         external_force.force = force;
-        
+
         // Apply damping when in contact (especially for floor contact)
         if collision_result.has_floor_contact() {
             // Dampen vertical velocity more aggressively on floor contact
             if velocity.linvel.y < 0.0 {
                 velocity.linvel.y *= 1.0 - collision_config.contact_damping;
             }
-            
+
             // Also apply some horizontal damping to help settling
             velocity.linvel.x *= 1.0 - collision_config.contact_damping * 0.5;
             velocity.linvel.z *= 1.0 - collision_config.contact_damping * 0.5;
-            
+
             // Dampen angular velocity on floor contact
             velocity.angvel *= 1.0 - collision_config.contact_damping * 0.3;
         }
-        
+
         // Apply torque if contacts are off-center (causes rotation)
         // This makes fragments tumble realistically when hitting at an angle
         let center = transform.translation;
         let avg_contact = collision_result.average_contact_position();
         let lever_arm = avg_contact - center;
-        
+
         if lever_arm.length_squared() > 0.01 {
             let torque = lever_arm.cross(resolution) * collision_config.force_multiplier * 0.1;
             external_force.torque = torque;
@@ -414,12 +419,10 @@ pub fn fragment_terrain_collision_system(
 }
 
 /// System to clear external forces each frame.
-/// 
+///
 /// ExternalForce should be re-applied each frame based on current state.
 /// This runs before collision detection to ensure fresh state.
-pub fn clear_fragment_forces(
-    mut fragments: Query<&mut ExternalForce, With<VoxelFragment>>,
-) {
+pub fn clear_fragment_forces(mut fragments: Query<&mut ExternalForce, With<VoxelFragment>>) {
     for mut force in fragments.iter_mut() {
         force.force = Vec3::ZERO;
         force.torque = Vec3::ZERO;
@@ -463,22 +466,22 @@ pub fn gpu_fragment_terrain_collision_system(
     if !gpu_mode.enabled {
         return;
     }
-    
+
     let Some(gpu_contacts) = gpu_contacts else {
         return;
     };
-    
+
     if !collision_config.enabled {
         return;
     }
-    
+
     // Get GPU collision results
     let collision_result = gpu_contacts.get();
-    
+
     if collision_result.contacts.is_empty() {
         return;
     }
-    
+
     // Build entity-to-index map for quick lookup
     let entity_to_idx: std::collections::HashMap<Entity, u32> = collision_result
         .fragment_entities
@@ -486,7 +489,7 @@ pub fn gpu_fragment_terrain_collision_system(
         .enumerate()
         .map(|(idx, &entity)| (entity, idx as u32))
         .collect();
-    
+
     // Process each fragment by entity lookup (not query order)
     for (entity, _fragment, transform, mut velocity, mut external_force) in fragments.iter_mut() {
         // Look up this entity's fragment index from the GPU results
@@ -494,46 +497,52 @@ pub fn gpu_fragment_terrain_collision_system(
             // This entity wasn't in the GPU collision batch (spawned after extraction?)
             continue;
         };
-        
+
         // Get resolution vector for this fragment from GPU results
         let resolution = collision_result.resolution_vector_for_fragment(fragment_idx);
-        
+
         // Skip if no collision
-        if resolution.length_squared() < collision_config.min_penetration * collision_config.min_penetration {
+        if resolution.length_squared()
+            < collision_config.min_penetration * collision_config.min_penetration
+        {
             continue;
         }
-        
+
         // Apply force proportional to penetration
         let force = resolution * collision_config.force_multiplier;
         external_force.force = force;
-        
+
         // Check for floor contact
         let has_floor = collision_result.has_floor_contact_for_fragment(fragment_idx);
-        
+
         if has_floor {
             // Dampen vertical velocity on floor contact
             if velocity.linvel.y < 0.0 {
                 velocity.linvel.y *= 1.0 - collision_config.contact_damping;
             }
-            
+
             // Horizontal damping
             velocity.linvel.x *= 1.0 - collision_config.contact_damping * 0.5;
             velocity.linvel.z *= 1.0 - collision_config.contact_damping * 0.5;
-            
+
             // Angular damping
             velocity.angvel *= 1.0 - collision_config.contact_damping * 0.3;
         }
-        
+
         // Calculate torque from contact offset
         let center = transform.translation;
-        
+
         // Get average contact position for this fragment
-        let contacts: Vec<_> = collision_result.contacts_for_fragment(fragment_idx).collect();
+        let contacts: Vec<_> = collision_result
+            .contacts_for_fragment(fragment_idx)
+            .collect();
         if !contacts.is_empty() {
-            let avg_pos: Vec3 = contacts.iter()
+            let avg_pos: Vec3 = contacts
+                .iter()
                 .map(|c| Vec3::from(c.position))
-                .sum::<Vec3>() / contacts.len() as f32;
-            
+                .sum::<Vec3>()
+                / contacts.len() as f32;
+
             let lever_arm = avg_pos - center;
             if lever_arm.length_squared() > 0.01 {
                 let torque = lever_arm.cross(resolution) * collision_config.force_multiplier * 0.1;
@@ -555,7 +564,11 @@ pub fn gpu_kinematic_collision_system(
     gpu_contacts: Option<Res<GpuCollisionContacts>>,
     collision_config: Res<FragmentCollisionConfig>,
     mut kinematics: Query<
-        (Entity, &crate::voxel_collision::GpuCollisionAABB, &mut Transform),
+        (
+            Entity,
+            &crate::voxel_collision::GpuCollisionAABB,
+            &mut Transform,
+        ),
         Without<VoxelFragment>,
     >,
 ) {
@@ -566,22 +579,22 @@ pub fn gpu_kinematic_collision_system(
     if !gpu_mode.enabled {
         return;
     }
-    
+
     let Some(gpu_contacts) = gpu_contacts else {
         return;
     };
-    
+
     if !collision_config.enabled {
         return;
     }
-    
+
     // Get GPU collision results
     let collision_result = gpu_contacts.get();
-    
+
     if collision_result.contacts.is_empty() {
         return;
     }
-    
+
     // Build entity-to-index map for quick lookup
     let entity_to_idx: std::collections::HashMap<Entity, u32> = collision_result
         .fragment_entities
@@ -589,25 +602,64 @@ pub fn gpu_kinematic_collision_system(
         .enumerate()
         .map(|(idx, &entity)| (entity, idx as u32))
         .collect();
-    
+
     // Process each kinematic body by entity lookup
-    for (entity, _aabb, mut transform) in kinematics.iter_mut() {
+    for (entity, aabb, mut transform) in kinematics.iter_mut() {
         // Look up this entity's index from the GPU results
         let Some(&fragment_idx) = entity_to_idx.get(&entity) else {
             // This entity wasn't in the GPU collision batch
             continue;
         };
-        
-        // Get resolution vector for this entity from GPU results
-        let resolution = collision_result.resolution_vector_for_fragment(fragment_idx);
-        
-        // Skip if no collision
-        if resolution.length_squared() < collision_config.min_penetration * collision_config.min_penetration {
-            continue;
+
+        // Check if we have floor contacts (normal pointing up)
+        let has_floor_contact = collision_result.has_floor_contact_for_fragment(fragment_idx);
+
+        if has_floor_contact {
+            // For floor contacts, compute the correct target Y position based on
+            // the highest floor voxel we're touching. This avoids issues with stale
+            // GPU penetration values due to 1-frame readback latency.
+            //
+            // Find the highest Y of all floor contact voxels
+            let mut max_floor_y = f32::MIN;
+            for contact in collision_result.contacts_for_fragment(fragment_idx) {
+                // Floor contacts have normal.y > 0.7
+                if contact.normal[1] > 0.7 {
+                    // The contact position is inside the voxel.
+                    // The voxel top = floor(contact.y) + 1.0
+                    let voxel_top = contact.position[1].floor() + 1.0;
+                    max_floor_y = max_floor_y.max(voxel_top);
+                }
+            }
+
+            if max_floor_y > f32::MIN {
+                // Target position: floor top + half height
+                let target_y = max_floor_y + aabb.half_extents.y;
+
+                // Only push up if we're below the target (prevents bouncing when above)
+                if transform.translation.y < target_y {
+                    transform.translation.y = target_y;
+                }
+            }
+        } else {
+            // For non-floor collisions (walls, ceilings), use the standard resolution vector
+            let resolution = collision_result.resolution_vector_for_fragment(fragment_idx);
+
+            // Skip if no collision
+            if resolution.length_squared()
+                < collision_config.min_penetration * collision_config.min_penetration
+            {
+                continue;
+            }
+
+            // Apply horizontal resolution (walls)
+            transform.translation.x += resolution.x;
+            transform.translation.z += resolution.z;
+
+            // For ceiling contacts (resolution.y < 0), apply vertical push
+            if resolution.y < 0.0 {
+                transform.translation.y += resolution.y;
+            }
         }
-        
-        // For kinematic bodies, directly adjust position (they don't respond to forces)
-        transform.translation += resolution;
     }
 }
 
@@ -620,22 +672,26 @@ impl Plugin for VoxelFragmentPlugin {
             .init_resource::<TerrainOccupancy>()
             .init_resource::<FragmentCollisionConfig>()
             .init_resource::<GpuCollisionMode>()
-            .add_systems(Update, (
-                clear_fragment_forces,
-                // Run CPU collision if GPU mode is disabled
-                fragment_terrain_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
-                    mode.map_or(true, |m| !m.enabled)
-                }),
-                // Run GPU collision for fragments if enabled
-                gpu_fragment_terrain_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
-                    mode.map_or(false, |m| m.enabled)
-                }),
-                // Run GPU collision for kinematic bodies if enabled
-                gpu_kinematic_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
-                    mode.map_or(false, |m| m.enabled)
-                }),
-                detect_settling_fragments,
-            ).chain());
+            .add_systems(
+                Update,
+                (
+                    clear_fragment_forces,
+                    // Run CPU collision if GPU mode is disabled
+                    fragment_terrain_collision_system.run_if(
+                        |mode: Option<Res<GpuCollisionMode>>| mode.map_or(true, |m| !m.enabled),
+                    ),
+                    // Run GPU collision for fragments if enabled
+                    gpu_fragment_terrain_collision_system.run_if(
+                        |mode: Option<Res<GpuCollisionMode>>| mode.map_or(false, |m| m.enabled),
+                    ),
+                    // Run GPU collision for kinematic bodies if enabled
+                    gpu_kinematic_collision_system.run_if(|mode: Option<Res<GpuCollisionMode>>| {
+                        mode.map_or(false, |m| m.enabled)
+                    }),
+                    detect_settling_fragments,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -658,17 +714,17 @@ mod tests {
             settle_threshold_frames: 30,
             ..default()
         };
-        
+
         let data = VoxelWorld::new();
         let mut fragment = VoxelFragment::new(data, IVec3::ZERO);
-        
+
         // Not settled initially
         assert!(!fragment.is_settled(&config));
-        
+
         // Still not settled at 29 frames
         fragment.settling_frames = 29;
         assert!(!fragment.is_settled(&config));
-        
+
         // Settled at 30 frames
         fragment.settling_frames = 30;
         assert!(fragment.is_settled(&config));
@@ -686,11 +742,14 @@ mod tests {
     fn test_spawn_fragment_with_data_produces_collider() {
         let mut data = VoxelWorld::new();
         data.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
-        
+
         let collider = generate_merged_cuboid_collider(&data);
-        assert!(collider.is_some(), "Non-empty world should produce collider");
+        assert!(
+            collider.is_some(),
+            "Non-empty world should produce collider"
+        );
     }
-    
+
     #[test]
     fn test_terrain_occupancy_from_voxel_world() {
         let mut world = VoxelWorld::new();
@@ -699,26 +758,26 @@ mod tests {
                 world.set_voxel(x, 0, z, Voxel::solid(100, 100, 100));
             }
         }
-        
+
         let terrain = TerrainOccupancy::from_voxel_world(&world);
-        
+
         // Check that terrain is properly loaded
         assert!(terrain.occupancy.get_voxel(IVec3::new(0, 0, 0)));
         assert!(terrain.occupancy.get_voxel(IVec3::new(5, 0, 5)));
         assert!(!terrain.occupancy.get_voxel(IVec3::new(0, 1, 0)));
     }
-    
+
     #[test]
     fn test_fragment_collision_config_default() {
         let config = FragmentCollisionConfig::default();
-        
+
         assert!(config.enabled);
         assert!(config.force_multiplier > 0.0);
         assert!(config.contact_damping > 0.0);
         assert!(config.contact_damping < 1.0);
         assert!(config.min_penetration > 0.0);
     }
-    
+
     #[test]
     fn test_fragment_terrain_collision_detection() {
         // Create terrain floor
@@ -729,32 +788,38 @@ mod tests {
             }
         }
         let terrain = TerrainOccupancy::from_voxel_world(&terrain_world);
-        
+
         // Create a small fragment
         let mut fragment_world = VoxelWorld::new();
         fragment_world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
         let fragment = VoxelFragment::new(fragment_world, IVec3::ZERO);
-        
+
         // Test collision when fragment is inside terrain
         let collision = terrain.occupancy.check_fragment(
             &fragment.occupancy,
             Vec3::new(5.5, 0.5, 5.5), // Inside terrain floor
             Quat::IDENTITY,
         );
-        
-        assert!(collision.has_collision(), "Fragment inside terrain should collide");
+
+        assert!(
+            collision.has_collision(),
+            "Fragment inside terrain should collide"
+        );
         assert!(collision.has_floor_contact(), "Should detect floor contact");
-        
+
         // Test no collision when fragment is above terrain
         let collision_above = terrain.occupancy.check_fragment(
             &fragment.occupancy,
             Vec3::new(5.5, 5.0, 5.5), // Above terrain
             Quat::IDENTITY,
         );
-        
-        assert!(!collision_above.has_collision(), "Fragment above terrain should not collide");
+
+        assert!(
+            !collision_above.has_collision(),
+            "Fragment above terrain should not collide"
+        );
     }
-    
+
     #[test]
     fn test_fragment_collision_resolution_pushes_up() {
         // Create terrain floor
@@ -765,25 +830,29 @@ mod tests {
             }
         }
         let terrain = TerrainOccupancy::from_voxel_world(&terrain_world);
-        
+
         // Create a small fragment
         let mut fragment_world = VoxelWorld::new();
         fragment_world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
         let fragment = VoxelFragment::new(fragment_world, IVec3::ZERO);
-        
+
         // Fragment penetrating floor from above
         let collision = terrain.occupancy.check_fragment(
             &fragment.occupancy,
             Vec3::new(5.5, 0.7, 5.5), // Slightly inside floor
             Quat::IDENTITY,
         );
-        
+
         assert!(collision.has_collision());
-        
+
         let resolution = collision.resolution_vector();
-        
+
         // Resolution should push UP (positive Y)
-        assert!(resolution.y > 0.0, "Resolution should push up, got {:?}", resolution);
+        assert!(
+            resolution.y > 0.0,
+            "Resolution should push up, got {:?}",
+            resolution
+        );
         assert!(resolution.x.abs() < 0.1, "Should not push X significantly");
         assert!(resolution.z.abs() < 0.1, "Should not push Z significantly");
     }

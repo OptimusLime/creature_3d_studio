@@ -153,12 +153,28 @@ fn rotate_by_quat(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
 
 // Calculate the contact normal for a collision
 // Returns the direction to push the fragment out of the terrain voxel
+//
+// IMPORTANT: For floor contacts (penetrating from above), we ALWAYS push UP.
+// This prevents the "normal flip" bug where deep penetration would cause
+// the shortest exit to be through the bottom, leading to objects falling through.
+//
+// We determine "penetrating from above" by checking if there's empty space above
+// the colliding voxel. If the voxel above is empty, this is a floor contact.
 fn calculate_contact_normal(world_pos: vec3<f32>, voxel_pos: vec3<i32>) -> vec3<f32> {
     let voxel_min = vec3<f32>(f32(voxel_pos.x), f32(voxel_pos.y), f32(voxel_pos.z));
     let voxel_max = voxel_min + vec3<f32>(1.0, 1.0, 1.0);
-    let voxel_center = voxel_min + vec3<f32>(0.5, 0.5, 0.5);
     
-    // Calculate distance to each face
+    // Check if the voxel above is empty - if so, this is a floor contact
+    // and we should ALWAYS push UP regardless of penetration depth
+    let voxel_above = vec3<i32>(voxel_pos.x, voxel_pos.y + 1, voxel_pos.z);
+    let is_floor_contact = !is_terrain_occupied(voxel_above);
+    
+    if is_floor_contact {
+        // Floor contact: always push UP to prevent falling through
+        return vec3<f32>(0.0, 1.0, 0.0);
+    }
+    
+    // For non-floor contacts, use standard shortest-exit logic
     let dist_to_min_x = world_pos.x - voxel_min.x;
     let dist_to_max_x = voxel_max.x - world_pos.x;
     let dist_to_min_y = world_pos.y - voxel_min.y;
@@ -167,7 +183,6 @@ fn calculate_contact_normal(world_pos: vec3<f32>, voxel_pos: vec3<i32>) -> vec3<
     let dist_to_max_z = voxel_max.z - world_pos.z;
     
     // Find minimum distance to determine exit direction
-    // Prefer pushing UP when close, for stable floor contact
     var min_dist = dist_to_max_y;
     var normal = vec3<f32>(0.0, 1.0, 0.0);  // Default: push up
     
@@ -195,24 +210,28 @@ fn calculate_contact_normal(world_pos: vec3<f32>, voxel_pos: vec3<i32>) -> vec3<
     return normal;
 }
 
-// Calculate penetration depth
+// Calculate penetration depth along the given normal direction
 fn calculate_penetration(world_pos: vec3<f32>, voxel_pos: vec3<i32>, normal: vec3<f32>) -> f32 {
     let voxel_min = vec3<f32>(f32(voxel_pos.x), f32(voxel_pos.y), f32(voxel_pos.z));
     let voxel_max = voxel_min + vec3<f32>(1.0, 1.0, 1.0);
     
     // Calculate penetration along the normal direction
+    // For floor contacts (pushing up), penetration is distance from point to voxel top
     if normal.y > 0.5 {
-        return voxel_max.y - world_pos.y;
+        // Pushing UP: penetration is how far below the voxel top we are
+        // Always positive if we're inside the voxel
+        return max(0.0, voxel_max.y - world_pos.y);
     } else if normal.y < -0.5 {
-        return world_pos.y - voxel_min.y;
+        // Pushing DOWN: penetration is how far above the voxel bottom we are
+        return max(0.0, world_pos.y - voxel_min.y);
     } else if normal.x > 0.5 {
-        return voxel_max.x - world_pos.x;
+        return max(0.0, voxel_max.x - world_pos.x);
     } else if normal.x < -0.5 {
-        return world_pos.x - voxel_min.x;
+        return max(0.0, world_pos.x - voxel_min.x);
     } else if normal.z > 0.5 {
-        return voxel_max.z - world_pos.z;
+        return max(0.0, voxel_max.z - world_pos.z);
     } else {
-        return world_pos.z - voxel_min.z;
+        return max(0.0, world_pos.z - voxel_min.z);
     }
 }
 
