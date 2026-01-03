@@ -20,6 +20,7 @@ pub mod day_night;
 pub mod debug_screenshot;
 pub mod deferred;
 pub mod orbit_camera;
+pub mod physics_math;
 pub mod scene_utils;
 pub mod screenshot;
 pub mod screenshot_sequence;
@@ -50,6 +51,12 @@ pub use deferred::{
     DeferredRenderingPlugin, GpuCollisionContacts, MoonConfig, PrimaryShadowCaster,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
+pub use physics_math::{
+    aggregate_particle_forces, apply_gravity, compute_ground_collision_force,
+    compute_particle_collision_force, compute_terrain_collision_force, integrate_angular_velocity,
+    integrate_position, integrate_rotation, integrate_velocity, simulate_single_body,
+    simulate_single_body_on_terrain, simulate_two_bodies, PhysicsConfig,
+};
 pub use scene_utils::{
     centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset, spawn_chunk,
     spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
