@@ -19,6 +19,7 @@ use studio_core::{
     VoxelMaterial, DeferredRenderable,
     GpuCollisionAABB, VoxelFragmentPlugin, TerrainOccupancy, GpuCollisionMode,
     ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION, ATTRIBUTE_VOXEL_AO,
+    gpu_kinematic_collision_system,
 };
 
 fn main() {
@@ -27,6 +28,8 @@ fn main() {
 
     // Check for --test flag to run in screenshot mode
     let test_mode = std::env::args().any(|arg| arg == "--test");
+    // Check for --repro flag to run with strict failure checks
+    let repro_mode = std::env::args().any(|arg| arg == "--repro");
     
     let mut app = VoxelWorldApp::new("Phase 23: Kinematic Character Controller")
         .with_resolution(1280, 720)
@@ -52,14 +55,18 @@ fn main() {
         })
         .with_update_systems(|app| {
             app.add_systems(PostStartup, spawn_player_system);
-            // Input and gravity run first
+            
+            // CRITICAL FIX: Run movement systems BEFORE collision resolution
+            // This prevents "sinking" where we move into the floor and render that frame,
+            // which can cause the collision normal to flip if we sink too deep.
             app.add_systems(Update, (
                 spawn_player_deferred,
                 attach_player_camera,
                 player_input,
                 apply_gravity,
                 apply_player_velocity,
-            ).chain());
+            ).chain().before(gpu_kinematic_collision_system));
+            
             // check_grounded_state must run AFTER gpu_kinematic_collision_system
             // which runs in VoxelFragmentPlugin. Use Last to ensure it runs after.
             app.add_systems(Last, (
@@ -68,13 +75,66 @@ fn main() {
             ).chain());
         });
     
-    if test_mode {
-        app = app.with_screenshot("screenshots/p23_kinematic_controller.png");
+    if test_mode || repro_mode {
+        if repro_mode {
+             // In repro mode, exit if we fall through floor
+             // And exit successfully after 3 seconds if we didn't fall
+             app = app.with_update_systems(|app| {
+                 app.add_systems(Last, (check_fall_through, timeout_system, debug_player_state));
+             });
+        } else {
+             app = app.with_screenshot("screenshots/p23_kinematic_controller.png");
+        }
     } else {
         app = app.with_interactive();
     }
     
     app.run();
+}
+
+/// Debug system to print player state every frame
+fn debug_player_state(
+    player_query: Query<(&Player, &Transform)>,
+    gpu_contacts: Option<Res<studio_core::GpuCollisionContacts>>,
+) {
+    let Some((player, transform)) = player_query.iter().next() else { return };
+    
+    let contact_count = gpu_contacts.map_or(0, |c| c.get().contacts.len());
+    let pos_y = transform.translation.y;
+    
+    // Only print if near floor (y < 4.5) to see the settling behavior
+    if pos_y < 4.5 {
+        info!(
+            "Pos Y: {:.4} | Vel Y: {:.4} | Grounded: {} | Contacts: {}",
+            pos_y, player.velocity.y, player.grounded, contact_count
+        );
+    }
+}
+
+/// System to detect failure (falling through floor)
+fn check_fall_through(
+    player_query: Query<&Transform, With<Player>>,
+) {
+    if let Some(transform) = player_query.iter().next() {
+        if transform.translation.y < 0.0 {
+            error!("FAILURE DETECTED: Player fell through floor! Pos Y: {}", transform.translation.y);
+            panic!("TEST FAILED: Player fell through floor!");
+        }
+    }
+}
+
+/// Exit app after timeout
+fn timeout_system(
+    time: Res<Time>,
+    mut app_exit: EventWriter<AppExit>,
+) {
+    if time.elapsed_secs() > 3.0 {
+        info!("TEST PASSED: Player stayed above floor for 3 seconds");
+        // We can't easily exit with code 0 from here in Bevy 0.14 without specific plugins,
+        // but terminating successfully is enough.
+        // For repro mode, we just want to ensure we didn't panic.
+        std::process::exit(0);
+    }
 }
 
 fn build_terrain() -> VoxelWorld {
@@ -162,6 +222,8 @@ struct Player {
     velocity: Vec3,
     /// Whether player is on ground (detected from GPU collision)
     grounded: bool,
+    /// Timer to ignore ground checks after jumping (avoids immediate re-grounding)
+    jump_timer: f32,
 }
 
 #[derive(Component)]
@@ -325,6 +387,7 @@ fn attach_player_camera(
 
 /// Handle player input and calculate desired velocity.
 fn player_input(
+    time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_button: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
@@ -334,6 +397,11 @@ fn player_input(
 ) {
     let Ok(mut player) = player_query.single_mut() else { return };
     let Ok(mut camera) = camera_query.single_mut() else { return };
+    
+    // Decrement jump timer
+    if player.jump_timer > 0.0 {
+        player.jump_timer -= time.delta_secs();
+    }
     
     // Movement input
     let mut input = Vec3::ZERO;
@@ -357,6 +425,7 @@ fn player_input(
     if keyboard.just_pressed(KeyCode::Space) && player.grounded {
         player.velocity.y = config.jump_speed;
         player.grounded = false;
+        player.jump_timer = 0.2; // Ignore ground contacts for 0.2s
     }
     
     // Camera look (when right mouse button held)
@@ -425,6 +494,11 @@ fn check_grounded_state(
         .collect();
     
     for (entity, mut player) in player_query.iter_mut() {
+        // If we recently jumped, ignore ground contacts to prevent "sticky" feet
+        if player.jump_timer > 0.0 {
+            continue;
+        }
+
         // Look up this entity's collision index
         let Some(&fragment_idx) = entity_to_idx.get(&entity) else {
             continue;
@@ -434,9 +508,10 @@ fn check_grounded_state(
         if result.has_floor_contact_for_fragment(fragment_idx) {
             player.grounded = true;
             
-            // Zero vertical velocity when landing to prevent bouncing
-            if player.velocity.y < 0.0 {
-                player.velocity.y = 0.0;
+            // Set small downward velocity to keep consistent contact with ground
+            // This fixes jitter/bouncing when moving down slopes
+            if player.velocity.y <= 0.0 {
+                player.velocity.y = -1.0;
             }
         }
     }
