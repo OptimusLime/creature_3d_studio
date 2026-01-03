@@ -364,101 +364,385 @@ For terrain collision, we need to:
 
 ---
 
-## Phase 0: Isolated Physics Test Harness
+## PHASE 0: Create Isolated Test Harness (SCAFFOLDING ONLY)
 
-**Outcome:** A minimal example (`p24_physics_audit.rs`) with a flat ground plane (Y=0), no voxel terrain, that we use to verify physics in isolation.
+**Outcome:** A minimal test file and example that compile. NO PHYSICS VERIFICATION.
 
-**Verification:** Example compiles and shows a cube falling and landing on Y=0 plane.
+**What Phase 0 IS:**
+- A clean slate to implement and test physics in isolation
+- Scaffolding with stub functions
+- A place to add unit tests
+
+**What Phase 0 IS NOT:**
+- Working physics
+- A demo that shows correct behavior
+- Anything that "bounces" or "settles"
 
 ### Tasks:
-- [ ] Create `examples/p24_physics_audit.rs` - minimal setup with camera, no terrain
-- [ ] Add a visual ground plane mesh at Y=0 (just for rendering, not collision)
-- [ ] Spawn a single cube fragment at Y=10
-- [ ] Ground collision = simple Y=0 plane check (exactly like `_collisionReactionWithGround`)
-- [ ] Verify: cube falls due to gravity, stops at Y=0
+
+- [ ] Create `tests/physics_audit_test.rs` with stub test functions (all `#[ignore]` initially)
+- [ ] Create pure functions for physics math (no ECS, no Bevy) in a new module
+- [ ] Create `examples/p24_physics_audit.rs` - visual harness (optional, for later visual debugging)
+
+### Verification:
+
+```bash
+cargo test -p studio_core --lib physics  # Compiles, all tests ignored
+cargo run --example p24_physics_audit    # Compiles and runs (cube may explode, that's fine)
+```
+
+### Test Stubs to Create:
+
+```rust
+// tests/physics_audit_test.rs
+
+#[test]
+#[ignore] // Until Phase 1 complete
+fn test_ground_collision_force_direction() {
+    // A1-A6: Verify spring force points UP when particle is below ground
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 1 complete  
+fn test_ground_collision_force_magnitude() {
+    // A5-A6: Verify force magnitude matches reference formula
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 1 complete
+fn test_damping_force_opposes_velocity() {
+    // A7-A9: Verify damping force opposes particle velocity
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 1 complete
+fn test_tangential_force_opposes_sliding() {
+    // A10-A12: Verify tangential force opposes sliding motion
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 2 complete
+fn test_velocity_integration_with_friction() {
+    // E1-E5: Verify friction applied BEFORE force, correct formula
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 2 complete
+fn test_position_integration() {
+    // F1: Verify pos += vel * dt
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 2 complete
+fn test_quaternion_integration() {
+    // F2-F5: Verify quaternion derivative formula
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 3 complete
+fn test_particle_force_aggregation() {
+    // D1-D6: Verify forces sum correctly, torque computed correctly
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 4 complete
+fn test_cube_falls_and_settles() {
+    // Full integration: cube dropped from height settles at ground
+    todo!()
+}
+
+#[test]
+#[ignore] // Until Phase 5 complete
+fn test_two_cubes_collide() {
+    // B1-B12: Two cubes collide and separate
+    todo!()
+}
+```
 
 ---
 
-## Phase 1: Fix Force Computation
+## PHASE 1: Implement & Test Force Computation
 
-**Outcome:** Force computation matches reference exactly.
+**Outcome:** Pure functions for force computation that pass unit tests.
 
-**Verification:** Add debug logging, verify force magnitudes match expected values.
+**Verification:** `cargo test -p studio_core --lib physics` - force tests PASS (remove `#[ignore]`)
 
 ### Tasks:
-- [ ] Fix gravity: `force.y -= 9.8` (subtracted, not added as negative)
-- [ ] Fix spring force sign: `-springCoefficient * penetration * normal`
-- [ ] Fix relative velocity: `ground_vel - my_vel` (zero minus my velocity)
-- [ ] Add tangential force properly
-- [ ] Match all constants from Section I
+
+- [ ] Create `crates/studio_core/src/physics_math.rs` with pure functions
+- [ ] Implement `compute_ground_collision_force(particle_pos, particle_vel, config) -> Vec3`
+- [ ] Implement `compute_particle_collision_force(pos_i, vel_i, pos_j, vel_j, config) -> Vec3`
+- [ ] Write tests for A1-A13 (ground collision)
+- [ ] Write tests for B1-B10 (particle collision)
+- [ ] Write tests for C1-C5 (gravity)
+- [ ] All force computation tests pass
+
+### Test Examples:
+
+```rust
+#[test]
+fn test_ground_collision_force_direction() {
+    let config = PhysicsConfig::default(); // Uses reference constants
+    
+    // Particle at Y=0.3 (below surface, penetrating)
+    let particle_pos = Vec3::new(0.0, 0.3, 0.0);
+    let particle_vel = Vec3::new(0.0, -5.0, 0.0); // Falling
+    
+    let force = compute_ground_collision_force(particle_pos, particle_vel, &config);
+    
+    // Force should point UP (positive Y)
+    assert!(force.y > 0.0, "Ground collision force should point up, got {}", force.y);
+    
+    // Force should be significant (spring + damping)
+    assert!(force.y > 100.0, "Force should be significant, got {}", force.y);
+}
+
+#[test]
+fn test_ground_collision_no_force_when_above() {
+    let config = PhysicsConfig::default();
+    
+    // Particle at Y=2.0 (well above ground)
+    let particle_pos = Vec3::new(0.0, 2.0, 0.0);
+    let particle_vel = Vec3::new(0.0, -5.0, 0.0);
+    
+    let force = compute_ground_collision_force(particle_pos, particle_vel, &config);
+    
+    // No collision = no force
+    assert_eq!(force, Vec3::ZERO);
+}
+
+#[test]
+fn test_spring_force_magnitude() {
+    let config = PhysicsConfig::default(); // spring_k = 500
+    
+    // Particle at Y=0.3, penetration = 0.5 - 0.3 = 0.2 (since ground particle at -0.5)
+    // Wait, let's think about this...
+    // Ground particle Y = -0.5
+    // Our particle Y = 0.3
+    // Distance = 0.3 - (-0.5) = 0.8
+    // Penetration = diameter(1.0) - distance(0.8) = 0.2
+    // Spring force = -500 * 0.2 * normal
+    // Normal points from particle toward ground = (0, -1, 0) normalized
+    // So spring force = -500 * 0.2 * (0, -1, 0) = (0, 100, 0)
+    
+    let particle_pos = Vec3::new(0.0, 0.3, 0.0);
+    let particle_vel = Vec3::ZERO; // No velocity = no damping
+    
+    let force = compute_ground_collision_force(particle_pos, particle_vel, &config);
+    
+    // Spring force should be approximately 100 (500 * 0.2)
+    assert!((force.y - 100.0).abs() < 1.0, "Expected ~100, got {}", force.y);
+}
+```
 
 ---
 
-## Phase 2: Fix Integration
+## PHASE 2: Implement & Test Integration
 
-**Outcome:** Integration matches reference exactly.
+**Outcome:** Pure functions for velocity/position integration that pass unit tests.
 
-**Verification:** Drop cube from height, verify it falls correctly, bounces, settles.
+**Verification:** `cargo test -p studio_core --lib physics` - integration tests PASS
 
 ### Tasks:
-- [ ] Apply friction BEFORE adding forces
-- [ ] Use correct velocity update formula with mass
-- [ ] Implement velocity threshold zeroing
-- [ ] Fix quaternion integration with proper quat_concat
+
+- [ ] Implement `integrate_velocity(vel, force, mass, friction, dt) -> Vec3`
+- [ ] Implement `integrate_position(pos, vel, dt) -> Vec3`
+- [ ] Implement `integrate_rotation(quat, angular_vel, angular_friction, dt) -> Quat`
+- [ ] Write tests for E1-E9 (velocity integration)
+- [ ] Write tests for F1-F5 (position/rotation integration)
+- [ ] All integration tests pass
+
+### Test Examples:
+
+```rust
+#[test]
+fn test_friction_applied_before_force() {
+    // E1: Friction divides velocity BEFORE adding force
+    let vel = Vec3::new(0.0, 10.0, 0.0);
+    let force = Vec3::new(0.0, 100.0, 0.0);
+    let mass = 1.0;
+    let friction = 0.9;
+    let dt = 1.0 / 60.0;
+    
+    let new_vel = integrate_velocity(vel, force, mass, friction, dt);
+    
+    // vel_after_friction = 10.0 / (1.0 + dt * 0.9) = 10.0 / 1.015 = 9.852
+    // vel_after_force = 9.852 + 100.0 * dt = 9.852 + 1.667 = 11.519
+    let expected = 10.0 / (1.0 + dt * friction) + force.y / mass * dt;
+    assert!((new_vel.y - expected).abs() < 0.001, "Expected {}, got {}", expected, new_vel.y);
+}
+
+#[test]
+fn test_velocity_zeroing_threshold() {
+    // E2, E5: Tiny velocities should be zeroed
+    let vel = Vec3::new(0.0, 0.0000001, 0.0); // Below 1e-6 threshold
+    let force = Vec3::ZERO;
+    let mass = 1.0;
+    let friction = 0.9;
+    let dt = 1.0 / 60.0;
+    
+    let new_vel = integrate_velocity(vel, force, mass, friction, dt);
+    
+    assert_eq!(new_vel, Vec3::ZERO, "Tiny velocity should be zeroed");
+}
+
+#[test]
+fn test_position_integration() {
+    // F1: pos += vel * dt
+    let pos = Vec3::new(0.0, 10.0, 0.0);
+    let vel = Vec3::new(0.0, -5.0, 0.0);
+    let dt = 1.0 / 60.0;
+    
+    let new_pos = integrate_position(pos, vel, dt);
+    
+    let expected_y = 10.0 + (-5.0) * dt;
+    assert!((new_pos.y - expected_y).abs() < 0.0001);
+}
+```
 
 ---
 
-## Phase 3: Fix Force Aggregation
+## PHASE 3: Implement & Test Force Aggregation
 
-**Outcome:** Multiple contact points aggregate correctly.
+**Outcome:** Pure functions for aggregating particle forces to rigid body.
 
-**Verification:** Cube landing on edge creates torque, rotates as expected.
+**Verification:** `cargo test -p studio_core --lib physics` - aggregation tests PASS
 
 ### Tasks:
-- [ ] Sum particle/contact forces for linear force
-- [ ] Compute torque using cross(offset, force)
-- [ ] Use correct mass calculation
+
+- [ ] Implement `aggregate_particle_forces(particle_forces, particle_relative_positions) -> (Vec3, Vec3)` (linear, angular)
+- [ ] Write tests for D1-D6 (force aggregation)
+- [ ] All aggregation tests pass
+
+### Test Examples:
+
+```rust
+#[test]
+fn test_linear_force_aggregation() {
+    // D3: Linear force = sum of all particle forces
+    let particle_forces = vec![
+        Vec3::new(0.0, 10.0, 0.0),
+        Vec3::new(0.0, 20.0, 0.0),
+        Vec3::new(0.0, 30.0, 0.0),
+    ];
+    let particle_relative_positions = vec![
+        Vec3::new(-0.5, -0.5, -0.5),
+        Vec3::new(0.5, -0.5, -0.5),
+        Vec3::new(0.0, 0.5, 0.0),
+    ];
+    
+    let (linear, _angular) = aggregate_particle_forces(&particle_forces, &particle_relative_positions);
+    
+    assert_eq!(linear, Vec3::new(0.0, 60.0, 0.0));
+}
+
+#[test]
+fn test_torque_from_off_center_force() {
+    // D4: Torque = cross(relative_pos, force)
+    // Force at +X offset should create torque around Z axis
+    let particle_forces = vec![Vec3::new(0.0, 100.0, 0.0)]; // Upward force
+    let particle_relative_positions = vec![Vec3::new(1.0, 0.0, 0.0)]; // At +X offset
+    
+    let (_linear, angular) = aggregate_particle_forces(&particle_forces, &particle_relative_positions);
+    
+    // cross((1,0,0), (0,100,0)) = (0*0-0*100, 0*0-1*0, 1*100-0*0) = (0, 0, 100)
+    assert!((angular.z - 100.0).abs() < 0.001, "Expected Z torque ~100, got {}", angular.z);
+}
+```
 
 ---
 
-## Phase 4: Verify Ground Collision
+## PHASE 4: Integration Test - Single Body Ground Collision
 
-**Outcome:** Ground collision in p24 matches gpu-physics-unity exactly.
+**Outcome:** A single rigid body dropped onto ground bounces and settles.
 
-**Verification:** Drop cube from Y=10, it bounces 2-3 times, settles at Y~0.5 (half cube above ground).
+**Verification:** 
+- `cargo test -p studio_core --lib test_cube_falls_and_settles` PASSES
+- `cargo run --example p24_physics_audit` shows cube bouncing and settling (visual confirmation)
 
 ### Tasks:
-- [ ] All Section A items pass
-- [ ] All Section C items pass
-- [ ] All Section E items pass
-- [ ] All Section F items pass
-- [ ] Visual verification: stable settling, no explosion, no jitter
+
+- [ ] Wire up pure functions into a simulation loop
+- [ ] Create `simulate_single_body(initial_pos, initial_vel, steps, dt) -> Vec<Vec3>` that returns position history
+- [ ] Write integration test that verifies:
+  - Cube starts at Y=10
+  - Cube falls (Y decreases)
+  - Cube bounces (Y increases after hitting ground)
+  - Cube settles (Y stabilizes near 0.5 after N steps)
+- [ ] Update example to use new physics
+- [ ] Remove `#[ignore]` from `test_cube_falls_and_settles`
+
+### Test Example:
+
+```rust
+#[test]
+fn test_cube_falls_and_settles() {
+    let initial_pos = Vec3::new(0.0, 10.0, 0.0);
+    let initial_vel = Vec3::ZERO;
+    let dt = 1.0 / 60.0;
+    let steps = 600; // 10 seconds
+    
+    let positions = simulate_single_body(initial_pos, initial_vel, steps, dt);
+    
+    // Should fall initially
+    assert!(positions[10].y < positions[0].y, "Should fall");
+    
+    // Should hit ground (Y should go near 0.5 at some point)
+    let min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    assert!(min_y < 1.0, "Should hit ground, min_y was {}", min_y);
+    
+    // Should settle near Y=0.5 (half particle diameter above ground)
+    let final_y = positions.last().unwrap().y;
+    assert!((final_y - 0.5).abs() < 0.1, "Should settle near Y=0.5, got {}", final_y);
+    
+    // Should not explode (Y should never go extremely high or negative)
+    let max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    assert!(max_y < 15.0, "Should not explode upward, max_y was {}", max_y);
+    assert!(min_y > -1.0, "Should not go through ground, min_y was {}", min_y);
+}
+```
 
 ---
 
-## Phase 5: Implement Fragment-Fragment Collision
+## PHASE 5: Implement & Test Particle-Particle Collision
 
-**Outcome:** Two fragments collide correctly.
+**Outcome:** Two rigid bodies collide correctly.
 
-**Verification:** Drop two cubes, they bounce off each other and settle.
+**Verification:** `cargo test -p studio_core --lib test_two_cubes_collide` PASSES
 
 ### Tasks:
-- [ ] All Section B items pass
-- [ ] Spatial hash grid works (Section H)
-- [ ] Verify: fragments collide, don't interpenetrate, settle
+
+- [ ] Implement `compute_particle_collision_force` (already in Phase 1)
+- [ ] Create `simulate_two_bodies(...)` 
+- [ ] Write integration test that verifies:
+  - Two cubes start separated
+  - They collide
+  - They separate (don't interpenetrate)
+  - They settle
+- [ ] Remove `#[ignore]` from `test_two_cubes_collide`
 
 ---
 
-## Phase 6: Integrate Terrain Occupancy
+## PHASE 6: Integrate with Terrain Occupancy
 
-**Outcome:** Replace Y=0 ground plane with voxel terrain.
+**Outcome:** Physics works with voxel terrain instead of Y=0 plane.
 
-**Verification:** p22_voxel_fragment works correctly.
+**Verification:** `cargo run --example p22_voxel_fragment` shows fragments landing on terrain correctly.
 
 ### Tasks:
-- [ ] Adapt ground collision to use terrain occupancy
-- [ ] Each terrain contact = virtual stationary particle collision
-- [ ] Verify: fragments land on terrain correctly
+
+- [ ] Replace ground plane collision with terrain occupancy lookup
+- [ ] Each terrain contact generates a force using the same formula
+- [ ] Aggregate terrain contact forces per rigid body
+- [ ] Visual verification in p22
 
 ---
 
@@ -466,13 +750,13 @@ For terrain collision, we need to:
 
 | Phase | Criterion | How to Verify |
 |-------|-----------|---------------|
-| 0 | Test harness runs | `cargo run --example p24_physics_audit` shows falling cube |
-| 1 | Force audit complete | All Section A, B, C items checked |
-| 2 | Integration audit complete | All Section E, F items checked |
-| 3 | Aggregation audit complete | All Section D items checked |
-| 4 | Ground collision works | Cube bounces and settles, no explosion |
-| 5 | Fragment collision works | Two cubes collide correctly |
-| 6 | Terrain integration works | p22 fragments land on voxel terrain correctly |
+| 0 | Scaffolding compiles | `cargo test` compiles, `cargo run --example p24` runs |
+| 1 | Force computation correct | `cargo test` - force tests pass |
+| 2 | Integration correct | `cargo test` - integration tests pass |
+| 3 | Aggregation correct | `cargo test` - aggregation tests pass |
+| 4 | Single body works | `cargo test test_cube_falls_and_settles` passes |
+| 5 | Two bodies work | `cargo test test_two_cubes_collide` passes |
+| 6 | Terrain works | Visual verification in p22 |
 
 ---
 
@@ -483,3 +767,4 @@ For terrain collision, we need to:
 - Skip verification steps
 - Proceed to next phase without current phase verified
 - Make "optimizations" before correctness is proven
+- Write interactive examples as primary verification (TESTS FIRST)
