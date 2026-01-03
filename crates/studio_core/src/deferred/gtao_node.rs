@@ -26,7 +26,7 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
-use super::gtao::{GtaoConfig, ViewGtaoTexture, ViewGtaoEdgesTexture};
+use super::gtao::{GtaoConfig, ViewGtaoEdgesTexture, ViewGtaoTexture};
 use super::gtao_depth_prefilter::ViewDepthMipTextures;
 use crate::debug_screenshot::DebugModes;
 
@@ -176,7 +176,7 @@ impl ViewNode for GtaoPassNode {
         let full_screen_size = camera
             .physical_viewport_size
             .unwrap_or(UVec2::new(1920, 1080));
-        
+
         // GTAO renders at half resolution
         let half_screen_size = UVec2::new(
             (full_screen_size.x / 2).max(1),
@@ -187,23 +187,26 @@ impl ViewNode for GtaoPassNode {
         // For reverse-Z: near maps to depth=1, far maps to depth=0
         // To get linear depth: linear_z = near / ndc_depth
         let proj_cols = projection.to_cols_array_2d();
-        let near = proj_cols[3][2];  // Near plane value from projection matrix
-        
+        let near = proj_cols[3][2]; // Near plane value from projection matrix
+
         // Encoding for shader: linear_z = mul / (add + ndc_depth)
         let depth_linearize_mul = near;
-        let depth_linearize_add = 0.0001;  // Small epsilon to prevent div by zero
+        let depth_linearize_add = 0.0001; // Small epsilon to prevent div by zero
 
         // XeGTAO NDC to view-space constants (XeGTAO.h L177-184)
-        let tan_half_fov_y = 1.0 / proj_cols[1][1];  // 1/proj[1][1]
-        let tan_half_fov_x = 1.0 / proj_cols[0][0];  // 1/proj[0][0]
-        
+        let tan_half_fov_y = 1.0 / proj_cols[1][1]; // 1/proj[1][1]
+        let tan_half_fov_x = 1.0 / proj_cols[0][0]; // 1/proj[0][0]
+
         // NDCToViewMul = { tanHalfFOVX * 2.0, tanHalfFOVY * -2.0 }
         // NDCToViewAdd = { tanHalfFOVX * -1.0, tanHalfFOVY * 1.0 }
         let ndc_to_view_mul = [tan_half_fov_x * 2.0, tan_half_fov_y * -2.0];
         let ndc_to_view_add = [tan_half_fov_x * -1.0, tan_half_fov_y * 1.0];
-        
+
         // XeGTAO.h L184: NDCToViewMul_x_PixelSize = NDCToViewMul * ViewportPixelSize
-        let pixel_size = [1.0 / half_screen_size.x as f32, 1.0 / half_screen_size.y as f32];
+        let pixel_size = [
+            1.0 / half_screen_size.x as f32,
+            1.0 / half_screen_size.y as f32,
+        ];
         let ndc_to_view_mul_x_pixel_size = [
             ndc_to_view_mul[0] * pixel_size[0],
             ndc_to_view_mul[1] * pixel_size[1],
@@ -689,8 +692,8 @@ pub fn init_gtao_noise_texture(
         // Two independent random values in [0, 1] for:
         // R: Slice direction offset (rotates which directions we sample)
         // G: Sample step offset (jitters sample positions along slice)
-        let slice_noise: f32 = rng.gen();   // [0, 1]
-        let sample_noise: f32 = rng.gen();  // [0, 1]
+        let slice_noise: f32 = rng.gen(); // [0, 1]
+        let sample_noise: f32 = rng.gen(); // [0, 1]
 
         // Store as RGBA8: [0,1] -> [0,255]
         noise_data.push((slice_noise * 255.0) as u8);
@@ -737,7 +740,8 @@ pub fn init_gtao_noise_texture(
     );
 
     // Create texture view
-    let view = texture.create_view(&bevy::render::render_resource::TextureViewDescriptor::default());
+    let view =
+        texture.create_view(&bevy::render::render_resource::TextureViewDescriptor::default());
 
     commands.insert_resource(GtaoNoiseTexture { texture, view });
 }

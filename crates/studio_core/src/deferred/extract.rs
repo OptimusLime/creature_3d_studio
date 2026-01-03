@@ -13,9 +13,9 @@ use bevy::render::{
 };
 use bytemuck;
 
-use crate::voxel_mesh::VoxelMaterial;
 use super::gbuffer_geometry::{GBufferGeometryPipeline, GBufferMeshDrawData, GBufferMeshUniform};
 use super::shadow::MoonConfig;
+use crate::voxel_mesh::VoxelMaterial;
 
 /// Marker component for entities that should be rendered through the deferred pipeline.
 ///
@@ -56,7 +56,10 @@ pub fn extract_deferred_meshes(
     meshes_query: Extract<
         Query<
             (RenderEntity, &GlobalTransform, &Mesh3d, &ViewVisibility),
-            (With<DeferredRenderable>, With<MeshMaterial3d<VoxelMaterial>>),
+            (
+                With<DeferredRenderable>,
+                With<MeshMaterial3d<VoxelMaterial>>,
+            ),
         >,
     >,
 ) {
@@ -69,11 +72,13 @@ pub fn extract_deferred_meshes(
         let world_transform = transform.to_matrix();
         let inverse_transpose = world_transform.inverse().transpose();
 
-        commands.entity(render_entity).insert(ExtractedDeferredMesh {
-            mesh: mesh.0.id(),
-            transform: world_transform,
-            inverse_transpose,
-        });
+        commands
+            .entity(render_entity)
+            .insert(ExtractedDeferredMesh {
+                mesh: mesh.0.id(),
+                transform: world_transform,
+                inverse_transpose,
+            });
     }
 }
 
@@ -122,15 +127,11 @@ pub fn prepare_deferred_meshes(
             bind_group: Some(bind_group),
         });
     }
-
 }
 
 /// System to extract MoonConfig from main world to render world.
 ///
 /// This ensures changes to MoonConfig in the main app are reflected in rendering.
-pub fn extract_moon_config(
-    mut commands: Commands,
-    moon_config: Extract<Res<MoonConfig>>,
-) {
+pub fn extract_moon_config(mut commands: Commands, moon_config: Extract<Res<MoonConfig>>) {
     commands.insert_resource(moon_config.clone());
 }

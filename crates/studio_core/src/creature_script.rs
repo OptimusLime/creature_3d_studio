@@ -32,9 +32,8 @@ use std::rc::Rc;
 /// * `Ok(VoxelChunk)` - The chunk populated by the script
 /// * `Err` - If script loading or execution fails
 pub fn load_creature_script(script_path: &str) -> LuaResult<VoxelChunk> {
-    let src = std::fs::read_to_string(script_path).map_err(|e| {
-        mlua::Error::RuntimeError(format!("Failed to read {}: {}", script_path, e))
-    })?;
+    let src = std::fs::read_to_string(script_path)
+        .map_err(|e| mlua::Error::RuntimeError(format!("Failed to read {}: {}", script_path, e)))?;
 
     execute_creature_script(&src)
 }
@@ -65,11 +64,10 @@ pub fn execute_creature_script(script_src: &str) -> LuaResult<VoxelChunk> {
         // Register clear_voxel function
         {
             let chunk_ref = Rc::clone(&chunk);
-            let clear_voxel =
-                lua.create_function(move |_, (x, y, z): (usize, usize, usize)| {
-                    chunk_ref.borrow_mut().clear(x, y, z);
-                    Ok(())
-                })?;
+            let clear_voxel = lua.create_function(move |_, (x, y, z): (usize, usize, usize)| {
+                chunk_ref.borrow_mut().clear(x, y, z);
+                Ok(())
+            })?;
             lua.globals().set("clear_voxel", clear_voxel)?;
         }
 

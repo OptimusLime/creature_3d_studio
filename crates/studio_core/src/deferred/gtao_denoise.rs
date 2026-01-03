@@ -27,7 +27,7 @@ use bevy::render::{
     texture::{CachedTexture, TextureCache},
 };
 
-use super::gtao::{GtaoConfig, ViewGtaoTexture, ViewGtaoEdgesTexture};
+use super::gtao::{GtaoConfig, ViewGtaoEdgesTexture, ViewGtaoTexture};
 use crate::debug_screenshot::DebugModes;
 
 /// GPU uniform for denoise parameters.
@@ -132,14 +132,18 @@ impl ViewNode for GtaoDenoiseNode {
         // Final output is always in denoised_texture.texture (A)
         for pass in 0..num_passes {
             let is_final_pass = pass == num_passes - 1;
-            
+
             // Create uniform buffer for this pass
             let uniform = DenoiseUniform {
                 viewport_size: [half_width as f32, half_height as f32],
                 viewport_pixel_size: [1.0 / half_width as f32, 1.0 / half_height as f32],
                 denoise_blur_beta: gtao_config.denoise_blur_beta(),
                 is_final_pass: if is_final_pass { 1 } else { 0 },
-                debug_mode: if is_final_pass { debug_modes.denoise_debug_mode } else { 0 },
+                debug_mode: if is_final_pass {
+                    debug_modes.denoise_debug_mode
+                } else {
+                    0
+                },
                 padding: 0.0,
             };
 
@@ -154,18 +158,27 @@ impl ViewNode for GtaoDenoiseNode {
 
             // Determine input/output textures based on pass number
             // Pass 0: input=raw GTAO, output=texture A
-            // Pass 1: input=texture A, output=texture B  
+            // Pass 1: input=texture A, output=texture B
             // Pass 2: input=texture B, output=texture A
             // etc. (ping-pong)
             let (input_ao_view, output_view) = if pass == 0 {
                 // First pass: read from raw GTAO
-                (&gtao_texture.texture.default_view, &denoised_texture.texture.default_view)
+                (
+                    &gtao_texture.texture.default_view,
+                    &denoised_texture.texture.default_view,
+                )
             } else if pass % 2 == 1 {
                 // Odd passes: read from A, write to B
-                (&denoised_texture.texture.default_view, &denoised_texture.texture_b.default_view)
+                (
+                    &denoised_texture.texture.default_view,
+                    &denoised_texture.texture_b.default_view,
+                )
             } else {
                 // Even passes (2, 4, ...): read from B, write to A
-                (&denoised_texture.texture_b.default_view, &denoised_texture.texture.default_view)
+                (
+                    &denoised_texture.texture_b.default_view,
+                    &denoised_texture.texture.default_view,
+                )
             };
 
             // Create bind groups
@@ -254,7 +267,9 @@ impl ViewNode for GtaoDenoiseNode {
                 &[
                     BindGroupEntry {
                         binding: 0,
-                        resource: BindingResource::TextureView(&denoised_texture.texture_b.default_view),
+                        resource: BindingResource::TextureView(
+                            &denoised_texture.texture_b.default_view,
+                        ),
                     },
                     BindGroupEntry {
                         binding: 1,

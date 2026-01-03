@@ -13,9 +13,8 @@ use bevy::render::{
     render_asset::RenderAssets,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
-        BindGroup, BindGroupEntry, Buffer, BufferInitDescriptor, BufferUsages,
-        IndexFormat, LoadOp, Operations, PipelineCache,
-        RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
+        BindGroup, BindGroupEntry, Buffer, BufferInitDescriptor, BufferUsages, IndexFormat, LoadOp,
+        Operations, PipelineCache, RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
     },
     renderer::{RenderContext, RenderDevice},
     view::ViewTarget,
@@ -23,8 +22,8 @@ use bevy::render::{
 
 use super::gbuffer_geometry::{GBufferGeometryPipeline, GBufferMeshUniform};
 use super::shadow::{
-    MoonConfig, ShadowPipeline, ShadowViewUniform, 
-    ViewDirectionalShadowTextures, DirectionalShadowUniforms,
+    DirectionalShadowUniforms, MoonConfig, ShadowPipeline, ShadowViewUniform,
+    ViewDirectionalShadowTextures,
 };
 
 /// Per-view uniforms for dual moon shadow system.
@@ -66,22 +65,22 @@ pub fn prepare_shadow_mesh_bind_groups(
     let Some(geometry_pipeline) = geometry_pipeline else {
         return;
     };
-    
+
     let mut bind_groups = Vec::with_capacity(geometry_pipeline.meshes_to_render.len());
-    
+
     // Create bind groups for each mesh
     for mesh_data in &geometry_pipeline.meshes_to_render {
         let mesh_uniform = GBufferMeshUniform {
             world_from_local: mesh_data.transform.to_cols_array_2d(),
             local_from_world: mesh_data.transform.inverse().to_cols_array_2d(),
         };
-        
+
         let mesh_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("shadow_mesh_uniform"),
             contents: bytemuck::bytes_of(&mesh_uniform),
             usage: BufferUsages::UNIFORM,
         });
-        
+
         let bind_group = render_device.create_bind_group(
             Some("shadow_mesh_bind_group"),
             &shadow_pipeline.mesh_layout,
@@ -90,22 +89,22 @@ pub fn prepare_shadow_mesh_bind_groups(
                 resource: mesh_buffer.as_entire_binding(),
             }],
         );
-        
+
         bind_groups.push(bind_group);
     }
-    
+
     // Create fallback bind group for test cube (identity transform)
     let fallback_uniform = GBufferMeshUniform {
         world_from_local: Mat4::IDENTITY.to_cols_array_2d(),
         local_from_world: Mat4::IDENTITY.to_cols_array_2d(),
     };
-    
+
     let fallback_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("shadow_fallback_mesh_uniform"),
         contents: bytemuck::bytes_of(&fallback_uniform),
         usage: BufferUsages::UNIFORM,
     });
-    
+
     let fallback = render_device.create_bind_group(
         Some("shadow_fallback_mesh_bind_group"),
         &shadow_pipeline.mesh_layout,
@@ -114,7 +113,7 @@ pub fn prepare_shadow_mesh_bind_groups(
             resource: fallback_buffer.as_entire_binding(),
         }],
     );
-    
+
     commands.insert_resource(ShadowMeshBindGroups {
         bind_groups,
         fallback: Some(fallback),
@@ -137,7 +136,11 @@ impl ViewNode for Moon1ShadowPassNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (_camera, _target, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (_camera, _target, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<
+            'w,
+            '_,
+            Self::ViewQuery,
+        >,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         render_directional_shadow_pass(
@@ -166,7 +169,11 @@ impl ViewNode for Moon2ShadowPassNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (_camera, _target, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (_camera, _target, shadow_textures, shadow_uniforms): bevy::ecs::query::QueryItem<
+            'w,
+            '_,
+            Self::ViewQuery,
+        >,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         render_directional_shadow_pass(
@@ -195,17 +202,17 @@ fn render_directional_shadow_pass<'w>(
     let Some(pipeline) = pipeline_cache.get_render_pipeline(shadow_pipeline.pipeline_id) else {
         return Ok(());
     };
-    
+
     // Get geometry pipeline for mesh data
     let Some(geometry_pipeline) = world.get_resource::<GBufferGeometryPipeline>() else {
         return Ok(());
     };
-    
+
     // Get pre-built shadow mesh bind groups
     let Some(shadow_bind_groups) = world.get_resource::<ShadowMeshBindGroups>() else {
         return Ok(());
     };
-    
+
     // Begin shadow depth pass
     let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some(pass_label),
@@ -221,43 +228,45 @@ fn render_directional_shadow_pass<'w>(
         timestamp_writes: None,
         occlusion_query_set: None,
     });
-    
+
     render_pass.set_render_pipeline(pipeline);
     render_pass.set_bind_group(0, view_bind_group, &[]);
-    
+
     // Get mesh resources
     let mesh_allocator = world.resource::<MeshAllocator>();
     let render_meshes = world.resource::<RenderAssets<RenderMesh>>();
-    
+
     // Render all extracted meshes
     let mesh_count = geometry_pipeline.meshes_to_render.len();
     let bind_group_count = shadow_bind_groups.bind_groups.len();
-    
+
     if mesh_count > 0 && bind_group_count == mesh_count {
         for (idx, mesh_data) in geometry_pipeline.meshes_to_render.iter().enumerate() {
             let Some(gpu_mesh) = render_meshes.get(mesh_data.mesh_asset_id) else {
                 continue;
             };
-            
-            let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_data.mesh_asset_id) else {
+
+            let Some(vertex_slice) = mesh_allocator.mesh_vertex_slice(&mesh_data.mesh_asset_id)
+            else {
                 continue;
             };
-            
+
             render_pass.set_bind_group(1, &shadow_bind_groups.bind_groups[idx], &[]);
             render_pass.set_vertex_buffer(0, vertex_slice.buffer.slice(..));
-            
+
             match &gpu_mesh.buffer_info {
-                bevy::render::mesh::RenderMeshBufferInfo::Indexed { count, index_format } => {
-                    let Some(index_slice) = mesh_allocator.mesh_index_slice(&mesh_data.mesh_asset_id) else {
+                bevy::render::mesh::RenderMeshBufferInfo::Indexed {
+                    count,
+                    index_format,
+                } => {
+                    let Some(index_slice) =
+                        mesh_allocator.mesh_index_slice(&mesh_data.mesh_asset_id)
+                    else {
                         continue;
                     };
-                    
-                    render_pass.set_index_buffer(
-                        index_slice.buffer.slice(..),
-                        0,
-                        *index_format,
-                    );
-                    
+
+                    render_pass.set_index_buffer(index_slice.buffer.slice(..), 0, *index_format);
+
                     render_pass.draw_indexed(
                         index_slice.range.start..(index_slice.range.start + count),
                         vertex_slice.range.start as i32,
@@ -279,7 +288,7 @@ fn render_directional_shadow_pass<'w>(
         );
         render_pass.draw_indexed(0..geometry_pipeline.index_count, 0, 0..1);
     }
-    
+
     Ok(())
 }
 
@@ -298,17 +307,16 @@ pub fn prepare_directional_shadow_uniforms(
     let Some(shadow_pipeline) = shadow_pipeline else {
         return;
     };
-    
+
     let scene_center = Vec3::ZERO;
-    
+
     // Get lighting debug mode from DebugModes resource (extracted from main world)
-    let lighting_debug_mode = debug_modes
-        .map(|dm| dm.lighting_debug_mode)
-        .unwrap_or(0);
-    
+    let lighting_debug_mode = debug_modes.map(|dm| dm.lighting_debug_mode).unwrap_or(0);
+
     // Create full uniforms for lighting pass (includes debug mode in shadow_softness.z)
-    let uniforms = DirectionalShadowUniforms::from_config(&moon_config, scene_center, lighting_debug_mode);
-    
+    let uniforms =
+        DirectionalShadowUniforms::from_config(&moon_config, scene_center, lighting_debug_mode);
+
     // Create individual view uniforms for each moon's shadow pass
     let moon1_uniform = ShadowViewUniform {
         light_view_proj: uniforms.moon1_view_proj,
@@ -316,7 +324,7 @@ pub fn prepare_directional_shadow_uniforms(
     let moon2_uniform = ShadowViewUniform {
         light_view_proj: uniforms.moon2_view_proj,
     };
-    
+
     for entity in cameras.iter() {
         // Buffer for full uniforms (used by lighting pass)
         let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
@@ -324,21 +332,21 @@ pub fn prepare_directional_shadow_uniforms(
             contents: bytemuck::bytes_of(&uniforms),
             usage: BufferUsages::UNIFORM,
         });
-        
+
         // Buffer for moon 1 shadow pass
         let moon1_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("moon1_shadow_view_uniform"),
             contents: bytemuck::bytes_of(&moon1_uniform),
             usage: BufferUsages::UNIFORM,
         });
-        
+
         // Buffer for moon 2 shadow pass
         let moon2_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("moon2_shadow_view_uniform"),
             contents: bytemuck::bytes_of(&moon2_uniform),
             usage: BufferUsages::UNIFORM,
         });
-        
+
         // Bind groups for shadow passes (use view_layout from shadow pipeline)
         let moon1_bind_group = render_device.create_bind_group(
             Some("moon1_shadow_view_bind_group"),
@@ -348,7 +356,7 @@ pub fn prepare_directional_shadow_uniforms(
                 resource: moon1_buffer.as_entire_binding(),
             }],
         );
-        
+
         let moon2_bind_group = render_device.create_bind_group(
             Some("moon2_shadow_view_bind_group"),
             &shadow_pipeline.view_layout,
@@ -357,7 +365,7 @@ pub fn prepare_directional_shadow_uniforms(
                 resource: moon2_buffer.as_entire_binding(),
             }],
         );
-        
+
         // Bind group for lighting pass (full uniforms) - uses same layout for now
         // TODO: Create dedicated layout for DirectionalShadowUniforms
         let lighting_bind_group = render_device.create_bind_group(
@@ -368,13 +376,15 @@ pub fn prepare_directional_shadow_uniforms(
                 resource: buffer.as_entire_binding(),
             }],
         );
-        
-        commands.entity(entity).insert(ViewDirectionalShadowUniforms {
-            buffer,
-            moon1_bind_group,
-            moon2_bind_group,
-            lighting_bind_group,
-            uniforms,
-        });
+
+        commands
+            .entity(entity)
+            .insert(ViewDirectionalShadowUniforms {
+                buffer,
+                moon1_bind_group,
+                moon2_bind_group,
+                lighting_bind_group,
+                uniforms,
+            });
     }
 }

@@ -5,18 +5,18 @@
 //! - gNormal (Rgba16Float): RGB = world-space normal
 //! - gPosition (Rgba32Float): XYZ = world position, W = linear depth
 
+use bevy::asset::AssetServer;
 use bevy::prelude::*;
 use bevy::render::{
     render_resource::{
-        BindGroupLayout, BindGroupLayoutEntry, BindingType, BufferBindingType,
-        ColorTargetState, ColorWrites, CompareFunction, DepthBiasState, DepthStencilState,
-        FragmentState, FrontFace, MultisampleState, PolygonMode, PrimitiveState,
-        RenderPipelineDescriptor, ShaderStages, SpecializedMeshPipeline, SpecializedMeshPipelineError,
-        StencilState, TextureFormat, VertexState,
+        BindGroupLayout, BindGroupLayoutEntry, BindingType, BufferBindingType, ColorTargetState,
+        ColorWrites, CompareFunction, DepthBiasState, DepthStencilState, FragmentState, FrontFace,
+        MultisampleState, PolygonMode, PrimitiveState, RenderPipelineDescriptor, ShaderStages,
+        SpecializedMeshPipeline, SpecializedMeshPipelineError, StencilState, TextureFormat,
+        VertexState,
     },
     renderer::RenderDevice,
 };
-use bevy::asset::AssetServer;
 use bevy_mesh::{MeshVertexAttribute, MeshVertexBufferLayoutRef, PrimitiveTopology, VertexFormat};
 
 use super::gbuffer::{GBUFFER_COLOR_FORMAT, GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT};
@@ -110,18 +110,20 @@ impl SpecializedMeshPipeline for GBufferPipeline {
     ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
         // Define vertex attributes based on our voxel vertex format
         let mut vertex_attributes = vec![];
-        
+
         // Position (required)
         vertex_attributes.push(Mesh::ATTRIBUTE_POSITION.at_shader_location(0));
-        
+
         // Normal (required for G-buffer)
         vertex_attributes.push(Mesh::ATTRIBUTE_NORMAL.at_shader_location(1));
-        
+
         // Our custom voxel attributes - color and emission
         // These are custom attributes defined in voxel_mesh.rs
-        let voxel_color_attr = MeshVertexAttribute::new("Voxel_Color", 988540918, VertexFormat::Float32x3);
-        let voxel_emission_attr = MeshVertexAttribute::new("Voxel_Emission", 988540919, VertexFormat::Float32);
-        
+        let voxel_color_attr =
+            MeshVertexAttribute::new("Voxel_Color", 988540918, VertexFormat::Float32x3);
+        let voxel_emission_attr =
+            MeshVertexAttribute::new("Voxel_Emission", 988540919, VertexFormat::Float32);
+
         vertex_attributes.push(voxel_color_attr.at_shader_location(2));
         vertex_attributes.push(voxel_emission_attr.at_shader_location(3));
 
@@ -151,10 +153,7 @@ impl SpecializedMeshPipeline for GBufferPipeline {
 
         Ok(RenderPipelineDescriptor {
             label: Some("gbuffer_pipeline".into()),
-            layout: vec![
-                self.view_layout.clone(),
-                self.mesh_layout.clone(),
-            ],
+            layout: vec![self.view_layout.clone(), self.mesh_layout.clone()],
             push_constant_ranges: vec![],
             vertex: VertexState {
                 shader: self.shader.clone(),
@@ -204,7 +203,7 @@ pub fn init_gbuffer_pipeline(
     if existing.is_some() {
         return;
     }
-    
+
     let pipeline = GBufferPipeline::new(&render_device, &asset_server);
     commands.insert_resource(pipeline);
 }

@@ -160,8 +160,8 @@ pub fn spawn_chunk_with_lights_config(
         // mesh_position() returns coordinates relative to mesh center
         // Apply world_offset to get final world position
         let mesh_pos = light.mesh_position();
-        let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2]) 
-            + world_offset 
+        let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2])
+            + world_offset
             + Vec3::new(0.0, config.y_offset, 0.0);
 
         let intensity = config.intensity_multiplier * light.emission;
@@ -234,7 +234,7 @@ pub fn centered_offset() -> Vec3 {
 /// Returns (min_corner, max_corner) in world coordinates.
 pub fn chunk_world_bounds(chunk: &VoxelChunk, world_offset: Vec3) -> Option<(Vec3, Vec3)> {
     let ((min_x, min_y, min_z), (max_x, max_y, max_z)) = chunk.bounds()?;
-    
+
     // Convert chunk coords to mesh-local coords (centered at origin)
     let half = CHUNK_SIZE as f32 / 2.0;
     let min_local = Vec3::new(
@@ -247,7 +247,7 @@ pub fn chunk_world_bounds(chunk: &VoxelChunk, world_offset: Vec3) -> Option<(Vec
         max_y as f32 + 1.0 - half,
         max_z as f32 + 1.0 - half,
     );
-    
+
     // Apply world offset
     Some((min_local + world_offset, max_local + world_offset))
 }
@@ -264,7 +264,7 @@ pub struct CameraFraming {
 }
 
 /// Calculate camera position to frame a bounding box.
-/// 
+///
 /// Arguments:
 /// - `min`: Minimum corner of bounding box
 /// - `max`: Maximum corner of bounding box  
@@ -282,25 +282,25 @@ pub fn compute_camera_framing(
     let center = (min + max) * 0.5;
     let size = max - min;
     let diagonal = size.length();
-    
+
     // Distance needed to fit the diagonal in view (assuming ~45 degree FOV)
     // For a 45 degree FOV, distance = size / (2 * tan(22.5)) ≈ size * 1.2
     let base_distance = diagonal * 1.2 * padding;
-    
+
     // Convert angles to radians
     let angle_rad = angle.to_radians();
     let elevation_rad = elevation.to_radians();
-    
+
     // Calculate camera offset from center
     let horizontal_dist = base_distance * elevation_rad.cos();
     let vertical_dist = base_distance * elevation_rad.sin();
-    
+
     let offset = Vec3::new(
         horizontal_dist * angle_rad.cos(),
         vertical_dist,
         horizontal_dist * angle_rad.sin(),
     );
-    
+
     CameraFraming {
         position: center + offset,
         look_at: center,
@@ -309,7 +309,7 @@ pub fn compute_camera_framing(
 }
 
 /// Spawn a camera framed to view a chunk.
-/// 
+///
 /// Arguments:
 /// - `chunk`: The voxel chunk to frame
 /// - `world_offset`: Transform offset applied to the chunk mesh
@@ -322,18 +322,22 @@ pub fn spawn_framed_camera(
     angle: f32,
     elevation: f32,
 ) -> Option<Entity> {
-    use bevy::core_pipeline::tonemapping::Tonemapping;
     use crate::deferred::DeferredCamera;
-    
+    use bevy::core_pipeline::tonemapping::Tonemapping;
+
     let (min, max) = chunk_world_bounds(chunk, world_offset)?;
     let framing = compute_camera_framing(min, max, angle, elevation, 1.0);
-    
-    Some(commands.spawn((
-        Camera3d::default(),
-        Tonemapping::TonyMcMapface,
-        Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y),
-        DeferredCamera,
-    )).id())
+
+    Some(
+        commands
+            .spawn((
+                Camera3d::default(),
+                Tonemapping::TonyMcMapface,
+                Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y),
+                DeferredCamera,
+            ))
+            .id(),
+    )
 }
 
 /// Extract emissive voxels from a chunk and convert to world-space light positions.
@@ -434,7 +438,13 @@ pub fn spawn_world_with_lights(
     materials: &mut Assets<VoxelMaterial>,
     world: &VoxelWorld,
 ) -> SpawnedWorld {
-    spawn_world_with_lights_config(commands, meshes, materials, world, &WorldSpawnConfig::default())
+    spawn_world_with_lights_config(
+        commands,
+        meshes,
+        materials,
+        world,
+        &WorldSpawnConfig::default(),
+    )
 }
 
 /// Spawn a multi-chunk world with custom configuration.
@@ -445,7 +455,9 @@ pub fn spawn_world_with_lights_config(
     world: &VoxelWorld,
     config: &WorldSpawnConfig,
 ) -> SpawnedWorld {
-    let material = config.shared_material.clone()
+    let material = config
+        .shared_material
+        .clone()
         .unwrap_or_else(|| materials.add(VoxelMaterial::default()));
 
     let mut chunk_entities = Vec::new();
@@ -581,7 +593,7 @@ mod tests {
 
         let lights = extract_world_lights(&chunk, Vec3::new(100.0, 0.0, 0.0), 100);
         assert_eq!(lights.len(), 1);
-        
+
         let (world_pos, _light) = &lights[0];
         // Mesh position for (16,16,16) is (0.5, 0.5, 0.5) after centering
         // Plus world_offset (100, 0, 0)

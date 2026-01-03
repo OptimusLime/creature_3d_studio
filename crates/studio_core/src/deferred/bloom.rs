@@ -12,12 +12,11 @@ use bevy::prelude::*;
 use bevy::render::{
     extract_resource::ExtractResource,
     render_resource::{
-        BindGroupLayout, BindGroupLayoutEntry,
-        BindingType, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
-        FragmentState, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor,
-        Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages, TextureDescriptor,
-        TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-        TextureViewDimension, VertexState,
+        BindGroupLayout, BindGroupLayoutEntry, BindingType, CachedRenderPipelineId,
+        ColorTargetState, ColorWrites, Extent3d, FragmentState, MultisampleState, PipelineCache,
+        PrimitiveState, RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor,
+        ShaderStages, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+        TextureUsages, TextureViewDimension, VertexState,
     },
     renderer::RenderDevice,
     texture::{CachedTexture, TextureCache},
@@ -46,10 +45,10 @@ impl Default for BloomConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            threshold: 0.6,      // Lower threshold to catch colored emissive surfaces
-            intensity: 1.5,      // Moderate bloom - preserves color saturation
-            blend_factor: 0.6,   // Moderate blend for visible glow without washout
-            exposure: 1.2,       // Slightly higher exposure for darker scenes
+            threshold: 0.6,    // Lower threshold to catch colored emissive surfaces
+            intensity: 1.5,    // Moderate bloom - preserves color saturation
+            blend_factor: 0.6, // Moderate blend for visible glow without washout
+            exposure: 1.2,     // Slightly higher exposure for darker scenes
         }
     }
 }
@@ -152,7 +151,11 @@ impl ViewBloomTextures {
             mips_b.push(texture_b);
         }
 
-        Self { mips_a, mips_b, size }
+        Self {
+            mips_a,
+            mips_b,
+            size,
+        }
     }
 }
 
@@ -358,7 +361,6 @@ pub fn init_bloom_pipeline(
         dual_texture_layout,
         sampler,
     });
-
 }
 
 /// Prepare bloom textures for cameras.

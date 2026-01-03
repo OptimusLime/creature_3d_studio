@@ -29,11 +29,11 @@ use bevy::prelude::*;
 use bevy::render::{
     render_resource::{
         BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingType,
-        BufferBindingType, BufferInitDescriptor, BufferUsages,
-        CachedRenderPipelineId, CompareFunction, DepthStencilState, Extent3d,
-        PipelineCache, PrimitiveState, RenderPipelineDescriptor, SamplerBindingType,
-        ShaderStages, StencilState, TextureDescriptor, TextureDimension, TextureFormat,
-        TextureSampleType, TextureUsages, TextureViewDimension, VertexState,
+        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId,
+        CompareFunction, DepthStencilState, Extent3d, PipelineCache, PrimitiveState,
+        RenderPipelineDescriptor, SamplerBindingType, ShaderStages, StencilState,
+        TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+        TextureViewDimension, VertexState,
     },
     renderer::RenderDevice,
     texture::{CachedTexture, TextureCache},
@@ -72,7 +72,7 @@ pub struct ShadowCastingLight {
 }
 
 /// View matrices for rendering all 6 faces of a cube shadow map.
-/// 
+///
 /// Each face has a 90° FOV perspective projection looking outward
 /// from the light position in the corresponding direction.
 #[derive(Clone, Copy, Debug)]
@@ -86,14 +86,14 @@ impl CubeFaceMatrices {
     pub fn new(light_pos: Vec3, near: f32, far: f32) -> Self {
         let proj = Mat4::perspective_rh(
             std::f32::consts::FRAC_PI_2, // 90 degrees FOV
-            1.0,                          // Square aspect ratio
+            1.0,                         // Square aspect ratio
             near,
             far,
         );
-        
+
         // Define look directions and up vectors for each face.
         // Order: +X, -X, +Y, -Y, +Z, -Z
-        // 
+        //
         // For cube shadow maps, each face captures what's visible in that direction from the light.
         // look_to_rh(eye, dir, up) creates a view matrix where camera at eye looks in direction dir.
         let faces: [(Vec3, Vec3); 6] = [
@@ -104,14 +104,14 @@ impl CubeFaceMatrices {
             (Vec3::Z, Vec3::NEG_Y),     // +Z face: look forward, up is down
             (Vec3::NEG_Z, Vec3::NEG_Y), // -Z face: look backward, up is down
         ];
-        
+
         let mut view_proj = [Mat4::IDENTITY; 6];
-        
+
         for (i, (dir, up)) in faces.iter().enumerate() {
             let view = Mat4::look_to_rh(light_pos, *dir, *up);
             view_proj[i] = proj * view;
         }
-        
+
         Self { view_proj }
     }
 }
@@ -127,7 +127,7 @@ pub struct PointShadowUniform {
 }
 
 /// Cube shadow map textures for a single point light.
-/// 
+///
 /// We use separate 2D textures for each face rather than a cube texture
 /// because it's simpler to render to and we're doing our own cube sampling.
 pub struct PointLightShadowMap {
@@ -147,7 +147,7 @@ impl PointLightShadowMap {
             height: POINT_SHADOW_MAP_SIZE,
             depth_or_array_layers: 1,
         };
-        
+
         // Create 6 separate textures for each cube face.
         // IMPORTANT: Use unique descriptors (via unique labels that encode light+face)
         // to prevent texture_cache from returning the same texture for all faces.
@@ -155,7 +155,10 @@ impl PointLightShadowMap {
         let faces = std::array::from_fn(|face_idx| {
             // Create a truly unique label including light index and face index
             // This ensures texture_cache treats each as distinct
-            let label = format!("point_shadow_L{}_F{}_{}", light_index, face_idx, face_names[face_idx]);
+            let label = format!(
+                "point_shadow_L{}_F{}_{}",
+                light_index, face_idx, face_names[face_idx]
+            );
             texture_cache.get(
                 render_device,
                 TextureDescriptor {
@@ -170,7 +173,7 @@ impl PointLightShadowMap {
                 },
             )
         });
-        
+
         Self { faces }
     }
 }
@@ -188,10 +191,10 @@ impl ViewPointShadowTextures {
         let shadow_maps = (0..MAX_SHADOW_CASTING_LIGHTS)
             .map(|i| PointLightShadowMap::new(render_device, texture_cache, i))
             .collect();
-        
+
         Self { shadow_maps }
     }
-    
+
     /// Get the face texture view for a specific light and face.
     pub fn get_face_view(
         &self,
@@ -227,7 +230,7 @@ pub fn init_point_shadow_pipeline(
     if existing.is_some() {
         return;
     }
-    
+
     // View layout: view-projection matrix + light position/far
     let view_layout = render_device.create_bind_group_layout(
         "point_shadow_view_layout",
@@ -242,7 +245,7 @@ pub fn init_point_shadow_pipeline(
             count: None,
         }],
     );
-    
+
     // Mesh layout: model transform
     let mesh_layout = render_device.create_bind_group_layout(
         "point_shadow_mesh_layout",
@@ -257,10 +260,10 @@ pub fn init_point_shadow_pipeline(
             count: None,
         }],
     );
-    
+
     // Load shadow depth shader
     let shader = asset_server.load("shaders/point_shadow_depth.wgsl");
-    
+
     // Create pipeline - outputs linear distance to depth buffer
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("point_shadow_depth_pipeline".into()),
@@ -276,7 +279,7 @@ pub fn init_point_shadow_pipeline(
             topology: wgpu::PrimitiveTopology::TriangleList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,  // Disable culling for shadow pass - we want all faces
+            cull_mode: None, // Disable culling for shadow pass - we want all faces
             unclipped_depth: false,
             polygon_mode: wgpu::PolygonMode::Fill,
             conservative: false,
@@ -287,7 +290,7 @@ pub fn init_point_shadow_pipeline(
             depth_compare: CompareFunction::LessEqual,
             stencil: StencilState::default(),
             bias: wgpu::DepthBiasState {
-                constant: 0,  // No hardware bias - we compute linear depth ourselves
+                constant: 0, // No hardware bias - we compute linear depth ourselves
                 slope_scale: 0.0,
                 clamp: 0.0,
             },
@@ -298,11 +301,11 @@ pub fn init_point_shadow_pipeline(
             shader,
             shader_defs: vec![],
             entry_point: Some("fs_main".into()),
-            targets: vec![],  // No color targets, depth-only
+            targets: vec![], // No color targets, depth-only
         }),
         zero_initialize_workgroup_memory: false,
     });
-    
+
     commands.insert_resource(PointShadowPipeline {
         pipeline_id,
         view_layout,
@@ -321,7 +324,13 @@ pub fn prepare_point_shadow_textures(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
-    cameras: Query<Entity, (With<super::DeferredCamera>, Without<ViewPointShadowTextures>)>,
+    cameras: Query<
+        Entity,
+        (
+            With<super::DeferredCamera>,
+            Without<ViewPointShadowTextures>,
+        ),
+    >,
 ) {
     for entity in cameras.iter() {
         let shadow_textures = ViewPointShadowTextures::new(&render_device, &mut texture_cache);
@@ -330,11 +339,11 @@ pub fn prepare_point_shadow_textures(
 }
 
 /// Select which point light will cast shadows.
-/// 
+///
 /// Priority order:
 /// 1. If any light has `PrimaryShadowCaster` marker, that light casts shadows
 /// 2. Otherwise, the CLOSEST light to the camera casts shadows (Wind Waker style)
-/// 
+///
 /// This approach is simple, efficient, and gives designers explicit control
 /// while still working well for dynamic scenes.
 pub fn prepare_shadow_casting_lights(
@@ -343,31 +352,36 @@ pub fn prepare_shadow_casting_lights(
     cameras: Query<&bevy::render::view::ExtractedView, With<super::DeferredCamera>>,
 ) {
     let mut shadow_lights = ShadowCastingLights::default();
-    
+
     let Some(extracted) = extracted_lights else {
         commands.insert_resource(shadow_lights);
         return;
     };
-    
+
     if extracted.lights.is_empty() {
         commands.insert_resource(shadow_lights);
         return;
     }
-    
+
     // First, check for explicitly marked primary shadow caster
-    let primary_idx = extracted.lights.iter().position(|l| l.is_primary_shadow_caster);
-    
+    let primary_idx = extracted
+        .lights
+        .iter()
+        .position(|l| l.is_primary_shadow_caster);
+
     let shadow_light_idx = if let Some(idx) = primary_idx {
         idx
     } else {
         // Wind Waker approach: find the closest light to the camera
-        let camera_pos = cameras.iter().next()
+        let camera_pos = cameras
+            .iter()
+            .next()
             .map(|view| view.world_from_view.translation())
             .unwrap_or(Vec3::ZERO);
-        
+
         let mut closest_idx = 0;
         let mut closest_dist_sq = f32::MAX;
-        
+
         for (idx, light) in extracted.lights.iter().enumerate() {
             let dist_sq = light.position.distance_squared(camera_pos);
             if dist_sq < closest_dist_sq {
@@ -375,10 +389,10 @@ pub fn prepare_shadow_casting_lights(
                 closest_idx = idx;
             }
         }
-        
+
         closest_idx
     };
-    
+
     // Only this single light casts shadows
     let light = &extracted.lights[shadow_light_idx];
     shadow_lights.lights.push(ShadowCastingLight {
@@ -388,7 +402,7 @@ pub fn prepare_shadow_casting_lights(
         radius: light.radius,
         shadow_index: 0,
     });
-    
+
     commands.insert_resource(shadow_lights);
 }
 
@@ -413,27 +427,36 @@ pub fn prepare_point_shadow_bind_groups(
     geometry_pipeline: Option<Res<super::gbuffer_geometry::GBufferGeometryPipeline>>,
 ) {
     let Some(pipeline) = pipeline else { return };
-    let Some(shadow_lights) = shadow_lights else { return };
-    let Some(geometry_pipeline) = geometry_pipeline else { return };
-    
+    let Some(shadow_lights) = shadow_lights else {
+        return;
+    };
+    let Some(geometry_pipeline) = geometry_pipeline else {
+        return;
+    };
+
     let mut bind_groups = PointShadowBindGroups::default();
-    
+
     // Create view bind groups for each light/face combination
     for light in &shadow_lights.lights {
         let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
-        
+
         for face_idx in 0..6 {
             let uniform = PointShadowUniform {
                 view_proj: matrices.view_proj[face_idx].to_cols_array_2d(),
-                light_pos_far: [light.position.x, light.position.y, light.position.z, light.radius],
+                light_pos_far: [
+                    light.position.x,
+                    light.position.y,
+                    light.position.z,
+                    light.radius,
+                ],
             };
-            
+
             let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
                 label: Some("point_shadow_view_uniform"),
                 contents: bytemuck::bytes_of(&uniform),
                 usage: BufferUsages::UNIFORM,
             });
-            
+
             let bind_group = render_device.create_bind_group(
                 Some("point_shadow_view_bind_group"),
                 &pipeline.view_layout,
@@ -442,24 +465,24 @@ pub fn prepare_point_shadow_bind_groups(
                     resource: buffer.as_entire_binding(),
                 }],
             );
-            
+
             bind_groups.view_bind_groups.push(bind_group);
         }
     }
-    
+
     // Create mesh bind groups (reuse from geometry pipeline data)
     for mesh_data in &geometry_pipeline.meshes_to_render {
         let mesh_uniform = super::gbuffer_geometry::GBufferMeshUniform {
             world_from_local: mesh_data.transform.to_cols_array_2d(),
             local_from_world: mesh_data.transform.inverse().to_cols_array_2d(),
         };
-        
+
         let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("point_shadow_mesh_uniform"),
             contents: bytemuck::bytes_of(&mesh_uniform),
             usage: BufferUsages::UNIFORM,
         });
-        
+
         let bind_group = render_device.create_bind_group(
             Some("point_shadow_mesh_bind_group"),
             &pipeline.mesh_layout,
@@ -468,22 +491,22 @@ pub fn prepare_point_shadow_bind_groups(
                 resource: buffer.as_entire_binding(),
             }],
         );
-        
+
         bind_groups.mesh_bind_groups.push(bind_group);
     }
-    
+
     // Create fallback mesh bind group
     let fallback_uniform = super::gbuffer_geometry::GBufferMeshUniform {
         world_from_local: Mat4::IDENTITY.to_cols_array_2d(),
         local_from_world: Mat4::IDENTITY.to_cols_array_2d(),
     };
-    
+
     let fallback_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("point_shadow_fallback_mesh_uniform"),
         contents: bytemuck::bytes_of(&fallback_uniform),
         usage: BufferUsages::UNIFORM,
     });
-    
+
     let fallback = render_device.create_bind_group(
         Some("point_shadow_fallback_mesh_bind_group"),
         &pipeline.mesh_layout,
@@ -493,7 +516,7 @@ pub fn prepare_point_shadow_bind_groups(
         }],
     );
     bind_groups.fallback_mesh = Some(fallback);
-    
+
     commands.insert_resource(bind_groups);
 }
 

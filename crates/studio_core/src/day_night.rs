@@ -75,7 +75,7 @@ impl MoonCycleConfig {
             period: 1.0,
             phase_offset: 0.0, // Rises at start of cycle
             inclination: 30.0,
-            zenith_color: Vec3::new(0.5, 0.2, 0.9),  // Deep purple
+            zenith_color: Vec3::new(0.5, 0.2, 0.9), // Deep purple
             horizon_color: Vec3::new(0.8, 0.3, 0.5), // Pink-purple near horizon
             zenith_intensity: 0.6,
             horizon_intensity: 0.15,
@@ -86,10 +86,10 @@ impl MoonCycleConfig {
     /// Orange moon preset - faster orbit, warm orange color.
     pub fn orange_moon() -> Self {
         Self {
-            period: 0.8, // Faster than purple moon
+            period: 0.8,       // Faster than purple moon
             phase_offset: 0.5, // Offset by half cycle
             inclination: 15.0,
-            zenith_color: Vec3::new(1.0, 0.5, 0.15),  // Warm orange
+            zenith_color: Vec3::new(1.0, 0.5, 0.15), // Warm orange
             horizon_color: Vec3::new(1.0, 0.3, 0.05), // Deep orange/red near horizon
             zenith_intensity: 0.5,
             horizon_intensity: 0.1,
@@ -156,7 +156,8 @@ impl MoonCycleConfig {
 
         // Interpolate base intensity based on height
         let t = ((height + 1.0) / 2.0).clamp(0.0, 1.0);
-        let base_intensity = self.horizon_intensity + (self.zenith_intensity - self.horizon_intensity) * t;
+        let base_intensity =
+            self.horizon_intensity + (self.zenith_intensity - self.horizon_intensity) * t;
 
         base_intensity * fade
     }
@@ -489,7 +490,6 @@ pub struct DayNightCycle {
     pub color_lut: ColorLutConfig,
 
     // Cached computed values (updated each frame by update system)
-
     /// Current moon 1 direction (FROM scene TO moon, for lighting use -direction).
     pub moon1_direction: Vec3,
     /// Current moon 1 color.
@@ -505,7 +505,6 @@ pub struct DayNightCycle {
     pub moon2_intensity: f32,
 
     // Cached color grading values (sampled from LUT each frame)
-
     /// Current ambient light color.
     pub ambient_color: Vec3,
     /// Current ambient light intensity.
@@ -709,12 +708,14 @@ mod tests {
         assert!(
             (dir_0 - dir_50).length() > 0.1,
             "Direction should change between 0.0 and 0.5: d0={:?}, d50={:?}",
-            dir_0, dir_50
+            dir_0,
+            dir_50
         );
         assert!(
             (dir_25 - dir_75).length() > 0.1,
             "Direction should change between 0.25 and 0.75: d25={:?}, d75={:?}",
-            dir_25, dir_75
+            dir_25,
+            dir_75
         );
     }
 
@@ -756,7 +757,10 @@ mod tests {
         cycle.time = 0.9;
         cycle.update(2.0); // With speed 0.1, this adds 0.2, going to 1.1 -> wraps to 0.1
 
-        assert!(cycle.time >= 0.0 && cycle.time < 1.0, "Time should wrap to [0, 1)");
+        assert!(
+            cycle.time >= 0.0 && cycle.time < 1.0,
+            "Time should wrap to [0, 1)"
+        );
     }
 
     #[test]

@@ -75,7 +75,7 @@ impl ViewNode for BloomNode {
         let mut downsample_data: Vec<(BindGroup, [u32; 4])> = Vec::with_capacity(BLOOM_MIP_LEVELS);
         {
             let device = render_context.render_device();
-            
+
             for i in 0..BLOOM_MIP_LEVELS {
                 let input_view = if i == 0 {
                     source_texture
@@ -129,10 +129,11 @@ impl ViewNode for BloomNode {
         // Upsample reads from mips_a (downsample result) and writes to mips_b (to avoid read-write hazard)
         // For first upsample pass: read mips_a[LAST], blend with mips_a[LAST-1], write to mips_b[LAST-1]
         // For subsequent passes: read mips_b[i+1] (previous upsample result), blend with mips_a[i], write to mips_b[i]
-        let mut upsample_data: Vec<(BindGroup, [u32; 4])> = Vec::with_capacity(BLOOM_MIP_LEVELS - 1);
+        let mut upsample_data: Vec<(BindGroup, [u32; 4])> =
+            Vec::with_capacity(BLOOM_MIP_LEVELS - 1);
         {
             let device = render_context.render_device();
-            
+
             for (pass_idx, i) in (0..BLOOM_MIP_LEVELS - 1).rev().enumerate() {
                 // Input: For first pass, read from mips_a (smallest mip from downsample)
                 //        For subsequent passes, read from mips_b (previous upsample output)
@@ -141,10 +142,10 @@ impl ViewNode for BloomNode {
                 } else {
                     &bloom_textures.mips_b[i + 1].default_view // Previous upsample result
                 };
-                
+
                 // Blend with the original downsampled mip at this level
                 let blend_view = &bloom_textures.mips_a[i].default_view;
-                
+
                 // Output goes to mips_b
                 let output_size = bloom_textures.mips_b[i].texture.size();
 
@@ -183,12 +184,12 @@ impl ViewNode for BloomNode {
         // Final bloom result is in mips_b[0] (the largest mip after upsampling)
         let post_process_write = view_target.post_process_write();
         let bloom_result = &bloom_textures.mips_b[0].default_view;
-        
+
         let composite_bind_group;
         let composite_push_constants;
         {
             let device = render_context.render_device();
-            
+
             composite_bind_group = device.create_bind_group(
                 Some("bloom_composite_bind_group"),
                 &bloom_pipeline.dual_texture_layout,

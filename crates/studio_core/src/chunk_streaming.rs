@@ -263,7 +263,9 @@ impl ChunkManager {
         self.load_queue.clear();
 
         let radius = config.load_radius;
-        let (min_y, max_y) = config.y_range.unwrap_or((camera_chunk.y - radius, camera_chunk.y + radius));
+        let (min_y, max_y) = config
+            .y_range
+            .unwrap_or((camera_chunk.y - radius, camera_chunk.y + radius));
 
         // Find all chunks within load radius that aren't loaded yet
         for dx in -radius..=radius {
@@ -327,7 +329,7 @@ pub struct ChunkMaterialHandle(pub Handle<VoxelMaterial>);
 /// System that handles chunk loading and unloading based on camera position.
 ///
 /// Run this in `Update` to continuously stream chunks.
-/// 
+///
 /// Requires `ChunkMaterialHandle` resource to be inserted with a valid material.
 pub fn chunk_streaming_system(
     mut commands: Commands,
@@ -459,8 +461,14 @@ pub struct ChunkStreamingPlugin;
 impl Plugin for ChunkStreamingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ChunkStreamingConfig>()
-            .add_systems(Update, chunk_streaming_system.run_if(resource_exists::<ChunkManager>))
-            .add_systems(Update, chunk_streaming_debug_system.run_if(resource_exists::<ChunkManager>));
+            .add_systems(
+                Update,
+                chunk_streaming_system.run_if(resource_exists::<ChunkManager>),
+            )
+            .add_systems(
+                Update,
+                chunk_streaming_debug_system.run_if(resource_exists::<ChunkManager>),
+            );
     }
 }
 
@@ -541,15 +549,30 @@ mod tests {
         assert_eq!(world_pos_to_chunk(Vec3::ZERO), ChunkPos::new(0, 0, 0));
 
         // Just inside chunk 0
-        assert_eq!(world_pos_to_chunk(Vec3::new(31.0, 0.0, 0.0)), ChunkPos::new(0, 0, 0));
+        assert_eq!(
+            world_pos_to_chunk(Vec3::new(31.0, 0.0, 0.0)),
+            ChunkPos::new(0, 0, 0)
+        );
 
         // Just inside chunk 1
-        assert_eq!(world_pos_to_chunk(Vec3::new(32.0, 0.0, 0.0)), ChunkPos::new(1, 0, 0));
+        assert_eq!(
+            world_pos_to_chunk(Vec3::new(32.0, 0.0, 0.0)),
+            ChunkPos::new(1, 0, 0)
+        );
 
         // Negative coordinates
-        assert_eq!(world_pos_to_chunk(Vec3::new(-1.0, 0.0, 0.0)), ChunkPos::new(-1, 0, 0));
-        assert_eq!(world_pos_to_chunk(Vec3::new(-32.0, 0.0, 0.0)), ChunkPos::new(-1, 0, 0));
-        assert_eq!(world_pos_to_chunk(Vec3::new(-33.0, 0.0, 0.0)), ChunkPos::new(-2, 0, 0));
+        assert_eq!(
+            world_pos_to_chunk(Vec3::new(-1.0, 0.0, 0.0)),
+            ChunkPos::new(-1, 0, 0)
+        );
+        assert_eq!(
+            world_pos_to_chunk(Vec3::new(-32.0, 0.0, 0.0)),
+            ChunkPos::new(-1, 0, 0)
+        );
+        assert_eq!(
+            world_pos_to_chunk(Vec3::new(-33.0, 0.0, 0.0)),
+            ChunkPos::new(-2, 0, 0)
+        );
     }
 
     #[test]
@@ -587,13 +610,16 @@ mod tests {
         let config = ChunkStreamingConfig::default();
         assert_eq!(config.load_radius, 3);
         assert_eq!(config.unload_radius, 5);
-        assert!(config.unload_radius > config.load_radius, "Hysteresis requires unload > load");
+        assert!(
+            config.unload_radius > config.load_radius,
+            "Hysteresis requires unload > load"
+        );
     }
 
     #[test]
     fn test_load_queue_sorting() {
         let mut world = VoxelWorld::new();
-        
+
         // Create chunks at various positions
         for x in -2..=2 {
             for z in -2..=2 {
@@ -616,7 +642,10 @@ mod tests {
             let first_dist = first.x * first.x + first.z * first.z;
 
             // Last item (nearest) should have smaller distance
-            assert!(last_dist <= first_dist, "Queue should be sorted by distance");
+            assert!(
+                last_dist <= first_dist,
+                "Queue should be sorted by distance"
+            );
         }
     }
 }

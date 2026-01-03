@@ -4,8 +4,8 @@
 //! - Left mouse drag: rotate camera (azimuth and elevation)
 //! - Scroll wheel: zoom in/out
 
-use bevy::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use bevy::prelude::*;
 
 /// Marker component for the orbit camera.
 #[derive(Component)]
@@ -74,7 +74,7 @@ pub fn orbit_camera_system(
             let delta = mouse_motion.delta;
             orbit.azimuth -= delta.x * orbit.sensitivity;
             orbit.elevation += delta.y * orbit.sensitivity;
-            
+
             // Clamp elevation to avoid gimbal lock
             orbit.elevation = orbit.elevation.clamp(-1.4, 1.4); // ~80 degrees
         }

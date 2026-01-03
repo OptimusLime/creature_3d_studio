@@ -30,8 +30,8 @@
 //! }
 //! ```
 
-use bevy::prelude::*;
 use bevy::mesh::Indices;
+use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 use crate::voxel::VoxelWorld;
@@ -121,33 +121,33 @@ pub fn generate_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
     if world.total_voxel_count() == 0 {
         return None;
     }
-    
+
     let mut shapes: Vec<(Vec3, Quat, Collider)> = Vec::new();
-    
+
     // For now, use one cuboid per voxel (simple but correct)
     // TODO: Could optimize by merging adjacent same-color voxels into larger cuboids
     for (chunk_pos, chunk) in world.iter_chunks() {
         let (ox, oy, oz) = chunk_pos.world_origin();
-        
+
         for (lx, ly, lz, _voxel) in chunk.iter() {
             let wx = ox + lx as i32;
             let wy = oy + ly as i32;
             let wz = oz + lz as i32;
-            
+
             // Position at center of voxel
             let pos = Vec3::new(wx as f32 + 0.5, wy as f32 + 0.5, wz as f32 + 0.5);
-            
+
             // Unit cuboid (half-extents = 0.5)
             let cuboid = Collider::cuboid(0.5, 0.5, 0.5);
-            
+
             shapes.push((pos, Quat::IDENTITY, cuboid));
         }
     }
-    
+
     if shapes.is_empty() {
         return None;
     }
-    
+
     Some(Collider::compound(shapes))
 }
 
@@ -162,7 +162,7 @@ pub fn generate_merged_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
     if world.total_voxel_count() == 0 {
         return None;
     }
-    
+
     // Get voxel bounds
     let bounds = world.voxel_bounds()?;
     let min = IVec3::new(
@@ -175,12 +175,12 @@ pub fn generate_merged_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
         bounds.1.y.ceil() as i32,
         bounds.1.z.ceil() as i32,
     );
-    
+
     // Simple greedy merge: find largest AABB that fits
     // For now, just check if it's a solid rectangular region
     let size = max - min;
     let expected_count = (size.x * size.y * size.z) as usize;
-    
+
     if world.total_voxel_count() == expected_count {
         // It's a solid box! Use single cuboid
         let half_extents = Vec3::new(
@@ -193,11 +193,11 @@ pub fn generate_merged_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
             min.y as f32 + half_extents.y,
             min.z as f32 + half_extents.z,
         );
-        
+
         let cuboid = Collider::cuboid(half_extents.x, half_extents.y, half_extents.z);
         return Some(Collider::compound(vec![(center, Quat::IDENTITY, cuboid)]));
     }
-    
+
     // Fall back to per-voxel cuboids
     generate_cuboid_collider(world)
 }
@@ -216,15 +216,15 @@ pub fn generate_merged_cuboid_collider(world: &VoxelWorld) -> Option<Collider> {
 /// A Vec of (collider, world_position) tuples for each non-empty chunk.
 pub fn generate_chunk_colliders(world: &VoxelWorld) -> Vec<(Collider, Vec3)> {
     let chunk_meshes = build_world_meshes_cross_chunk(world);
-    
+
     chunk_meshes
         .into_iter()
         .filter_map(|chunk_mesh| {
             let offset = Vec3::from_array(chunk_mesh.world_offset);
-            
+
             let mut vertices: Vec<Vec3> = Vec::new();
             let mut indices: Vec<[u32; 3]> = Vec::new();
-            
+
             // Extract positions (local to chunk, no offset needed since we return position separately)
             if let Some(positions) = chunk_mesh.mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
                 if let bevy::mesh::VertexAttributeValues::Float32x3(verts) = positions {
@@ -233,7 +233,7 @@ pub fn generate_chunk_colliders(world: &VoxelWorld) -> Vec<(Collider, Vec3)> {
                     }
                 }
             }
-            
+
             // Extract indices
             if let Some(Indices::U32(mesh_indices)) = chunk_mesh.mesh.indices() {
                 for chunk in mesh_indices.chunks(3) {
@@ -242,11 +242,11 @@ pub fn generate_chunk_colliders(world: &VoxelWorld) -> Vec<(Collider, Vec3)> {
                     }
                 }
             }
-            
+
             if vertices.is_empty() || indices.is_empty() {
                 return None;
             }
-            
+
             Collider::trimesh(vertices, indices)
                 .ok()
                 .map(|collider| (collider, offset))
@@ -273,11 +273,14 @@ mod tests {
 
         let collider = generate_trimesh_collider(&world);
         assert!(collider.is_some());
-        
+
         // A single voxel cube has 6 faces = 12 triangles
         // We can verify the collider exists and has the right shape type
         let collider = collider.unwrap();
-        assert!(collider.as_trimesh().is_some(), "Collider should be a trimesh");
+        assert!(
+            collider.as_trimesh().is_some(),
+            "Collider should be a trimesh"
+        );
     }
 
     #[test]
@@ -294,13 +297,17 @@ mod tests {
 
         let collider = generate_trimesh_collider(&world);
         assert!(collider.is_some());
-        
+
         let collider = collider.unwrap();
         let trimesh = collider.as_trimesh().expect("Should be trimesh");
-        
+
         // Greedy meshing should produce 6 quads (one per face of the cube)
         // Each quad = 2 triangles, so 12 triangles total
-        assert_eq!(trimesh.indices().len(), 12, "Expected 12 triangles (6 faces * 2 triangles each)");
+        assert_eq!(
+            trimesh.indices().len(),
+            12,
+            "Expected 12 triangles (6 faces * 2 triangles each)"
+        );
     }
 
     #[test]
@@ -314,10 +321,10 @@ mod tests {
     fn test_generate_chunk_colliders_single_chunk() {
         let mut world = VoxelWorld::new();
         world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
-        
+
         let colliders = generate_chunk_colliders(&world);
         assert_eq!(colliders.len(), 1);
-        
+
         let (collider, _pos) = &colliders[0];
         assert!(collider.as_trimesh().is_some());
     }
@@ -326,9 +333,9 @@ mod tests {
     fn test_generate_chunk_colliders_multiple_chunks() {
         let mut world = VoxelWorld::new();
         // Voxels in two different chunks
-        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));   // Chunk (0,0,0)
+        world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0)); // Chunk (0,0,0)
         world.set_voxel(32, 0, 0, Voxel::solid(0, 255, 0)); // Chunk (1,0,0)
-        
+
         let colliders = generate_chunk_colliders(&world);
         assert_eq!(colliders.len(), 2);
     }
@@ -344,10 +351,11 @@ mod tests {
                 }
             }
         }
-        
+
         if let Some(collider) = generate_trimesh_collider(&fragment) {
             if let Some(trimesh) = collider.as_trimesh() {
-                println!("FRAGMENT 3x3x3 TRIMESH: {} vertices, {} triangles", 
+                println!(
+                    "FRAGMENT 3x3x3 TRIMESH: {} vertices, {} triangles",
                     trimesh.vertices().len(),
                     trimesh.indices().len()
                 );
@@ -360,10 +368,10 @@ mod tests {
     fn test_cuboid_collider_single_voxel() {
         let mut world = VoxelWorld::new();
         world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
-        
+
         let collider = generate_cuboid_collider(&world);
         assert!(collider.is_some());
-        
+
         let collider = collider.unwrap();
         // Should be a compound with 1 cuboid
         assert!(collider.as_compound().is_some());
@@ -382,16 +390,23 @@ mod tests {
                 }
             }
         }
-        
+
         let collider = generate_merged_cuboid_collider(&world);
         assert!(collider.is_some());
-        
+
         let collider = collider.unwrap();
         let compound = collider.as_compound().expect("Should be compound");
-        
+
         // Should merge into single cuboid!
-        assert_eq!(compound.shapes().len(), 1, "Solid box should merge to 1 cuboid");
-        println!("MERGED 3x3x3: {} shapes (should be 1)", compound.shapes().len());
+        assert_eq!(
+            compound.shapes().len(),
+            1,
+            "Solid box should merge to 1 cuboid"
+        );
+        println!(
+            "MERGED 3x3x3: {} shapes (should be 1)",
+            compound.shapes().len()
+        );
     }
 
     #[test]
@@ -407,23 +422,30 @@ mod tests {
                 }
             }
         }
-        
+
         let collider = generate_merged_cuboid_collider(&world);
         assert!(collider.is_some());
-        
+
         let collider = collider.unwrap();
         let compound = collider.as_compound().expect("Should be compound");
-        
+
         // Can't merge due to hole, falls back to per-voxel
-        assert_eq!(compound.shapes().len(), 26, "Box with hole should have 26 cuboids");
-        println!("HOLLOW 3x3x3: {} shapes (should be 26)", compound.shapes().len());
+        assert_eq!(
+            compound.shapes().len(),
+            26,
+            "Box with hole should have 26 cuboids"
+        );
+        println!(
+            "HOLLOW 3x3x3: {} shapes (should be 26)",
+            compound.shapes().len()
+        );
     }
 
     #[test]
     fn test_terrain_triangle_count() {
         // Simulate the terrain from p22_voxel_fragment
         let mut terrain = VoxelWorld::new();
-        
+
         // Ground platform (20x20, 3 blocks thick) - BUT with checkerboard colors!
         // This PREVENTS greedy meshing from merging faces!
         for x in -10..10 {
@@ -438,23 +460,24 @@ mod tests {
                 }
             }
         }
-        
+
         println!("Terrain voxel count: {}", terrain.total_voxel_count());
-        
+
         if let Some(collider) = generate_trimesh_collider(&terrain) {
             if let Some(trimesh) = collider.as_trimesh() {
-                println!("CHECKERBOARD TERRAIN TRIMESH: {} vertices, {} triangles", 
+                println!(
+                    "CHECKERBOARD TERRAIN TRIMESH: {} vertices, {} triangles",
                     trimesh.vertices().len(),
                     trimesh.indices().len()
                 );
-                
+
                 // This is the problem! Checkerboard pattern = NO greedy merge
                 // Each voxel face = 2 triangles
                 // 20x20 top = 400 faces minimum = 800 triangles just for top!
                 // With checkerboard, greedy meshing does almost nothing
             }
         }
-        
+
         // Now test with SAME color - should be WAY fewer triangles
         let mut terrain_uniform = VoxelWorld::new();
         for x in -10..10 {
@@ -464,20 +487,24 @@ mod tests {
                 }
             }
         }
-        
+
         if let Some(collider) = generate_trimesh_collider(&terrain_uniform) {
             if let Some(trimesh) = collider.as_trimesh() {
-                println!("UNIFORM TERRAIN TRIMESH: {} vertices, {} triangles", 
+                println!(
+                    "UNIFORM TERRAIN TRIMESH: {} vertices, {} triangles",
                     trimesh.vertices().len(),
                     trimesh.indices().len()
                 );
             }
         }
-        
+
         // Test cuboid collider for uniform terrain
         if let Some(collider) = generate_cuboid_collider(&terrain_uniform) {
             if let Some(compound) = collider.as_compound() {
-                println!("UNIFORM TERRAIN CUBOIDS: {} shapes", compound.shapes().len());
+                println!(
+                    "UNIFORM TERRAIN CUBOIDS: {} shapes",
+                    compound.shapes().len()
+                );
             }
         }
     }

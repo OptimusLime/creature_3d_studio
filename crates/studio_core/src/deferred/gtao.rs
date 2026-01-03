@@ -11,7 +11,9 @@
 use bevy::prelude::*;
 use bevy::render::{
     extract_resource::ExtractResource,
-    render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages},
+    render_resource::{
+        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    },
     renderer::RenderDevice,
     texture::{CachedTexture, TextureCache},
 };
@@ -298,10 +300,12 @@ pub fn prepare_gtao_textures(
         );
 
         commands.entity(entity).insert((
-            ViewGtaoTexture { texture: gtao_texture },
-            ViewGtaoEdgesTexture { texture: edges_texture },
+            ViewGtaoTexture {
+                texture: gtao_texture,
+            },
+            ViewGtaoEdgesTexture {
+                texture: edges_texture,
+            },
         ));
     }
 }
-
-

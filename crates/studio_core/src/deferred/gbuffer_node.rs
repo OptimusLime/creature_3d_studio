@@ -14,9 +14,8 @@ use bevy::render::{
     render_asset::RenderAssets,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
-        IndexFormat, LoadOp, Operations, PipelineCache,
-        RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-        StoreOp,
+        IndexFormat, LoadOp, Operations, PipelineCache, RenderPassColorAttachment,
+        RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
     },
     renderer::RenderContext,
     view::ViewTarget,
@@ -47,7 +46,11 @@ impl ViewNode for GBufferPassNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, _target, gbuffer, view_uniforms): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (camera, _target, gbuffer, view_uniforms): bevy::ecs::query::QueryItem<
+            'w,
+            '_,
+            Self::ViewQuery,
+        >,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         // Get the geometry pipeline
@@ -56,14 +59,15 @@ impl ViewNode for GBufferPassNode {
             bevy::log::warn!("GBufferPassNode: No GBufferGeometryPipeline resource");
             return Ok(());
         };
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(geometry_pipeline.pipeline_id) else {
+        let Some(pipeline) = pipeline_cache.get_render_pipeline(geometry_pipeline.pipeline_id)
+        else {
             bevy::log::warn!("GBufferPassNode: Pipeline not ready");
             return Ok(());
         };
 
         // Use per-view bind group from the camera entity (extracted from actual camera transform)
         let view_bind_group = &view_uniforms.bind_group;
-        
+
         // Mesh bind group for fallback test cube
         let Some(mesh_bind_group) = &geometry_pipeline.mesh_bind_group else {
             return Ok(());
@@ -170,7 +174,10 @@ impl ViewNode for GBufferPassNode {
 
                 // Draw based on indexed vs non-indexed mesh
                 match &gpu_mesh.buffer_info {
-                    bevy::render::mesh::RenderMeshBufferInfo::Indexed { count, index_format } => {
+                    bevy::render::mesh::RenderMeshBufferInfo::Indexed {
+                        count,
+                        index_format,
+                    } => {
                         let Some(index_slice) =
                             mesh_allocator.mesh_index_slice(&mesh_data.mesh_asset_id)
                         else {

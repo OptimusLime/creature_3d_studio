@@ -57,7 +57,7 @@ pub fn prepare_gbuffer_textures(
 
         if needs_create {
             let textures = ViewGBufferTextures::new(&render_device, &mut texture_cache, size);
-            
+
             commands.entity(entity).insert(textures);
         }
     }
@@ -85,13 +85,15 @@ pub fn prepare_gbuffer_view_uniforms(
         // Get view matrix from extracted view (world_from_view gives us camera transform)
         let world_from_view = view.world_from_view.to_matrix();
         let view_from_world = world_from_view.inverse();
-        
+
         // Get projection matrix
         let clip_from_view = view.clip_from_view;
-        
+
         // Compute combined view-projection
-        let clip_from_world = view.clip_from_world.unwrap_or(clip_from_view * view_from_world);
-        
+        let clip_from_world = view
+            .clip_from_world
+            .unwrap_or(clip_from_view * view_from_world);
+
         // Extract camera world position from the transform
         let camera_position = view.world_from_view.translation();
 
@@ -124,6 +126,8 @@ pub fn prepare_gbuffer_view_uniforms(
             }],
         );
 
-        commands.entity(entity).insert(ViewGBufferUniforms { buffer, bind_group });
+        commands
+            .entity(entity)
+            .insert(ViewGBufferUniforms { buffer, bind_group });
     }
 }

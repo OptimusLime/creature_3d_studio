@@ -225,14 +225,26 @@ impl VoxelChunk {
 
     /// Check if a neighbor at offset (dx, dy, dz) from (x, y, z) is solid.
     /// Returns true if solid, false if empty or out of bounds.
-    pub fn is_neighbor_solid(&self, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
+    pub fn is_neighbor_solid(
+        &self,
+        x: usize,
+        y: usize,
+        z: usize,
+        dx: i32,
+        dy: i32,
+        dz: i32,
+    ) -> bool {
         self.is_solid(x as i32 + dx, y as i32 + dy, z as i32 + dz)
     }
 
     /// Iterate over emissive voxels (voxels with emission > threshold).
     /// Returns (x, y, z, voxel) for each emissive voxel.
-    pub fn iter_emissive(&self, min_emission: u8) -> impl Iterator<Item = (usize, usize, usize, Voxel)> + '_ {
-        self.iter().filter(move |(_, _, _, v)| v.emission >= min_emission)
+    pub fn iter_emissive(
+        &self,
+        min_emission: u8,
+    ) -> impl Iterator<Item = (usize, usize, usize, Voxel)> + '_ {
+        self.iter()
+            .filter(move |(_, _, _, v)| v.emission >= min_emission)
     }
 }
 
@@ -263,15 +275,15 @@ impl EmissiveLight {
 }
 
 /// Extract emissive voxels from a chunk as potential point light sources.
-/// 
+///
 /// This function finds all voxels with emission above the threshold and
 /// groups adjacent emissive voxels into single lights (to avoid many
 /// overlapping lights from a cluster of emissive voxels).
-/// 
+///
 /// # Arguments
 /// * `chunk` - The voxel chunk to scan
 /// * `min_emission` - Minimum emission value to consider (0-255, typically 100+)
-/// 
+///
 /// # Returns
 /// A list of emissive light sources with position, color, and intensity.
 pub fn extract_emissive_lights(chunk: &VoxelChunk, min_emission: u8) -> Vec<EmissiveLight> {
@@ -288,15 +300,15 @@ pub fn extract_emissive_lights(chunk: &VoxelChunk, min_emission: u8) -> Vec<Emis
 }
 
 /// Extract emissive lights and cluster adjacent voxels into single lights.
-/// 
+///
 /// This reduces the number of point lights by merging adjacent emissive voxels
 /// of the same color into a single light at their centroid.
-/// 
+///
 /// # Arguments
 /// * `chunk` - The voxel chunk to scan
 /// * `min_emission` - Minimum emission value (0-255)
 /// * `color_tolerance` - How similar colors must be to cluster (0.0-1.0, typically 0.1)
-/// 
+///
 /// # Returns
 /// Clustered emissive lights.
 pub fn extract_clustered_emissive_lights(
@@ -305,80 +317,84 @@ pub fn extract_clustered_emissive_lights(
     color_tolerance: f32,
 ) -> Vec<EmissiveLight> {
     let emissive: Vec<_> = chunk.iter_emissive(min_emission).collect();
-    
+
     if emissive.is_empty() {
         return Vec::new();
     }
-    
+
     // Track which voxels have been assigned to a cluster
     let mut assigned = vec![false; emissive.len()];
     let mut clusters: Vec<EmissiveLight> = Vec::new();
-    
+
     for i in 0..emissive.len() {
         if assigned[i] {
             continue;
         }
-        
+
         let (x, y, z, base_voxel) = emissive[i];
         let base_color = base_voxel.color_f32();
-        
+
         // Start a new cluster
         let mut cluster_positions: Vec<(usize, usize, usize)> = vec![(x, y, z)];
         let mut cluster_emission = base_voxel.emission_f32();
         assigned[i] = true;
-        
+
         // Find adjacent voxels with similar color
         for j in (i + 1)..emissive.len() {
             if assigned[j] {
                 continue;
             }
-            
+
             let (ox, oy, oz, other_voxel) = emissive[j];
             let other_color = other_voxel.color_f32();
-            
+
             // Check if colors are similar
             let color_diff = (base_color[0] - other_color[0]).abs()
                 + (base_color[1] - other_color[1]).abs()
                 + (base_color[2] - other_color[2]).abs();
-            
+
             if color_diff > color_tolerance * 3.0 {
                 continue;
             }
-            
+
             // Check if adjacent to any voxel in the cluster
             let mut is_adjacent = false;
             for &(cx, cy, cz) in &cluster_positions {
                 let dx = (ox as i32 - cx as i32).abs();
                 let dy = (oy as i32 - cy as i32).abs();
                 let dz = (oz as i32 - cz as i32).abs();
-                
+
                 // Consider adjacent if Manhattan distance <= 2
                 if dx + dy + dz <= 2 {
                     is_adjacent = true;
                     break;
                 }
             }
-            
+
             if is_adjacent {
                 cluster_positions.push((ox, oy, oz));
                 cluster_emission = cluster_emission.max(other_voxel.emission_f32());
                 assigned[j] = true;
             }
         }
-        
+
         // Calculate centroid of cluster
         let count = cluster_positions.len() as f32;
         let centroid_x = cluster_positions.iter().map(|p| p.0).sum::<usize>() as f32 / count;
         let centroid_y = cluster_positions.iter().map(|p| p.1).sum::<usize>() as f32 / count;
         let centroid_z = cluster_positions.iter().map(|p| p.2).sum::<usize>() as f32 / count;
-        
+
         clusters.push(EmissiveLight {
-            position: (centroid_x as usize, centroid_y as usize, centroid_z as usize),
+            position: (
+                centroid_x as usize,
+                centroid_y as usize,
+                centroid_z as usize,
+            ),
             color: base_color,
             emission: cluster_emission,
         });
     }
-    
+
     clusters
 }
 
@@ -765,11 +781,7 @@ impl VoxelWorld {
     /// * `chunk_pos` - Position of the chunk we're extracting borders FOR
     /// * `dx, dy, dz` - Direction to the edge neighbor (-1, 0, or 1). Exactly two must be non-zero.
     fn extract_border_edge(&self, chunk_pos: ChunkPos, dx: i32, dy: i32, dz: i32) -> BorderEdge {
-        let neighbor_pos = ChunkPos::new(
-            chunk_pos.x + dx,
-            chunk_pos.y + dy,
-            chunk_pos.z + dz,
-        );
+        let neighbor_pos = ChunkPos::new(chunk_pos.x + dx, chunk_pos.y + dy, chunk_pos.z + dz);
 
         let Some(neighbor_chunk) = self.get_chunk(neighbor_pos) else {
             return BorderEdge::empty();
@@ -781,9 +793,27 @@ impl VoxelWorld {
         // If dx = -1, we need x = CHUNK_SIZE-1 from neighbor (their +X edge)
         // If dx = +1, we need x = 0 from neighbor (their -X edge)
         // If dx = 0, x varies along the edge
-        let x_fixed = if dx < 0 { Some(CHUNK_SIZE - 1) } else if dx > 0 { Some(0) } else { None };
-        let y_fixed = if dy < 0 { Some(CHUNK_SIZE - 1) } else if dy > 0 { Some(0) } else { None };
-        let z_fixed = if dz < 0 { Some(CHUNK_SIZE - 1) } else if dz > 0 { Some(0) } else { None };
+        let x_fixed = if dx < 0 {
+            Some(CHUNK_SIZE - 1)
+        } else if dx > 0 {
+            Some(0)
+        } else {
+            None
+        };
+        let y_fixed = if dy < 0 {
+            Some(CHUNK_SIZE - 1)
+        } else if dy > 0 {
+            Some(0)
+        } else {
+            None
+        };
+        let z_fixed = if dz < 0 {
+            Some(CHUNK_SIZE - 1)
+        } else if dz > 0 {
+            Some(0)
+        } else {
+            None
+        };
 
         // The varying axis is the one where dx/dy/dz == 0
         for i in 0..CHUNK_SIZE {
@@ -802,11 +832,7 @@ impl VoxelWorld {
     /// * `chunk_pos` - Position of the chunk we're extracting borders FOR
     /// * `dx, dy, dz` - Direction to the corner neighbor (-1 or 1 for each axis)
     fn extract_border_corner(&self, chunk_pos: ChunkPos, dx: i32, dy: i32, dz: i32) -> bool {
-        let neighbor_pos = ChunkPos::new(
-            chunk_pos.x + dx,
-            chunk_pos.y + dy,
-            chunk_pos.z + dz,
-        );
+        let neighbor_pos = ChunkPos::new(chunk_pos.x + dx, chunk_pos.y + dy, chunk_pos.z + dz);
 
         let Some(neighbor_chunk) = self.get_chunk(neighbor_pos) else {
             return false;
@@ -850,118 +876,121 @@ impl VoxelWorld {
     }
 
     /// Extract voxels within an AABB, removing them from self.
-    /// 
+    ///
     /// Returns a new VoxelWorld with coordinates relative to `min` corner.
     /// The AABB is defined as `[min, max)` - inclusive of min, exclusive of max.
-    /// 
+    ///
     /// # Arguments
     /// * `min` - Minimum corner of the AABB (inclusive)
     /// * `max` - Maximum corner of the AABB (exclusive)
-    /// 
+    ///
     /// # Returns
     /// A new VoxelWorld containing the extracted voxels, with coordinates
     /// shifted so that `min` becomes the origin (0, 0, 0).
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
     /// use bevy::prelude::IVec3;
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
-    /// 
+    ///
     /// let fragment = world.split_aabb(IVec3::new(5, 5, 5), IVec3::new(6, 6, 6));
-    /// 
+    ///
     /// assert!(world.get_voxel(5, 5, 5).is_none()); // Removed from original
     /// assert!(fragment.get_voxel(0, 0, 0).is_some()); // At origin in fragment
     /// ```
     pub fn split_aabb(&mut self, min: IVec3, max: IVec3) -> VoxelWorld {
         let mut fragment = VoxelWorld::new();
-        
+
         // Early return if invalid bounds
         if min.x >= max.x || min.y >= max.y || min.z >= max.z {
             return fragment;
         }
-        
+
         // Calculate which chunks might contain voxels in this AABB
         let chunk_min = ChunkPos::from_world(min.x, min.y, min.z);
         let chunk_max = ChunkPos::from_world(max.x - 1, max.y - 1, max.z - 1);
-        
+
         // Iterate through relevant chunks
         for chunk_pos in ChunkPos::iter_range(chunk_min, chunk_max) {
             let Some(chunk) = self.chunks.get(&chunk_pos) else {
                 continue;
             };
-            
+
             let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
-            
+
             // Collect voxels to extract from this chunk
             let mut to_extract: Vec<(i32, i32, i32, Voxel)> = Vec::new();
-            
+
             for (lx, ly, lz, voxel) in chunk.iter() {
                 let wx = chunk_origin_x + lx as i32;
                 let wy = chunk_origin_y + ly as i32;
                 let wz = chunk_origin_z + lz as i32;
-                
+
                 // Check if within AABB (min inclusive, max exclusive)
-                if wx >= min.x && wx < max.x 
-                    && wy >= min.y && wy < max.y 
-                    && wz >= min.z && wz < max.z 
+                if wx >= min.x
+                    && wx < max.x
+                    && wy >= min.y
+                    && wy < max.y
+                    && wz >= min.z
+                    && wz < max.z
                 {
                     to_extract.push((wx, wy, wz, voxel));
                 }
             }
-            
+
             // Move voxels to fragment (with coordinates relative to min)
             for (wx, wy, wz, voxel) in to_extract {
                 // Add to fragment with coordinates relative to min
                 fragment.set_voxel(wx - min.x, wy - min.y, wz - min.z, voxel);
             }
         }
-        
+
         // Remove extracted voxels from self
         for (chunk_pos, chunk) in fragment.iter_chunks() {
             let (frag_origin_x, frag_origin_y, frag_origin_z) = chunk_pos.world_origin();
-            
+
             for (lx, ly, lz, _) in chunk.iter() {
                 // Convert fragment coordinates back to world coordinates
                 let fx = frag_origin_x + lx as i32;
                 let fy = frag_origin_y + ly as i32;
                 let fz = frag_origin_z + lz as i32;
-                
+
                 let wx = fx + min.x;
                 let wy = fy + min.y;
                 let wz = fz + min.z;
-                
+
                 self.clear_voxel(wx, wy, wz);
             }
         }
-        
+
         // Prune empty chunks from self
         self.prune_empty_chunks();
-        
+
         fragment
     }
 
     /// Extract voxels within a sphere, removing them from self.
-    /// 
+    ///
     /// Returns a new VoxelWorld with coordinates relative to the sphere center.
     /// Uses integer distance check: a voxel at position (x,y,z) is included if
     /// `(x - center.x)² + (y - center.y)² + (z - center.z)² <= radius²`.
-    /// 
+    ///
     /// # Arguments
     /// * `center` - Center of the sphere in world coordinates
     /// * `radius` - Radius of the sphere (inclusive)
-    /// 
+    ///
     /// # Returns
     /// A new VoxelWorld containing the extracted voxels, with coordinates
     /// shifted so that `center` becomes the origin (0, 0, 0).
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
     /// use bevy::prelude::IVec3;
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// // Create a 10x10x10 cube
     /// for x in 0..10 {
@@ -971,10 +1000,10 @@ impl VoxelWorld {
     ///         }
     ///     }
     /// }
-    /// 
+    ///
     /// // Extract a sphere of radius 2 centered at (5, 5, 5)
     /// let fragment = world.split_sphere(IVec3::new(5, 5, 5), 2);
-    /// 
+    ///
     /// // Center voxel should be at origin in fragment
     /// assert!(fragment.get_voxel(0, 0, 0).is_some());
     /// // Original should have a hole
@@ -982,137 +1011,141 @@ impl VoxelWorld {
     /// ```
     pub fn split_sphere(&mut self, center: IVec3, radius: i32) -> VoxelWorld {
         let mut fragment = VoxelWorld::new();
-        
+
         if radius < 0 {
             return fragment;
         }
-        
+
         let radius_sq = (radius as i64) * (radius as i64);
-        
+
         // Calculate AABB that bounds the sphere
         let min = IVec3::new(center.x - radius, center.y - radius, center.z - radius);
-        let max = IVec3::new(center.x + radius + 1, center.y + radius + 1, center.z + radius + 1);
-        
+        let max = IVec3::new(
+            center.x + radius + 1,
+            center.y + radius + 1,
+            center.z + radius + 1,
+        );
+
         // Calculate which chunks might contain voxels in this sphere
         let chunk_min = ChunkPos::from_world(min.x, min.y, min.z);
         let chunk_max = ChunkPos::from_world(max.x - 1, max.y - 1, max.z - 1);
-        
+
         // Iterate through relevant chunks
         for chunk_pos in ChunkPos::iter_range(chunk_min, chunk_max) {
             let Some(chunk) = self.chunks.get(&chunk_pos) else {
                 continue;
             };
-            
+
             let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
-            
+
             // Collect voxels to extract from this chunk
             let mut to_extract: Vec<(i32, i32, i32, Voxel)> = Vec::new();
-            
+
             for (lx, ly, lz, voxel) in chunk.iter() {
                 let wx = chunk_origin_x + lx as i32;
                 let wy = chunk_origin_y + ly as i32;
                 let wz = chunk_origin_z + lz as i32;
-                
+
                 // Check if within sphere using squared distance
                 let dx = (wx - center.x) as i64;
                 let dy = (wy - center.y) as i64;
                 let dz = (wz - center.z) as i64;
                 let dist_sq = dx * dx + dy * dy + dz * dz;
-                
+
                 if dist_sq <= radius_sq {
                     to_extract.push((wx, wy, wz, voxel));
                 }
             }
-            
+
             // Move voxels to fragment (with coordinates relative to center)
             for (wx, wy, wz, voxel) in to_extract {
                 fragment.set_voxel(wx - center.x, wy - center.y, wz - center.z, voxel);
             }
         }
-        
+
         // Remove extracted voxels from self
         for (chunk_pos, chunk) in fragment.iter_chunks() {
             let (frag_origin_x, frag_origin_y, frag_origin_z) = chunk_pos.world_origin();
-            
+
             for (lx, ly, lz, _) in chunk.iter() {
                 // Convert fragment coordinates back to world coordinates
                 let fx = frag_origin_x + lx as i32;
                 let fy = frag_origin_y + ly as i32;
                 let fz = frag_origin_z + lz as i32;
-                
+
                 let wx = fx + center.x;
                 let wy = fy + center.y;
                 let wz = fz + center.z;
-                
+
                 self.clear_voxel(wx, wy, wz);
             }
         }
-        
+
         // Prune empty chunks from self
         self.prune_empty_chunks();
-        
+
         fragment
     }
 
     /// Merge another VoxelWorld into self at the given offset.
-    /// 
+    ///
     /// Voxels from `other` are added to `self` with their positions shifted by `offset`.
     /// If a voxel position already exists in self, it will be overwritten.
-    /// 
+    ///
     /// # Arguments
     /// * `other` - The VoxelWorld to merge from
     /// * `offset` - Position offset to apply to other's voxels
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
     /// use bevy::prelude::IVec3;
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// let mut fragment = VoxelWorld::new();
     /// fragment.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
-    /// 
+    ///
     /// world.merge_from(&fragment, IVec3::new(10, 10, 10));
-    /// 
+    ///
     /// assert!(world.get_voxel(10, 10, 10).is_some());
     /// ```
     pub fn merge_from(&mut self, other: &VoxelWorld, offset: IVec3) {
         for (chunk_pos, chunk) in other.iter_chunks() {
             let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
-            
+
             for (lx, ly, lz, voxel) in chunk.iter() {
                 let other_x = chunk_origin_x + lx as i32;
                 let other_y = chunk_origin_y + ly as i32;
                 let other_z = chunk_origin_z + lz as i32;
-                
+
                 // Apply offset to get position in self
                 let world_x = other_x + offset.x;
                 let world_y = other_y + offset.y;
                 let world_z = other_z + offset.z;
-                
+
                 self.set_voxel(world_x, world_y, world_z, voxel);
             }
         }
     }
 
     /// Shift all voxels by the given offset.
-    /// 
+    ///
     /// This is useful for recentering a VoxelWorld after extraction,
     /// e.g., to place the centroid at the origin.
-    /// 
+    ///
     /// # Arguments
     /// * `offset` - The offset to apply to all voxel positions
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
     /// use bevy::prelude::IVec3;
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
-    /// 
+    ///
     /// world.translate(IVec3::new(10, 20, 30));
-    /// 
+    ///
     /// assert!(world.get_voxel(0, 0, 0).is_none());
     /// assert!(world.get_voxel(10, 20, 30).is_some());
     /// ```
@@ -1120,7 +1153,7 @@ impl VoxelWorld {
         if offset == IVec3::ZERO {
             return;
         }
-        
+
         // Collect all voxels with their current positions
         let voxels: Vec<(i32, i32, i32, Voxel)> = self
             .iter_chunks()
@@ -1131,10 +1164,10 @@ impl VoxelWorld {
                 })
             })
             .collect();
-        
+
         // Clear all chunks
         self.chunks.clear();
-        
+
         // Re-insert at new positions
         for (x, y, z, voxel) in voxels {
             self.set_voxel(x + offset.x, y + offset.y, z + offset.z, voxel);
@@ -1142,21 +1175,21 @@ impl VoxelWorld {
     }
 
     /// Get the centroid (center of mass) of all voxels.
-    /// 
+    ///
     /// Returns the average position of all voxels, with 0.5 added to each
     /// component to represent the center of each voxel cube (not its corner).
-    /// 
+    ///
     /// # Returns
     /// The centroid position in world coordinates, or None if the world is empty.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
     /// world.set_voxel(2, 0, 0, Voxel::solid(255, 0, 0));
-    /// 
+    ///
     /// let centroid = world.centroid().unwrap();
     /// // Average of (0.5, 0.5, 0.5) and (2.5, 0.5, 0.5) = (1.5, 0.5, 0.5)
     /// assert!((centroid.x - 1.5).abs() < 0.01);
@@ -1166,10 +1199,10 @@ impl VoxelWorld {
         let mut sum_y: i64 = 0;
         let mut sum_z: i64 = 0;
         let mut count: u64 = 0;
-        
+
         for (chunk_pos, chunk) in self.iter_chunks() {
             let (ox, oy, oz) = chunk_pos.world_origin();
-            
+
             for (lx, ly, lz, _) in chunk.iter() {
                 sum_x += (ox + lx as i32) as i64;
                 sum_y += (oy + ly as i32) as i64;
@@ -1177,11 +1210,11 @@ impl VoxelWorld {
                 count += 1;
             }
         }
-        
+
         if count == 0 {
             return None;
         }
-        
+
         // Return centroid at center of voxels (add 0.5)
         Some(Vec3::new(
             (sum_x as f64 / count as f64 + 0.5) as f32,
@@ -1191,67 +1224,67 @@ impl VoxelWorld {
     }
 
     /// Check if merging would cause any voxel collisions.
-    /// 
+    ///
     /// Returns a list of world positions where both `self` and `other` (after offset)
     /// have voxels. Useful for previewing merge operations or detecting if a fragment
     /// can be placed without overwriting existing voxels.
-    /// 
+    ///
     /// # Arguments
     /// * `other` - The VoxelWorld to check for collisions with
     /// * `offset` - Position offset to apply to other's voxels
-    /// 
+    ///
     /// # Returns
     /// A Vec of world positions where collisions would occur.
     /// Empty vec means no collisions.
-    /// 
+    ///
     /// # Example
     /// ```
     /// use studio_core::voxel::{VoxelWorld, Voxel};
     /// use bevy::prelude::IVec3;
-    /// 
+    ///
     /// let mut world = VoxelWorld::new();
     /// world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
-    /// 
+    ///
     /// let mut other = VoxelWorld::new();
     /// other.set_voxel(0, 0, 0, Voxel::solid(0, 255, 0));
-    /// 
+    ///
     /// // No collision at offset (10, 0, 0)
     /// assert!(world.check_merge_collisions(&other, IVec3::new(10, 0, 0)).is_empty());
-    /// 
+    ///
     /// // Collision at offset (5, 5, 5)
     /// assert_eq!(world.check_merge_collisions(&other, IVec3::new(5, 5, 5)).len(), 1);
     /// ```
     pub fn check_merge_collisions(&self, other: &VoxelWorld, offset: IVec3) -> Vec<IVec3> {
         let mut collisions = Vec::new();
-        
+
         for (chunk_pos, chunk) in other.iter_chunks() {
             let (chunk_origin_x, chunk_origin_y, chunk_origin_z) = chunk_pos.world_origin();
-            
+
             for (lx, ly, lz, _) in chunk.iter() {
                 let other_x = chunk_origin_x + lx as i32;
                 let other_y = chunk_origin_y + ly as i32;
                 let other_z = chunk_origin_z + lz as i32;
-                
+
                 // Apply offset to get position in self
                 let world_x = other_x + offset.x;
                 let world_y = other_y + offset.y;
                 let world_z = other_z + offset.z;
-                
+
                 // Check if self has a voxel at this position
                 if self.get_voxel(world_x, world_y, world_z).is_some() {
                     collisions.push(IVec3::new(world_x, world_y, world_z));
                 }
             }
         }
-        
+
         collisions
     }
 
     /// Get the actual voxel bounding box in world coordinates.
-    /// 
+    ///
     /// Unlike `chunk_bounds()` which returns chunk-level bounds,
     /// this iterates through all voxels to find the exact min/max positions.
-    /// 
+    ///
     /// Returns `(min_corner, max_corner)` in world coordinates, or None if empty.
     pub fn voxel_bounds(&self) -> Option<(Vec3, Vec3)> {
         let mut min_x = i32::MAX;
@@ -1480,7 +1513,15 @@ impl ChunkBorders {
     ///
     /// # Returns
     /// True if the neighbor position in the adjacent chunk is solid.
-    pub fn is_neighbor_solid(&self, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
+    pub fn is_neighbor_solid(
+        &self,
+        x: usize,
+        y: usize,
+        z: usize,
+        dx: i32,
+        dy: i32,
+        dz: i32,
+    ) -> bool {
         // Calculate target position
         let nx = x as i32 + dx;
         let ny = y as i32 + dy;
@@ -1504,26 +1545,26 @@ impl ChunkBorders {
         // If crossing negative boundary, wrap to CHUNK_SIZE-1
         // If crossing positive boundary, wrap to 0
         // If not crossing, use the target position as-is
-        let target_x = if cross_neg_x { 
-            (CHUNK_SIZE as i32 + nx) as usize 
-        } else if cross_pos_x { 
-            (nx - CHUNK_SIZE as i32) as usize 
-        } else { 
-            nx as usize 
+        let target_x = if cross_neg_x {
+            (CHUNK_SIZE as i32 + nx) as usize
+        } else if cross_pos_x {
+            (nx - CHUNK_SIZE as i32) as usize
+        } else {
+            nx as usize
         };
-        let target_y = if cross_neg_y { 
-            (CHUNK_SIZE as i32 + ny) as usize 
-        } else if cross_pos_y { 
-            (ny - CHUNK_SIZE as i32) as usize 
-        } else { 
-            ny as usize 
+        let target_y = if cross_neg_y {
+            (CHUNK_SIZE as i32 + ny) as usize
+        } else if cross_pos_y {
+            (ny - CHUNK_SIZE as i32) as usize
+        } else {
+            ny as usize
         };
-        let target_z = if cross_neg_z { 
-            (CHUNK_SIZE as i32 + nz) as usize 
-        } else if cross_pos_z { 
-            (nz - CHUNK_SIZE as i32) as usize 
-        } else { 
-            nz as usize 
+        let target_z = if cross_neg_z {
+            (CHUNK_SIZE as i32 + nz) as usize
+        } else if cross_pos_z {
+            (nz - CHUNK_SIZE as i32) as usize
+        } else {
+            nz as usize
         };
 
         match num_crossings {
@@ -2060,7 +2101,10 @@ mod tests {
         // Target position: (32, 4, 32) which is in chunk (1,0,1) at local (0, 4, 0)
         // This is ABOVE the floor, so should be air (false)
         let result = borders.is_neighbor_solid(31, 3, 31, 1, 1, 1);
-        assert!(!result, "Position above diagonal floor should be air, got solid");
+        assert!(
+            !result,
+            "Position above diagonal floor should be air, got solid"
+        );
 
         // From position (31, 3, 31), check diagonal offset (1, 0, 1)
         // Target position: (32, 3, 32) which is in chunk (1,0,1) at local (0, 3, 0)
@@ -2124,7 +2168,10 @@ mod tests {
         // Test is_neighbor_solid for the AO case
         // From voxel at (31, 3, 27), offset (1, 1, 0) should return false (air above)
         let result = borders.is_neighbor_solid(31, 3, 27, 1, 1, 0);
-        assert!(!result, "AO check (1,1,0) from floor voxel should find air above");
+        assert!(
+            !result,
+            "AO check (1,1,0) from floor voxel should find air above"
+        );
     }
 
     // ========================================================================
@@ -2134,7 +2181,7 @@ mod tests {
     #[test]
     fn test_split_aabb_basic() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         // Create 4x4x4 cube at origin
         for x in 0..4 {
@@ -2162,7 +2209,7 @@ mod tests {
     #[test]
     fn test_split_aabb_empty_region() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(10, 10, 10, Voxel::solid(255, 0, 0));
 
@@ -2176,7 +2223,7 @@ mod tests {
     #[test]
     fn test_split_aabb_negative_coordinates() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         // Voxels spanning negative to positive
         for x in -2..2 {
@@ -2200,7 +2247,7 @@ mod tests {
     #[test]
     fn test_split_aabb_preserves_voxel_data() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(5, 5, 5, Voxel::new(100, 150, 200, 128));
 
@@ -2214,7 +2261,7 @@ mod tests {
     #[test]
     fn test_split_aabb_cross_chunk_boundary() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         // Voxels spanning chunk boundary (chunk size = 32)
         for x in 30..34 {
@@ -2235,7 +2282,7 @@ mod tests {
     #[test]
     fn test_split_sphere_basic() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         // Create solid 10x10x10 cube centered at (5,5,5)
         for x in 0..10 {
@@ -2251,20 +2298,34 @@ mod tests {
 
         // Sphere of radius 2: approximately 33 voxels (4/3 * pi * 2^3 ~ 33)
         // Exact count depends on discrete sampling
-        assert!(fragment.total_voxel_count() > 20, "Expected >20 voxels, got {}", fragment.total_voxel_count());
-        assert!(fragment.total_voxel_count() < 50, "Expected <50 voxels, got {}", fragment.total_voxel_count());
+        assert!(
+            fragment.total_voxel_count() > 20,
+            "Expected >20 voxels, got {}",
+            fragment.total_voxel_count()
+        );
+        assert!(
+            fragment.total_voxel_count() < 50,
+            "Expected <50 voxels, got {}",
+            fragment.total_voxel_count()
+        );
 
         // Center voxel should be at (0,0,0) in fragment (relative to center)
-        assert!(fragment.get_voxel(0, 0, 0).is_some(), "Center voxel should exist at origin");
+        assert!(
+            fragment.get_voxel(0, 0, 0).is_some(),
+            "Center voxel should exist at origin"
+        );
 
         // Original should have hole
-        assert!(world.get_voxel(5, 5, 5).is_none(), "Original should have hole at center");
+        assert!(
+            world.get_voxel(5, 5, 5).is_none(),
+            "Original should have hole at center"
+        );
     }
 
     #[test]
     fn test_split_sphere_at_edge() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         // Floor at y=0
         for x in 0..20 {
@@ -2280,8 +2341,16 @@ mod tests {
         // A sphere of radius 3 has ~113 voxels (4/3 * pi * 3^3)
         // We only have 1 layer (y=0), so we get a circular slice
         // Circle of radius 3: pi * 3^2 ~ 28 voxels
-        assert!(fragment.total_voxel_count() > 10, "Expected >10 voxels, got {}", fragment.total_voxel_count());
-        assert!(fragment.total_voxel_count() < 40, "Expected <40 voxels, got {}", fragment.total_voxel_count());
+        assert!(
+            fragment.total_voxel_count() > 10,
+            "Expected >10 voxels, got {}",
+            fragment.total_voxel_count()
+        );
+        assert!(
+            fragment.total_voxel_count() < 40,
+            "Expected <40 voxels, got {}",
+            fragment.total_voxel_count()
+        );
     }
 
     // ========================================================================
@@ -2291,7 +2360,7 @@ mod tests {
     #[test]
     fn test_merge_from_empty_into_empty() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         let other = VoxelWorld::new();
 
@@ -2303,7 +2372,7 @@ mod tests {
     #[test]
     fn test_merge_from_basic() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         let mut other = VoxelWorld::new();
 
@@ -2320,7 +2389,7 @@ mod tests {
     #[test]
     fn test_merge_from_overwrites() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0)); // Red
 
@@ -2336,7 +2405,7 @@ mod tests {
     #[test]
     fn test_merge_from_negative_offset() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         let mut other = VoxelWorld::new();
 
@@ -2350,7 +2419,7 @@ mod tests {
     #[test]
     fn test_split_then_merge_roundtrip() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         for x in 0..4 {
             for y in 0..4 {
@@ -2378,7 +2447,7 @@ mod tests {
     #[test]
     fn test_translate_basic() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
         world.set_voxel(1, 0, 0, Voxel::solid(0, 255, 0));
@@ -2430,7 +2499,7 @@ mod tests {
     #[test]
     fn test_check_merge_collisions_none() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
 
@@ -2445,7 +2514,7 @@ mod tests {
     #[test]
     fn test_check_merge_collisions_overlap() {
         use bevy::prelude::IVec3;
-        
+
         let mut world = VoxelWorld::new();
         world.set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
 

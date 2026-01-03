@@ -19,17 +19,16 @@
 use bevy::prelude::*;
 use bevy::render::{
     render_resource::{
-        BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry,
-        BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferInitDescriptor,
-        BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction,
-        DepthStencilState, FragmentState, MultisampleState, PipelineCache, PrimitiveState,
-        RenderPipelineDescriptor, ShaderStages, StencilState, TextureFormat,
-        VertexState,
+        BindGroup, BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingType, Buffer,
+        BufferBindingType, BufferDescriptor, BufferInitDescriptor, BufferUsages,
+        CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction, DepthStencilState,
+        FragmentState, MultisampleState, PipelineCache, PrimitiveState, RenderPipelineDescriptor,
+        ShaderStages, StencilState, TextureFormat, VertexState,
     },
     renderer::{RenderDevice, RenderQueue},
 };
-use bytemuck::{Pod, Zeroable};
 use bevy_mesh::{VertexBufferLayout, VertexFormat};
+use bytemuck::{Pod, Zeroable};
 use wgpu::{VertexAttribute, VertexStepMode};
 
 use super::gbuffer::{GBUFFER_COLOR_FORMAT, GBUFFER_NORMAL_FORMAT, GBUFFER_POSITION_FORMAT};
@@ -186,7 +185,7 @@ fn generate_test_cube() -> (Vec<GBufferVertex>, Vec<u32>) {
 
     // Cube from -1 to +1 in all axes (2x2x2 cube)
     let size = 1.0f32;
-    
+
     // Define colors for each face (for debugging)
     let colors: [[f32; 3]; 6] = [
         [1.0, 0.3, 0.3], // +X: red-ish
@@ -196,53 +195,71 @@ fn generate_test_cube() -> (Vec<GBufferVertex>, Vec<u32>) {
         [1.0, 0.3, 1.0], // +Z: magenta-ish
         [0.3, 1.0, 1.0], // -Z: cyan-ish
     ];
-    
+
     let emission = 0.3; // Some emission for all faces
 
     // Face definitions: normal, then 4 corners
     let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
         // +X
-        ([1.0, 0.0, 0.0], [
-            [size, -size, -size],
-            [size, size, -size],
-            [size, size, size],
-            [size, -size, size],
-        ]),
+        (
+            [1.0, 0.0, 0.0],
+            [
+                [size, -size, -size],
+                [size, size, -size],
+                [size, size, size],
+                [size, -size, size],
+            ],
+        ),
         // -X
-        ([-1.0, 0.0, 0.0], [
-            [-size, -size, size],
-            [-size, size, size],
-            [-size, size, -size],
-            [-size, -size, -size],
-        ]),
+        (
+            [-1.0, 0.0, 0.0],
+            [
+                [-size, -size, size],
+                [-size, size, size],
+                [-size, size, -size],
+                [-size, -size, -size],
+            ],
+        ),
         // +Y
-        ([0.0, 1.0, 0.0], [
-            [-size, size, -size],
-            [-size, size, size],
-            [size, size, size],
-            [size, size, -size],
-        ]),
+        (
+            [0.0, 1.0, 0.0],
+            [
+                [-size, size, -size],
+                [-size, size, size],
+                [size, size, size],
+                [size, size, -size],
+            ],
+        ),
         // -Y
-        ([0.0, -1.0, 0.0], [
-            [-size, -size, size],
-            [-size, -size, -size],
-            [size, -size, -size],
-            [size, -size, size],
-        ]),
+        (
+            [0.0, -1.0, 0.0],
+            [
+                [-size, -size, size],
+                [-size, -size, -size],
+                [size, -size, -size],
+                [size, -size, size],
+            ],
+        ),
         // +Z
-        ([0.0, 0.0, 1.0], [
-            [-size, -size, size],
-            [size, -size, size],
-            [size, size, size],
-            [-size, size, size],
-        ]),
+        (
+            [0.0, 0.0, 1.0],
+            [
+                [-size, -size, size],
+                [size, -size, size],
+                [size, size, size],
+                [-size, size, size],
+            ],
+        ),
         // -Z
-        ([0.0, 0.0, -1.0], [
-            [size, -size, -size],
-            [-size, -size, -size],
-            [-size, size, -size],
-            [size, size, -size],
-        ]),
+        (
+            [0.0, 0.0, -1.0],
+            [
+                [size, -size, -size],
+                [-size, -size, -size],
+                [-size, size, -size],
+                [size, size, -size],
+            ],
+        ),
     ];
 
     for (face_idx, (normal, corners)) in faces.iter().enumerate() {
@@ -415,7 +432,6 @@ pub fn init_gbuffer_geometry_pipeline(
         index_count,
         meshes_to_render: Vec::new(),
     });
-
 }
 
 /// System to update mesh bind group for fallback test cube.
@@ -434,7 +450,7 @@ pub fn update_gbuffer_mesh_bind_group(
         world_from_local: Mat4::IDENTITY.to_cols_array_2d(),
         local_from_world: Mat4::IDENTITY.to_cols_array_2d(),
     };
-    
+
     render_queue.write_buffer(
         &pipeline.mesh_uniform_buffer,
         0,

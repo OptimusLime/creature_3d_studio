@@ -236,6 +236,27 @@ cargo run --example p22_voxel_fragment
 
 ---
 
+### Phase 2a: PHYSICS AUDIT (BLOCKING - URGENT)
+
+**Status:** Physics is broken. Fragments explode on contact.
+
+**Action:** We are doing a line-by-line audit of gpu-physics-unity and rebuilding physics from scratch.
+
+**See:** `docs/PHYSICS_AUDIT_PLAN.md` for the detailed incremental plan.
+
+**Summary of audit phases:**
+1. Phase 0: Create isolated test harness (p24_physics_audit.rs) with flat ground
+2. Phase 1: Audit force computation (spring, damping, tangential, ground)
+3. Phase 2: Audit integration (velocity, position, rotation)
+4. Phase 3: Audit force aggregation (particles → rigid body)
+5. Phase 4: Implement faithful ground collision
+6. Phase 5: Implement faithful fragment-fragment collision
+7. Phase 6: Integrate terrain occupancy
+
+**No further work on Phase 2/3/4 until the audit is complete and physics are stable.**
+
+---
+
 ### Phase 2: Fragment-to-Fragment Physics Response
 
 **Outcome:** Fragments bounce off each other, not just terrain. Uses spring-damper model from gpu-physics-unity.

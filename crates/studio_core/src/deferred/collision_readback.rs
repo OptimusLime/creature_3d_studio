@@ -21,17 +21,17 @@ impl GpuCollisionContacts {
     pub fn get(&self) -> GpuCollisionResult {
         self.inner.lock().unwrap().clone()
     }
-    
+
     /// Set new collision results (called from render world).
     pub fn set(&self, result: GpuCollisionResult) {
         *self.inner.lock().unwrap() = result;
     }
-    
+
     /// Check if there are any contacts.
     pub fn has_contacts(&self) -> bool {
         !self.inner.lock().unwrap().contacts.is_empty()
     }
-    
+
     /// Get contacts for a specific fragment index.
     pub fn contacts_for_fragment(&self, fragment_index: u32) -> Vec<GpuContact> {
         self.inner
@@ -53,10 +53,10 @@ impl Plugin for GpuCollisionReadbackPlugin {
     fn build(&self, app: &mut App) {
         // Create the shared contacts resource
         let contacts = GpuCollisionContacts::default();
-        
+
         // Add to main world
         app.insert_resource(contacts.clone());
-        
+
         // Add to render world
         if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
             render_app.insert_resource(contacts);

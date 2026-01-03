@@ -49,10 +49,7 @@ impl ScreenshotRequest {
 /// System that processes screenshot requests.
 ///
 /// Add this to your app's Update schedule to enable screenshot requests.
-pub fn process_screenshot_requests(
-    mut commands: Commands,
-    mut request: ResMut<ScreenshotRequest>,
-) {
+pub fn process_screenshot_requests(mut commands: Commands, mut request: ResMut<ScreenshotRequest>) {
     if request.pending {
         if let Some(path) = request.path.take() {
             capture_screenshot(&mut commands, path);

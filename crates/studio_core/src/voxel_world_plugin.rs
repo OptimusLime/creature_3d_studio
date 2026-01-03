@@ -46,6 +46,7 @@ use bevy::render::view::Hdr;
 use bevy::window::WindowPlugin;
 use std::path::Path;
 
+use crate::creature_script::load_creature_script;
 use crate::day_night::{DayNightCycle, DayNightCyclePlugin};
 use crate::deferred::{DeferredCamera, DeferredRenderingPlugin, MoonConfig};
 use crate::scene_utils::{spawn_world_with_lights_config, CameraPreset, WorldSpawnConfig};
@@ -53,7 +54,6 @@ use crate::screenshot_sequence::{ScreenshotSequence, ScreenshotSequencePlugin};
 use crate::voxel::VoxelWorld;
 use crate::voxel_mesh::VoxelMaterialPlugin;
 use crate::world_io::load_world;
-use crate::creature_script::load_creature_script;
 
 /// Source of voxel world data.
 pub enum WorldSource {
@@ -96,7 +96,11 @@ pub enum CameraConfig {
     /// - `angle`: Horizontal angle in degrees (0 = +X, 90 = +Z)
     /// - `elevation`: Vertical angle above horizon in degrees
     /// - `zoom`: Zoom multiplier (1.0 = tight fit, <1.0 = zoomed in, >1.0 = zoomed out)
-    AutoFrame { angle: f32, elevation: f32, zoom: f32 },
+    AutoFrame {
+        angle: f32,
+        elevation: f32,
+        zoom: f32,
+    },
     /// Use a camera preset
     Preset(CameraPreset),
     /// Custom position and target
@@ -145,7 +149,9 @@ impl ScreenshotConfig {
     }
 }
 
-use crate::debug_screenshot::{DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState};
+use crate::debug_screenshot::{
+    DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState,
+};
 
 /// Configuration for the VoxelWorldApp.
 #[derive(Default)]
@@ -282,10 +288,8 @@ impl VoxelWorldApp {
         capture_frame: u32,
         exit_frame: u32,
     ) -> Self {
-        self.config.screenshot = Some(
-            ScreenshotConfig::new(path)
-                .with_timing(capture_frame, exit_frame),
-        );
+        self.config.screenshot =
+            Some(ScreenshotConfig::new(path).with_timing(capture_frame, exit_frame));
         self
     }
 
@@ -297,7 +301,11 @@ impl VoxelWorldApp {
 
     /// Position camera with auto-framing.
     pub fn with_camera_angle(mut self, angle: f32, elevation: f32) -> Self {
-        self.config.camera = CameraConfig::AutoFrame { angle, elevation, zoom: 1.0 };
+        self.config.camera = CameraConfig::AutoFrame {
+            angle,
+            elevation,
+            zoom: 1.0,
+        };
         self
     }
 
@@ -306,8 +314,15 @@ impl VoxelWorldApp {
     /// - `zoom = 1.0`: Default tight framing
     /// - `zoom > 1.0`: Zoom out (further from subject)
     pub fn with_zoom(mut self, zoom: f32) -> Self {
-        if let CameraConfig::AutoFrame { angle, elevation, .. } = self.config.camera {
-            self.config.camera = CameraConfig::AutoFrame { angle, elevation, zoom };
+        if let CameraConfig::AutoFrame {
+            angle, elevation, ..
+        } = self.config.camera
+        {
+            self.config.camera = CameraConfig::AutoFrame {
+                angle,
+                elevation,
+                zoom,
+            };
         }
         self
     }
@@ -577,7 +592,7 @@ impl VoxelWorldApp {
         app.insert_resource(ClearColor(clear_color));
         app.insert_resource(VoxelWorldAppConfig(self.config));
         app.insert_resource(VoxelWorldSource(self.world_source));
-        
+
         if let Some(callback) = self.setup_callback {
             app.insert_resource(SetupCallback(Some(callback)));
         } else {
@@ -589,7 +604,7 @@ impl VoxelWorldApp {
 
         // Systems
         app.add_systems(Startup, setup_world);
-        
+
         // Only add screenshot/exit system if NOT in interactive mode and not using debug screenshots
         if !interactive && !has_debug_screenshots {
             app.add_systems(Update, screenshot_and_exit);
@@ -653,7 +668,11 @@ fn setup_world(
             println!("Loading world from: {}", path);
             match load_world(&path) {
                 Ok(w) => {
-                    println!("Loaded {} chunks, {} voxels", w.chunk_count(), w.total_voxel_count());
+                    println!(
+                        "Loaded {} chunks, {} voxels",
+                        w.chunk_count(),
+                        w.total_voxel_count()
+                    );
                     w
                 }
                 Err(e) => {
@@ -683,7 +702,11 @@ fn setup_world(
         WorldSource::Builder(builder) => {
             let mut world = VoxelWorld::new();
             builder(&mut world);
-            println!("Built world: {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+            println!(
+                "Built world: {} chunks, {} voxels",
+                world.chunk_count(),
+                world.total_voxel_count()
+            );
             world
         }
         WorldSource::World(world) => world,
@@ -735,22 +758,27 @@ fn setup_world(
 
     // Spawn camera
     let camera_transform = match &config.camera {
-        CameraConfig::AutoFrame { angle, elevation, zoom } => {
+        CameraConfig::AutoFrame {
+            angle,
+            elevation,
+            zoom,
+        } => {
             // Use actual voxel bounds for tight framing, not chunk bounds
             if let Some((min_world, max_world)) = world.voxel_bounds() {
                 // Apply zoom: base padding of 1.3 * zoom factor
                 // zoom < 1.0 = closer, zoom > 1.0 = further
                 let padding = 1.3 * zoom;
                 let framing = crate::scene_utils::compute_camera_framing(
-                    min_world,
-                    max_world,
-                    *angle,
-                    *elevation,
-                    padding,
+                    min_world, max_world, *angle, *elevation, padding,
                 );
-                println!("Camera auto-framed at {:?} (bounds: {:?} to {:?}, zoom: {})", 
-                    framing.position, min_world, max_world, zoom);
-                Some(Transform::from_translation(framing.position).looking_at(framing.look_at, Vec3::Y))
+                println!(
+                    "Camera auto-framed at {:?} (bounds: {:?} to {:?}, zoom: {})",
+                    framing.position, min_world, max_world, zoom
+                );
+                Some(
+                    Transform::from_translation(framing.position)
+                        .looking_at(framing.look_at, Vec3::Y),
+                )
             } else {
                 // Empty world, spawn default camera
                 Some(Transform::from_xyz(10.0, 10.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y))
@@ -805,11 +833,7 @@ fn setup_world(
             ));
         } else {
             // Basic forward rendering
-            commands.spawn((
-                Camera3d::default(),
-                Tonemapping::TonyMcMapface,
-                transform,
-            ));
+            commands.spawn((Camera3d::default(), Tonemapping::TonyMcMapface, transform));
         }
     }
 

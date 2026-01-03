@@ -227,9 +227,8 @@ impl DebugScreenshotState {
 
     /// Get the path for the current capture.
     pub fn current_path(&self) -> Option<String> {
-        self.current_capture().map(|c| {
-            format!("{}/{}.png", self.config.output_folder, c.name)
-        })
+        self.current_capture()
+            .map(|c| format!("{}/{}.png", self.config.output_folder, c.name))
     }
 
     /// Total frames to wait for current capture.
@@ -244,7 +243,7 @@ impl DebugScreenshotState {
 }
 
 /// Resource for current debug mode (extracted to render world).
-/// 
+///
 /// This resource controls shader debug modes at runtime without recompilation.
 /// It is extracted to the render world and passed to shaders via uniforms.
 #[derive(Resource, Clone, Default, ExtractResource)]
@@ -293,7 +292,7 @@ pub fn debug_screenshot_system(
     // Take screenshot if not pending
     if !state.capture_pending {
         let path = state.current_path().unwrap();
-        
+
         // Ensure directory exists
         if let Some(parent) = Path::new(&path).parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -307,7 +306,7 @@ pub fn debug_screenshot_system(
         commands
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(path));
-        
+
         state.capture_pending = true;
     } else {
         // Screenshot was captured last frame, move to next
@@ -322,7 +321,9 @@ pub struct DebugScreenshotPlugin;
 
 impl Plugin for DebugScreenshotPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<DebugModes>()
-            .add_systems(Update, debug_screenshot_system.run_if(resource_exists::<DebugScreenshotState>));
+        app.init_resource::<DebugModes>().add_systems(
+            Update,
+            debug_screenshot_system.run_if(resource_exists::<DebugScreenshotState>),
+        );
     }
 }

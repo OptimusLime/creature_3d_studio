@@ -10,18 +10,17 @@
 
 use bevy::prelude::*;
 use bevy::render::{
+    camera::ExtractedCamera,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
-        BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource,
-        BindingType, BufferBindingType, BufferInitDescriptor, BufferUsages,
-        CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
-        PipelineCache, ShaderStages, StorageTextureAccess,
-        TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-        TextureViewDimension,
+        BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
+        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedComputePipelineId,
+        ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, PipelineCache, ShaderStages,
+        StorageTextureAccess, TextureDescriptor, TextureDimension, TextureFormat,
+        TextureSampleType, TextureUsages, TextureViewDimension,
     },
     renderer::{RenderContext, RenderDevice},
     texture::{CachedTexture, TextureCache},
-    camera::ExtractedCamera,
 };
 
 use super::gbuffer::ViewGBufferTextures;
@@ -98,7 +97,8 @@ impl ViewNode for DepthPrefilterNode {
             return Ok(());
         };
 
-        let Some(pipeline) = pipeline_cache.get_compute_pipeline(prefilter_pipeline.pipeline_id) else {
+        let Some(pipeline) = pipeline_cache.get_compute_pipeline(prefilter_pipeline.pipeline_id)
+        else {
             return Ok(());
         };
 
@@ -125,13 +125,14 @@ impl ViewNode for DepthPrefilterNode {
             _padding: [0.0; 3],
         };
 
-        let uniform_buffer = render_context
-            .render_device()
-            .create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("depth_prefilter_uniform_buffer"),
-                contents: bytemuck::bytes_of(&uniform),
-                usage: BufferUsages::UNIFORM,
-            });
+        let uniform_buffer =
+            render_context
+                .render_device()
+                .create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("depth_prefilter_uniform_buffer"),
+                    contents: bytemuck::bytes_of(&uniform),
+                    usage: BufferUsages::UNIFORM,
+                });
 
         // Create bind group for uniforms + source depth (group 0)
         let uniforms_bind_group = render_context.render_device().create_bind_group(
@@ -183,12 +184,13 @@ impl ViewNode for DepthPrefilterNode {
         let dispatch_y = (viewport_size.y + 15) / 16;
 
         {
-            let mut pass = render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("depth_prefilter_pass"),
-                    timestamp_writes: None,
-                });
+            let mut pass =
+                render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("depth_prefilter_pass"),
+                        timestamp_writes: None,
+                    });
 
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &uniforms_bind_group, &[]);

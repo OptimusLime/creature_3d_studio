@@ -7,18 +7,18 @@
 //! 4. Applies fog
 //! 5. Outputs to the view target
 
-use bevy::prelude::*;
 use bevy::image::BevyDefault;
+use bevy::prelude::*;
 use bevy::render::{
     camera::ExtractedCamera,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
         BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
-        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId, 
-        ColorTargetState, ColorWrites, CompareFunction, FilterMode, FragmentState, LoadOp, 
-        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment, 
-        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType, 
-        SamplerDescriptor, ShaderStages, StoreOp, TextureFormat, TextureSampleType, 
+        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId,
+        ColorTargetState, ColorWrites, CompareFunction, FilterMode, FragmentState, LoadOp,
+        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
+        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+        SamplerDescriptor, ShaderStages, StoreOp, TextureFormat, TextureSampleType,
         TextureViewDimension, VertexState,
     },
     renderer::{RenderContext, RenderDevice},
@@ -26,12 +26,12 @@ use bevy::render::{
 };
 
 use super::gbuffer::ViewGBufferTextures;
-use super::point_light::PointLightsBuffer;
-use super::point_light_shadow::{ViewPointShadowTextures, ShadowCastingLights, CubeFaceMatrices};
-use super::shadow::ViewDirectionalShadowTextures;
-use super::shadow_node::ViewDirectionalShadowUniforms;
 use super::gtao::ViewGtaoTexture;
 use super::gtao_denoise::ViewGtaoDenoised;
+use super::point_light::PointLightsBuffer;
+use super::point_light_shadow::{CubeFaceMatrices, ShadowCastingLights, ViewPointShadowTextures};
+use super::shadow::ViewDirectionalShadowTextures;
+use super::shadow_node::ViewDirectionalShadowUniforms;
 
 /// GPU uniform data for point shadow view-projection matrices.
 /// Contains the 6 face matrices needed to sample the cube shadow map correctly.
@@ -67,18 +67,28 @@ impl ViewNode for LightingPassNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (camera, target, gbuffer, shadow_textures, shadow_uniforms, point_shadow_textures, gtao_texture, gtao_denoised): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        (
+            camera,
+            target,
+            gbuffer,
+            shadow_textures,
+            shadow_uniforms,
+            point_shadow_textures,
+            gtao_texture,
+            gtao_denoised,
+        ): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
         let lighting_pipeline = world.get_resource::<LightingPipeline>();
-        
+
         let Some(lighting_pipeline) = lighting_pipeline else {
             bevy::log::warn!("LightingPassNode: No LightingPipeline resource");
             return Ok(());
         };
-        
-        let Some(pipeline) = pipeline_cache.get_render_pipeline(lighting_pipeline.pipeline_id) else {
+
+        let Some(pipeline) = pipeline_cache.get_render_pipeline(lighting_pipeline.pipeline_id)
+        else {
             bevy::log::warn!("LightingPassNode: Pipeline not ready");
             return Ok(());
         };
@@ -106,7 +116,7 @@ impl ViewNode for LightingPassNode {
                 },
             ],
         );
-        
+
         // Create bind group for dual directional shadow maps (group 1)
         let shadow_map_bind_group = render_context.render_device().create_bind_group(
             "lighting_directional_shadow_bind_group",
@@ -126,7 +136,7 @@ impl ViewNode for LightingPassNode {
                 },
             ],
         );
-        
+
         // Create bind group for directional shadow uniforms (group 2)
         let shadow_uniforms_bind_group = render_context.render_device().create_bind_group(
             "lighting_directional_shadow_uniforms_bind_group",
@@ -136,25 +146,27 @@ impl ViewNode for LightingPassNode {
                 resource: shadow_uniforms.buffer.as_entire_binding(),
             }],
         );
-        
+
         // Create bind group for point lights (group 3)
-        let point_lights_bind_group = if let Some(point_lights_buffer) = world.get_resource::<PointLightsBuffer>() {
-            Some(render_context.render_device().create_bind_group(
-                "lighting_point_lights_bind_group",
-                &lighting_pipeline.point_lights_layout,
-                &[BindGroupEntry {
-                    binding: 0,
-                    resource: point_lights_buffer.buffer.as_entire_binding(),
-                }],
-            ))
-        } else {
-            None
-        };
-        
+        let point_lights_bind_group =
+            if let Some(point_lights_buffer) = world.get_resource::<PointLightsBuffer>() {
+                Some(render_context.render_device().create_bind_group(
+                    "lighting_point_lights_bind_group",
+                    &lighting_pipeline.point_lights_layout,
+                    &[BindGroupEntry {
+                        binding: 0,
+                        resource: point_lights_buffer.buffer.as_entire_binding(),
+                    }],
+                ))
+            } else {
+                None
+            };
+
         // Create bind group for point light shadows (group 4)
         // Uses the 6 face textures from the first shadow-casting light
-        let point_shadow_bind_group = if let Some(shadow_map) = point_shadow_textures.shadow_maps.first() {
-
+        let point_shadow_bind_group = if let Some(shadow_map) =
+            point_shadow_textures.shadow_maps.first()
+        {
             Some(render_context.render_device().create_bind_group(
                 "lighting_point_shadow_bind_group",
                 &lighting_pipeline.point_shadow_layout,
@@ -192,7 +204,7 @@ impl ViewNode for LightingPassNode {
         } else {
             None
         };
-        
+
         // Create bind group for point shadow matrices (group 5)
         // Get the shadow casting lights to compute the matrices
         // ALWAYS create this bind group - use identity matrices if no lights
@@ -201,7 +213,7 @@ impl ViewNode for LightingPassNode {
                 if let Some(light) = shadow_lights.lights.first() {
                     // Compute the view-proj matrices for this light
                     let matrices = CubeFaceMatrices::new(light.position, 0.1, light.radius);
-                    
+
                     PointShadowMatricesUniform {
                         face_matrices: [
                             matrices.view_proj[0].to_cols_array_2d(),
@@ -211,31 +223,49 @@ impl ViewNode for LightingPassNode {
                             matrices.view_proj[4].to_cols_array_2d(),
                             matrices.view_proj[5].to_cols_array_2d(),
                         ],
-                        light_pos_radius: [light.position.x, light.position.y, light.position.z, light.radius],
+                        light_pos_radius: [
+                            light.position.x,
+                            light.position.y,
+                            light.position.z,
+                            light.radius,
+                        ],
                     }
                 } else {
                     // No lights - use dummy matrices with radius 0 so no shadows are cast
                     // Setting radius to 0 means calculate_point_shadow will return 1.0 (fully lit)
                     // immediately due to distance > shadow_radius check
                     PointShadowMatricesUniform {
-                        face_matrices: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]; 6],
-                        light_pos_radius: [0.0, 0.0, 0.0, 0.0],  // radius = 0 disables shadows
+                        face_matrices: [[
+                            [1.0, 0.0, 0.0, 0.0],
+                            [0.0, 1.0, 0.0, 0.0],
+                            [0.0, 0.0, 1.0, 0.0],
+                            [0.0, 0.0, 0.0, 1.0],
+                        ]; 6],
+                        light_pos_radius: [0.0, 0.0, 0.0, 0.0], // radius = 0 disables shadows
                     }
                 }
             } else {
                 // No shadow lights resource - use dummy matrices with radius 0
                 PointShadowMatricesUniform {
-                    face_matrices: [[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]; 6],
-                    light_pos_radius: [0.0, 0.0, 0.0, 0.0],  // radius = 0 disables shadows
+                    face_matrices: [[
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.0, 1.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ]; 6],
+                    light_pos_radius: [0.0, 0.0, 0.0, 0.0], // radius = 0 disables shadows
                 }
             };
-            
-            let buffer = render_context.render_device().create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("point_shadow_matrices_uniform"),
-                contents: bytemuck::bytes_of(&uniform),
-                usage: BufferUsages::UNIFORM,
-            });
-            
+
+            let buffer =
+                render_context
+                    .render_device()
+                    .create_buffer_with_data(&BufferInitDescriptor {
+                        label: Some("point_shadow_matrices_uniform"),
+                        contents: bytemuck::bytes_of(&uniform),
+                        usage: BufferUsages::UNIFORM,
+                    });
+
             render_context.render_device().create_bind_group(
                 Some("lighting_point_shadow_matrices_bind_group"),
                 &lighting_pipeline.point_shadow_matrices_layout,
@@ -245,7 +275,7 @@ impl ViewNode for LightingPassNode {
                 }],
             )
         };
-        
+
         // Create bind group for GTAO texture (group 6)
         // Prefer denoised texture if available, otherwise fall back to raw GTAO
         let gtao_bind_group = if let Some(denoised) = gtao_denoised {
@@ -327,7 +357,7 @@ impl ViewNode for LightingPassNode {
         if let Some(ref gtao_bg) = gtao_bind_group {
             render_pass.set_bind_group(6, gtao_bg, &[]);
         }
-        
+
         render_pass.draw(0..3, 0..1);
 
         Ok(())
@@ -422,7 +452,7 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
-    
+
     // Create bind group layout for dual directional shadow maps (group 1)
     // Contains moon1 + moon2 shadow textures + shared comparison sampler
     let directional_shadow_layout = render_device.create_bind_group_layout(
@@ -459,25 +489,23 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
-    
+
     // Create bind group layout for directional shadow uniforms (group 2)
     // Contains both moon matrices, colors, intensities, and shadow softness
     let directional_shadow_uniforms_layout = render_device.create_bind_group_layout(
         "lighting_directional_shadow_uniforms_layout",
-        &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
             },
-        ],
+            count: None,
+        }],
     );
-    
+
     // Create bind group layout for point lights (group 3)
     // Using Storage buffer for higher light counts (256+)
     let point_lights_layout = render_device.create_bind_group_layout(
@@ -496,7 +524,7 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
-    
+
     // Create bind group layout for point light shadows (group 4)
     // 6 depth textures (one per cube face) + comparison sampler
     let point_shadow_layout = render_device.create_bind_group_layout(
@@ -577,25 +605,23 @@ pub fn init_lighting_pipeline(
             },
         ],
     );
-    
+
     // Create bind group layout for point shadow matrices (group 5)
     // Contains the 6 view-proj matrices for cube face sampling
     let point_shadow_matrices_layout = render_device.create_bind_group_layout(
         "lighting_point_shadow_matrices_layout",
-        &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
             },
-        ],
+            count: None,
+        }],
     );
-    
+
     // Create bind group layout for GTAO texture (group 6)
     let gtao_layout = render_device.create_bind_group_layout(
         "lighting_gtao_layout",
@@ -628,7 +654,7 @@ pub fn init_lighting_pipeline(
         min_filter: FilterMode::Nearest,
         ..default()
     });
-    
+
     // Create shadow comparison sampler
     let shadow_sampler = render_device.create_sampler(&SamplerDescriptor {
         label: Some("shadow_comparison_sampler"),
@@ -637,7 +663,7 @@ pub fn init_lighting_pipeline(
         compare: Some(CompareFunction::LessEqual),
         ..default()
     });
-    
+
     // Create point shadow comparison sampler
     // LessEqual: returns 1.0 (lit) when compare_depth <= shadow_depth
     // Logic: if our fragment distance is <= closest blocker distance, we're lit
@@ -649,7 +675,7 @@ pub fn init_lighting_pipeline(
         compare: Some(CompareFunction::LessEqual),
         ..default()
     });
-    
+
     // Create GTAO sampler (linear filtering for smooth AO)
     let gtao_sampler = render_device.create_sampler(&SamplerDescriptor {
         label: Some("gtao_sampler"),
@@ -666,13 +692,13 @@ pub fn init_lighting_pipeline(
     let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
         label: Some("deferred_lighting_pipeline".into()),
         layout: vec![
-            gbuffer_layout.clone(),                      // Group 0: G-buffer
-            directional_shadow_layout.clone(),           // Group 1: Dual shadow maps (moon1, moon2, sampler)
-            directional_shadow_uniforms_layout.clone(),  // Group 2: Shadow uniforms
-            point_lights_layout.clone(),                 // Group 3: Point lights
-            point_shadow_layout.clone(),                 // Group 4: Point shadow faces
-            point_shadow_matrices_layout.clone(),        // Group 5: Point shadow matrices
-            gtao_layout.clone(),                         // Group 6: GTAO texture
+            gbuffer_layout.clone(),                     // Group 0: G-buffer
+            directional_shadow_layout.clone(), // Group 1: Dual shadow maps (moon1, moon2, sampler)
+            directional_shadow_uniforms_layout.clone(), // Group 2: Shadow uniforms
+            point_lights_layout.clone(),       // Group 3: Point lights
+            point_shadow_layout.clone(),       // Group 4: Point shadow faces
+            point_shadow_matrices_layout.clone(), // Group 5: Point shadow matrices
+            gtao_layout.clone(),               // Group 6: GTAO texture
         ],
         push_constant_ranges: vec![],
         vertex: VertexState {

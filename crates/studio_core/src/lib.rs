@@ -32,17 +32,53 @@ pub mod voxel_physics;
 pub mod voxel_world_plugin;
 pub mod world_io;
 
+pub use benchmark::{BenchmarkConfig, BenchmarkPlugin, BenchmarkResult, BenchmarkStats};
+pub use chunk_streaming::{
+    chunk_streaming_system, load_all_chunks_in_radius, world_pos_to_chunk, ChunkEntity,
+    ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
+};
 pub use creature_script::{execute_creature_script, load_creature_script};
+pub use day_night::{
+    apply_cycle_to_bloom, apply_cycle_to_moon_config, update_day_night_cycle, ColorKeyframe,
+    ColorLutConfig, DayNightCycle, DayNightCyclePlugin, InterpolationMode, MoonCycleConfig,
+};
+pub use debug_screenshot::{
+    DebugCapture, DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState,
+};
 pub use deferred::{
     DeferredCamera, DeferredLabel, DeferredLightingConfig, DeferredPointLight, DeferredRenderable,
-    DeferredRenderingPlugin, MoonConfig, PrimaryShadowCaster, GpuCollisionContacts,
+    DeferredRenderingPlugin, GpuCollisionContacts, MoonConfig, PrimaryShadowCaster,
 };
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
+pub use scene_utils::{
+    centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset, spawn_chunk,
+    spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
+    spawn_point_light, spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming,
+    CameraPreset, EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
+};
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
+pub use screenshot_sequence::{
+    capture_screenshot_sequence, ScreenshotSequence, ScreenshotSequencePlugin, SequenceState,
+};
 pub use voxel::{
     extract_clustered_emissive_lights, extract_emissive_lights, world_to_local, BorderDirection,
     BorderSlice, ChunkBorders, ChunkPos, EmissiveLight, Voxel, VoxelChunk, VoxelWorld, CHUNK_SIZE,
     CHUNK_SIZE_I32,
+};
+pub use voxel_collision::{
+    chunk_coord_to_world, world_pos_to_chunk_coord, world_pos_to_local, ChunkOccupancy,
+    CollisionPoint, CollisionResult, FragmentCollisionResult, FragmentContact, FragmentOccupancy,
+    GpuCollisionAABB, KinematicController, WorldOccupancy, OCCUPANCY_CHUNK_SIZE,
+};
+pub use voxel_collision_gpu::{
+    CollisionUniforms, GpuCollisionPipeline, GpuCollisionResult, GpuContact, GpuFragmentData,
+    GpuWorldOccupancy, MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
+};
+pub use voxel_fragment::{
+    detect_settling_fragments, fragment_terrain_collision_system, gpu_fragment_physics_system,
+    gpu_kinematic_collision_system, spawn_fragment, spawn_fragment_with_mesh,
+    FragmentCollisionConfig, FragmentConfig, FragmentPhysics, FragmentPreview, GpuCollisionMode,
+    StaticVoxelWorld, TerrainOccupancy, VoxelFragment, VoxelFragmentBundle, VoxelFragmentPlugin,
 };
 pub use voxel_mesh::{
     build_chunk_mesh, build_chunk_mesh_greedy, build_chunk_mesh_greedy_with_borders,
@@ -51,55 +87,16 @@ pub use voxel_mesh::{
     build_world_meshes_with_options, ChunkMesh, VoxelMaterial, VoxelMaterialPlugin,
     ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
 };
-pub use chunk_streaming::{
-    chunk_streaming_system, load_all_chunks_in_radius, world_pos_to_chunk, ChunkEntity,
-    ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
-};
-pub use scene_utils::{
-    centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset,
-    spawn_chunk, spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
-    spawn_point_light, spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming,
-    CameraPreset, EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
-};
-pub use world_io::{
-    load_world, load_world_binary, load_world_json, save_world, save_world_binary,
-    save_world_json, world_file_info, WorldFileInfo, WorldFormat, WorldIoError, WorldIoResult,
+pub use voxel_physics::{
+    generate_chunk_colliders, generate_cuboid_collider, generate_merged_cuboid_collider,
+    generate_trimesh_collider,
 };
 pub use voxel_world_plugin::{
     BloomConfig, CameraConfig, ScreenshotConfig, VoxelWorldApp, VoxelWorldConfig, WorldSource,
 };
-pub use debug_screenshot::{
-    DebugCapture, DebugModes, DebugScreenshotConfig, DebugScreenshotPlugin, DebugScreenshotState,
-};
-pub use day_night::{
-    ColorKeyframe, ColorLutConfig, DayNightCycle, DayNightCyclePlugin, InterpolationMode,
-    MoonCycleConfig, apply_cycle_to_bloom, apply_cycle_to_moon_config, update_day_night_cycle,
-};
-pub use screenshot_sequence::{
-    ScreenshotSequence, ScreenshotSequencePlugin, SequenceState,
-    capture_screenshot_sequence,
-};
-pub use voxel_physics::{
-    generate_trimesh_collider, generate_chunk_colliders,
-    generate_cuboid_collider, generate_merged_cuboid_collider,
-};
-pub use voxel_fragment::{
-    VoxelFragment, VoxelFragmentBundle, FragmentConfig, FragmentPreview,
-    StaticVoxelWorld, VoxelFragmentPlugin, spawn_fragment, spawn_fragment_with_mesh,
-    detect_settling_fragments, TerrainOccupancy, FragmentCollisionConfig,
-    fragment_terrain_collision_system, clear_fragment_forces, GpuCollisionMode,
-    gpu_fragment_terrain_collision_system, gpu_kinematic_collision_system,
-};
-pub use benchmark::{BenchmarkPlugin, BenchmarkConfig, BenchmarkStats, BenchmarkResult};
-pub use voxel_collision::{
-    ChunkOccupancy, WorldOccupancy, FragmentOccupancy, FragmentContact, FragmentCollisionResult,
-    GpuCollisionAABB, KinematicController, CollisionResult, CollisionPoint,
-    world_pos_to_chunk_coord, world_pos_to_local, chunk_coord_to_world,
-    OCCUPANCY_CHUNK_SIZE,
-};
-pub use voxel_collision_gpu::{
-    GpuWorldOccupancy, GpuCollisionPipeline, GpuCollisionResult, GpuContact,
-    GpuFragmentData, CollisionUniforms, MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
+pub use world_io::{
+    load_world, load_world_binary, load_world_json, save_world, save_world_binary, save_world_json,
+    world_file_info, WorldFileInfo, WorldFormat, WorldIoError, WorldIoResult,
 };
 
 /// Core plugin for shared functionality.

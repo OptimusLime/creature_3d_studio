@@ -151,12 +151,24 @@ pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
         // Compute face visibility mask: only render faces where neighbor is empty
         // Bit 0 = +X, Bit 1 = -X, Bit 2 = +Y, Bit 3 = -Y, Bit 4 = +Z, Bit 5 = -Z
         let mut face_mask: u8 = 0;
-        if !chunk.is_neighbor_solid(x, y, z, 1, 0, 0) { face_mask |= 1 << 0; } // +X
-        if !chunk.is_neighbor_solid(x, y, z, -1, 0, 0) { face_mask |= 1 << 1; } // -X
-        if !chunk.is_neighbor_solid(x, y, z, 0, 1, 0) { face_mask |= 1 << 2; } // +Y
-        if !chunk.is_neighbor_solid(x, y, z, 0, -1, 0) { face_mask |= 1 << 3; } // -Y
-        if !chunk.is_neighbor_solid(x, y, z, 0, 0, 1) { face_mask |= 1 << 4; } // +Z
-        if !chunk.is_neighbor_solid(x, y, z, 0, 0, -1) { face_mask |= 1 << 5; } // -Z
+        if !chunk.is_neighbor_solid(x, y, z, 1, 0, 0) {
+            face_mask |= 1 << 0;
+        } // +X
+        if !chunk.is_neighbor_solid(x, y, z, -1, 0, 0) {
+            face_mask |= 1 << 1;
+        } // -X
+        if !chunk.is_neighbor_solid(x, y, z, 0, 1, 0) {
+            face_mask |= 1 << 2;
+        } // +Y
+        if !chunk.is_neighbor_solid(x, y, z, 0, -1, 0) {
+            face_mask |= 1 << 3;
+        } // -Y
+        if !chunk.is_neighbor_solid(x, y, z, 0, 0, 1) {
+            face_mask |= 1 << 4;
+        } // +Z
+        if !chunk.is_neighbor_solid(x, y, z, 0, 0, -1) {
+            face_mask |= 1 << 5;
+        } // -Z
 
         // Generate only visible faces for this voxel
         add_cube_faces_with_ao(
@@ -178,13 +190,16 @@ pub fn build_chunk_mesh(chunk: &VoxelChunk) -> Mesh {
     }
 
     // Create mesh with custom attributes for VoxelMaterial
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 // =============================================================================
@@ -299,13 +314,16 @@ pub fn build_chunk_mesh_greedy(chunk: &VoxelChunk) -> Mesh {
     }
 
     // Create mesh with custom attributes for VoxelMaterial
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 // ============================================================================
@@ -377,7 +395,7 @@ pub fn build_world_meshes_with_options(world: &VoxelWorld, use_greedy: bool) -> 
 
             // Calculate world-space offset for this chunk
             // The mesh is centered at origin, so we offset to the chunk's world position
-            // Note: build_chunk_mesh centers the mesh, so a voxel at local (0,0,0) 
+            // Note: build_chunk_mesh centers the mesh, so a voxel at local (0,0,0)
             // is at mesh position (-CHUNK_SIZE/2, -CHUNK_SIZE/2, -CHUNK_SIZE/2).
             // The chunk's world origin is chunk_pos * CHUNK_SIZE.
             // To position correctly: translate by (chunk_pos * CHUNK_SIZE + CHUNK_SIZE/2)
@@ -401,7 +419,11 @@ pub fn build_world_meshes_with_options(world: &VoxelWorld, use_greedy: bool) -> 
 /// Build a mesh for a single chunk at a specific position.
 ///
 /// Convenience function when you only need to update one chunk.
-pub fn build_single_chunk_mesh(chunk: &VoxelChunk, chunk_pos: ChunkPos, use_greedy: bool) -> ChunkMesh {
+pub fn build_single_chunk_mesh(
+    chunk: &VoxelChunk,
+    chunk_pos: ChunkPos,
+    use_greedy: bool,
+) -> ChunkMesh {
     let mesh = if use_greedy {
         build_chunk_mesh_greedy(chunk)
     } else {
@@ -461,7 +483,10 @@ pub fn build_world_meshes_cross_chunk(world: &VoxelWorld) -> Vec<ChunkMesh> {
 /// # Arguments
 /// * `world` - The voxel world to mesh
 /// * `use_greedy` - If true, use greedy meshing; if false, use face culling only
-pub fn build_world_meshes_cross_chunk_with_options(world: &VoxelWorld, use_greedy: bool) -> Vec<ChunkMesh> {
+pub fn build_world_meshes_cross_chunk_with_options(
+    world: &VoxelWorld,
+    use_greedy: bool,
+) -> Vec<ChunkMesh> {
     world
         .iter_chunks()
         .filter(|(_, chunk)| !chunk.is_empty())
@@ -513,7 +538,7 @@ pub fn build_chunk_mesh_with_borders(chunk: &VoxelChunk, borders: &ChunkBorders)
 
         // Compute face visibility mask with cross-chunk awareness
         let mut face_mask: u8 = 0;
-        
+
         // +X face
         if !is_neighbor_solid_cross_chunk(chunk, borders, x, y, z, 1, 0, 0) {
             face_mask |= 1 << 0;
@@ -558,13 +583,16 @@ pub fn build_chunk_mesh_with_borders(chunk: &VoxelChunk, borders: &ChunkBorders)
         );
     }
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Build a mesh with greedy meshing and cross-chunk face culling.
@@ -612,13 +640,16 @@ pub fn build_chunk_mesh_greedy_with_borders(chunk: &VoxelChunk, borders: &ChunkB
         }
     }
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
-        .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_COLOR, colors)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_EMISSION, emissions)
+    .with_inserted_attribute(ATTRIBUTE_VOXEL_AO, aos)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Check if a neighbor voxel is solid, including across chunk boundaries.
@@ -638,7 +669,13 @@ fn is_neighbor_solid_cross_chunk(
     let nz = z as i32 + dz;
 
     // Check if within chunk bounds
-    if nx >= 0 && nx < CHUNK_SIZE as i32 && ny >= 0 && ny < CHUNK_SIZE as i32 && nz >= 0 && nz < CHUNK_SIZE as i32 {
+    if nx >= 0
+        && nx < CHUNK_SIZE as i32
+        && ny >= 0
+        && ny < CHUNK_SIZE as i32
+        && nz >= 0
+        && nz < CHUNK_SIZE as i32
+    {
         // Within chunk - use chunk's data
         chunk.get(nx as usize, ny as usize, nz as usize).is_some()
     } else {
@@ -712,7 +749,8 @@ fn emit_greedy_quad_with_borders(
         emissions.push(emission);
 
         let (vx, vy, vz) = corner_voxels[i];
-        ao_values[i] = calculate_corner_ao_cross_chunk(chunk, borders, quad.direction, vx, vy, vz, i);
+        ao_values[i] =
+            calculate_corner_ao_cross_chunk(chunk, borders, quad.direction, vx, vy, vz, i);
         aos.push(ao_values[i]);
     }
 
@@ -756,9 +794,36 @@ fn calculate_corner_ao_cross_chunk(
     let ao_offsets = get_ao_offsets(direction);
     let offsets = &ao_offsets[corner_idx];
 
-    let side1 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
-    let side2 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
-    let corner = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+    let side1 = is_neighbor_solid_cross_chunk(
+        chunk,
+        borders,
+        vx,
+        vy,
+        vz,
+        offsets[0].0,
+        offsets[0].1,
+        offsets[0].2,
+    );
+    let side2 = is_neighbor_solid_cross_chunk(
+        chunk,
+        borders,
+        vx,
+        vy,
+        vz,
+        offsets[1].0,
+        offsets[1].1,
+        offsets[1].2,
+    );
+    let corner = is_neighbor_solid_cross_chunk(
+        chunk,
+        borders,
+        vx,
+        vy,
+        vz,
+        offsets[2].0,
+        offsets[2].1,
+        offsets[2].2,
+    );
 
     calculate_vertex_ao(side1, side2, corner)
 }
@@ -783,12 +848,72 @@ fn add_cube_faces_with_ao_cross_chunk(
     emission: f32,
 ) {
     let faces: [([f32; 3], [[f32; 3]; 4], FaceDir, u8); 6] = [
-        ([1.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0], [1.0, 0.0, 1.0]], FaceDir::PosX, 1 << 0),
-        ([-1.0, 0.0, 0.0], [[0.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], FaceDir::NegX, 1 << 1),
-        ([0.0, 1.0, 0.0], [[0.0, 1.0, 0.0], [0.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 0.0]], FaceDir::PosY, 1 << 2),
-        ([0.0, -1.0, 0.0], [[0.0, 0.0, 1.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 1.0]], FaceDir::NegY, 1 << 3),
-        ([0.0, 0.0, 1.0], [[0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 1.0], [0.0, 1.0, 1.0]], FaceDir::PosZ, 1 << 4),
-        ([0.0, 0.0, -1.0], [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]], FaceDir::NegZ, 1 << 5),
+        (
+            [1.0, 0.0, 0.0],
+            [
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [1.0, 0.0, 1.0],
+            ],
+            FaceDir::PosX,
+            1 << 0,
+        ),
+        (
+            [-1.0, 0.0, 0.0],
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ],
+            FaceDir::NegX,
+            1 << 1,
+        ),
+        (
+            [0.0, 1.0, 0.0],
+            [
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [1.0, 1.0, 0.0],
+            ],
+            FaceDir::PosY,
+            1 << 2,
+        ),
+        (
+            [0.0, -1.0, 0.0],
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 1.0],
+            ],
+            FaceDir::NegY,
+            1 << 3,
+        ),
+        (
+            [0.0, 0.0, 1.0],
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ],
+            FaceDir::PosZ,
+            1 << 4,
+        ),
+        (
+            [0.0, 0.0, -1.0],
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            FaceDir::NegZ,
+            1 << 5,
+        ),
     ];
 
     for (normal, corners, face_dir, mask_bit) in faces.iter() {
@@ -812,9 +937,36 @@ fn add_cube_faces_with_ao_cross_chunk(
             emissions.push(emission);
 
             let offsets = &ao_offsets[vert_idx];
-            let side1 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
-            let side2 = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
-            let corner_solid = is_neighbor_solid_cross_chunk(chunk, borders, vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+            let side1 = is_neighbor_solid_cross_chunk(
+                chunk,
+                borders,
+                vx,
+                vy,
+                vz,
+                offsets[0].0,
+                offsets[0].1,
+                offsets[0].2,
+            );
+            let side2 = is_neighbor_solid_cross_chunk(
+                chunk,
+                borders,
+                vx,
+                vy,
+                vz,
+                offsets[1].0,
+                offsets[1].1,
+                offsets[1].2,
+            );
+            let corner_solid = is_neighbor_solid_cross_chunk(
+                chunk,
+                borders,
+                vx,
+                vy,
+                vz,
+                offsets[2].0,
+                offsets[2].1,
+                offsets[2].2,
+            );
             ao_values[vert_idx] = calculate_vertex_ao(side1, side2, corner_solid);
             aos.push(ao_values[vert_idx]);
         }
@@ -1146,47 +1298,17 @@ impl FaceDir {
         // consistent CCW winding when viewed from outside the voxel
         match self {
             // +X: looking from +X toward -X
-            FaceDir::PosX => [
-                (0, 0),
-                (0, height),
-                (width, height),
-                (width, 0),
-            ],
+            FaceDir::PosX => [(0, 0), (0, height), (width, height), (width, 0)],
             // -X: looking from -X toward +X
-            FaceDir::NegX => [
-                (width, 0),
-                (width, height),
-                (0, height),
-                (0, 0),
-            ],
+            FaceDir::NegX => [(width, 0), (width, height), (0, height), (0, 0)],
             // +Y: looking from +Y toward -Y
-            FaceDir::PosY => [
-                (0, 0),
-                (0, height),
-                (width, height),
-                (width, 0),
-            ],
+            FaceDir::PosY => [(0, 0), (0, height), (width, height), (width, 0)],
             // -Y: looking from -Y toward +Y
-            FaceDir::NegY => [
-                (0, height),
-                (0, 0),
-                (width, 0),
-                (width, height),
-            ],
+            FaceDir::NegY => [(0, height), (0, 0), (width, 0), (width, height)],
             // +Z: looking from +Z toward -Z
-            FaceDir::PosZ => [
-                (0, 0),
-                (width, 0),
-                (width, height),
-                (0, height),
-            ],
+            FaceDir::PosZ => [(0, 0), (width, 0), (width, height), (0, height)],
             // -Z: looking from -Z toward +Z
-            FaceDir::NegZ => [
-                (width, 0),
-                (0, 0),
-                (0, height),
-                (width, height),
-            ],
+            FaceDir::NegZ => [(width, 0), (0, 0), (0, height), (width, height)],
         }
     }
 }
@@ -1308,7 +1430,7 @@ fn get_ao_offsets(face: FaceDir) -> [[(i32, i32, i32); 3]; 4] {
 }
 
 /// Add visible faces for a unit cube at the given position.
-/// 
+///
 /// Only adds faces where the corresponding bit in `face_mask` is set:
 /// - Bit 0 = +X, Bit 1 = -X, Bit 2 = +Y, Bit 3 = -Y, Bit 4 = +Z, Bit 5 = -Z
 ///
@@ -1431,9 +1553,12 @@ fn add_cube_faces_with_ao(
 
             // Calculate AO for this vertex
             let offsets = &ao_offsets[vert_idx];
-            let side1 = chunk.is_neighbor_solid(vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
-            let side2 = chunk.is_neighbor_solid(vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
-            let corner_solid = chunk.is_neighbor_solid(vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
+            let side1 =
+                chunk.is_neighbor_solid(vx, vy, vz, offsets[0].0, offsets[0].1, offsets[0].2);
+            let side2 =
+                chunk.is_neighbor_solid(vx, vy, vz, offsets[1].0, offsets[1].1, offsets[1].2);
+            let corner_solid =
+                chunk.is_neighbor_solid(vx, vy, vz, offsets[2].0, offsets[2].1, offsets[2].2);
             ao_values[vert_idx] = calculate_vertex_ao(side1, side2, corner_solid);
             aos.push(ao_values[vert_idx]);
         }
@@ -1464,8 +1589,6 @@ fn add_cube_faces_with_ao(
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -1518,11 +1641,19 @@ mod tests {
         // So: 2 voxels * 6 faces - 2 hidden faces = 10 visible faces
         // 10 faces * 4 vertices = 40 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 40, "Two adjacent voxels should have 10 visible faces (40 vertices)");
+        assert_eq!(
+            positions.len(),
+            40,
+            "Two adjacent voxels should have 10 visible faces (40 vertices)"
+        );
 
         // 10 faces * 6 indices = 60 indices
         let indices = mesh.indices().unwrap();
-        assert_eq!(indices.len(), 60, "Two adjacent voxels should have 60 indices");
+        assert_eq!(
+            indices.len(),
+            60,
+            "Two adjacent voxels should have 60 indices"
+        );
     }
 
     #[test]
@@ -1543,7 +1674,11 @@ mod tests {
         // Total visible faces = 6 * 4 = 24 faces
         // 24 faces * 4 vertices = 96 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 96, "2x2x2 cube should have 24 visible faces (96 vertices)");
+        assert_eq!(
+            positions.len(),
+            96,
+            "2x2x2 cube should have 24 visible faces (96 vertices)"
+        );
 
         // Without face culling: 8 voxels * 6 faces = 48 faces
         // With face culling: 24 faces (50% reduction)
@@ -1567,7 +1702,11 @@ mod tests {
         // Total visible faces = 6 * 9 = 54 faces
         // 54 faces * 4 vertices = 216 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 216, "3x3x3 cube should have 54 visible faces (216 vertices)");
+        assert_eq!(
+            positions.len(),
+            216,
+            "3x3x3 cube should have 54 visible faces (216 vertices)"
+        );
 
         // Without face culling: 27 voxels * 6 faces = 162 faces
         // With face culling: 54 faces (66.7% reduction)
@@ -1591,7 +1730,11 @@ mod tests {
         // Total: 2 + (4 * 5) = 22 visible faces
         // 22 faces * 4 vertices = 88 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 88, "Cross shape should have 22 visible faces (88 vertices)");
+        assert_eq!(
+            positions.len(),
+            88,
+            "Cross shape should have 22 visible faces (88 vertices)"
+        );
     }
 
     #[test]
@@ -1608,7 +1751,11 @@ mod tests {
         // Total: 2 * 5 + 3 * 4 = 10 + 12 = 22 visible faces
         // 22 faces * 4 vertices = 88 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 88, "Line of 5 voxels should have 22 visible faces (88 vertices)");
+        assert_eq!(
+            positions.len(),
+            88,
+            "Line of 5 voxels should have 22 visible faces (88 vertices)"
+        );
     }
 
     #[test]
@@ -1727,7 +1874,11 @@ mod tests {
         // Single voxel: 6 quads, no merging possible
         // 6 quads * 4 vertices = 24 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 24, "Single voxel should produce 6 quads (24 vertices)");
+        assert_eq!(
+            positions.len(),
+            24,
+            "Single voxel should produce 6 quads (24 vertices)"
+        );
     }
 
     #[test]
@@ -1747,7 +1898,11 @@ mod tests {
         // 2x2x2 same-color cube: all faces merge into 6 quads (one per side)
         // 6 quads * 4 vertices = 24 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 24, "2x2x2 same-color cube should produce 6 quads (24 vertices)");
+        assert_eq!(
+            positions.len(),
+            24,
+            "2x2x2 same-color cube should produce 6 quads (24 vertices)"
+        );
     }
 
     #[test]
@@ -1767,7 +1922,11 @@ mod tests {
         // 8x8x8 same-color cube: all faces merge into 6 quads (one per side)
         // 6 quads * 4 vertices = 24 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 24, "8x8x8 same-color cube should produce 6 quads (24 vertices)");
+        assert_eq!(
+            positions.len(),
+            24,
+            "8x8x8 same-color cube should produce 6 quads (24 vertices)"
+        );
     }
 
     #[test]
@@ -1775,8 +1934,8 @@ mod tests {
         let mut chunk = VoxelChunk::new();
         // Create a 2x2x2 checkerboard - no faces should merge
         let colors = [
-            Voxel::solid(255, 0, 0),   // Red
-            Voxel::solid(0, 255, 0),   // Green
+            Voxel::solid(255, 0, 0), // Red
+            Voxel::solid(0, 255, 0), // Green
         ];
         for x in 8..10 {
             for y in 8..10 {
@@ -1792,7 +1951,11 @@ mod tests {
         // Checkerboard: no faces can merge (different colors)
         // Same as face-culling: 24 visible faces * 4 vertices = 96 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 96, "Checkerboard should not merge (96 vertices)");
+        assert_eq!(
+            positions.len(),
+            96,
+            "Checkerboard should not merge (96 vertices)"
+        );
     }
 
     #[test]
@@ -1812,7 +1975,11 @@ mod tests {
         // Total: 2 (top/bottom) + 4 (sides) = 6 quads
         // 6 quads * 4 vertices = 24 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 24, "4x1x4 flat layer should produce 6 quads (24 vertices)");
+        assert_eq!(
+            positions.len(),
+            24,
+            "4x1x4 flat layer should produce 6 quads (24 vertices)"
+        );
     }
 
     #[test]
@@ -1838,7 +2005,11 @@ mod tests {
         // Total: 2 + 2 + 1 + 1 + 2 + 2 = 10 quads
         // 10 quads * 4 vertices = 40 vertices
         let positions = mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
-        assert_eq!(positions.len(), 40, "2x1 dual-color strips should produce 10 quads (40 vertices)");
+        assert_eq!(
+            positions.len(),
+            40,
+            "2x1 dual-color strips should produce 10 quads (40 vertices)"
+        );
     }
 
     #[test]
@@ -1856,17 +2027,32 @@ mod tests {
         let culled_mesh = build_chunk_mesh(&chunk);
         let greedy_mesh = build_chunk_mesh_greedy(&chunk);
 
-        let culled_verts = culled_mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len();
-        let greedy_verts = greedy_mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len();
+        let culled_verts = culled_mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .len();
+        let greedy_verts = greedy_mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+            .len();
 
         // Face culling: 6 sides * 16 faces = 96 quads = 384 vertices
-        assert_eq!(culled_verts, 384, "Face culling should produce 384 vertices");
-        
+        assert_eq!(
+            culled_verts, 384,
+            "Face culling should produce 384 vertices"
+        );
+
         // Greedy: 6 quads = 24 vertices
-        assert_eq!(greedy_verts, 24, "Greedy meshing should produce 24 vertices");
+        assert_eq!(
+            greedy_verts, 24,
+            "Greedy meshing should produce 24 vertices"
+        );
 
         // Greedy should be 16x better for uniform cubes
-        assert!(greedy_verts < culled_verts / 10, "Greedy should be much better than culling");
+        assert!(
+            greedy_verts < culled_verts / 10,
+            "Greedy should be much better than culling"
+        );
     }
 
     #[test]
@@ -1899,26 +2085,34 @@ mod tests {
 
         // Build meshes without cross-chunk culling
         let meshes_no_culling = build_world_meshes_with_options(&world, false);
-        
+
         // Build meshes with cross-chunk culling
         let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
 
         // Count total vertices
-        let verts_no_culling: usize = meshes_no_culling.iter()
+        let verts_no_culling: usize = meshes_no_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
-        
-        let verts_with_culling: usize = meshes_with_culling.iter()
+
+        let verts_with_culling: usize = meshes_with_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
         // Without cross-chunk culling: 2 voxels * 6 faces * 4 verts = 48 vertices
         // (boundary faces are NOT culled)
-        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
+        assert_eq!(
+            verts_no_culling, 48,
+            "Without cross-chunk culling, should have 48 vertices"
+        );
 
         // With cross-chunk culling: faces at x=31 (+X) and x=32 (-X) are culled
         // 2 voxels * 6 faces - 2 culled faces = 10 faces * 4 verts = 40 vertices
-        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+        assert_eq!(
+            verts_with_culling, 40,
+            "With cross-chunk culling, should have 40 vertices"
+        );
     }
 
     #[test]
@@ -1932,16 +2126,24 @@ mod tests {
         let meshes_no_culling = build_world_meshes_with_options(&world, false);
         let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
 
-        let verts_no_culling: usize = meshes_no_culling.iter()
-            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
-            .sum();
-        
-        let verts_with_culling: usize = meshes_with_culling.iter()
+        let verts_no_culling: usize = meshes_no_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
-        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
-        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+        let verts_with_culling: usize = meshes_with_culling
+            .iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        assert_eq!(
+            verts_no_culling, 48,
+            "Without cross-chunk culling, should have 48 vertices"
+        );
+        assert_eq!(
+            verts_with_culling, 40,
+            "With cross-chunk culling, should have 40 vertices"
+        );
     }
 
     #[test]
@@ -1955,16 +2157,24 @@ mod tests {
         let meshes_no_culling = build_world_meshes_with_options(&world, false);
         let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
 
-        let verts_no_culling: usize = meshes_no_culling.iter()
-            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
-            .sum();
-        
-        let verts_with_culling: usize = meshes_with_culling.iter()
+        let verts_no_culling: usize = meshes_no_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
-        assert_eq!(verts_no_culling, 48, "Without cross-chunk culling, should have 48 vertices");
-        assert_eq!(verts_with_culling, 40, "With cross-chunk culling, should have 40 vertices");
+        let verts_with_culling: usize = meshes_with_culling
+            .iter()
+            .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
+            .sum();
+
+        assert_eq!(
+            verts_no_culling, 48,
+            "Without cross-chunk culling, should have 48 vertices"
+        );
+        assert_eq!(
+            verts_with_culling, 40,
+            "With cross-chunk culling, should have 40 vertices"
+        );
     }
 
     #[test]
@@ -1986,7 +2196,8 @@ mod tests {
 
         // The 4x2x2 cube should have the boundary faces culled
         // Each chunk should contribute to the overall shape
-        let total_verts: usize = meshes.iter()
+        let total_verts: usize = meshes
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
@@ -1997,11 +2208,12 @@ mod tests {
         // Total should be 6 merged quads (if same color) = 24 vertices
         // But split across 2 chunks, so slightly more due to chunk boundaries
         // The internal X faces between chunks ARE culled though
-        
+
         // This is harder to predict exactly, but it should be less than
         // what we'd get without cross-chunk culling
         let meshes_no_cross = build_world_meshes_with_options(&world, true);
-        let total_verts_no_cross: usize = meshes_no_cross.iter()
+        let total_verts_no_cross: usize = meshes_no_cross
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
@@ -2030,11 +2242,13 @@ mod tests {
         let meshes_no_culling = build_world_meshes_with_options(&world, false);
         let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
 
-        let verts_no_culling: usize = meshes_no_culling.iter()
+        let verts_no_culling: usize = meshes_no_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
-        
-        let verts_with_culling: usize = meshes_with_culling.iter()
+
+        let verts_with_culling: usize = meshes_with_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
@@ -2069,11 +2283,13 @@ mod tests {
         let meshes_no_culling = build_world_meshes_with_options(&world, false);
         let meshes_with_culling = build_world_meshes_cross_chunk_with_options(&world, false);
 
-        let verts_no_culling: usize = meshes_no_culling.iter()
+        let verts_no_culling: usize = meshes_no_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
-        
-        let verts_with_culling: usize = meshes_with_culling.iter()
+
+        let verts_with_culling: usize = meshes_with_culling
+            .iter()
             .map(|m| m.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len())
             .sum();
 
@@ -2091,10 +2307,16 @@ mod tests {
         let meshes = build_world_meshes_cross_chunk(&world);
 
         for chunk_mesh in meshes {
-            assert!(chunk_mesh.mesh.attribute(Mesh::ATTRIBUTE_POSITION).is_some());
+            assert!(chunk_mesh
+                .mesh
+                .attribute(Mesh::ATTRIBUTE_POSITION)
+                .is_some());
             assert!(chunk_mesh.mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some());
             assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_COLOR).is_some());
-            assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_EMISSION).is_some());
+            assert!(chunk_mesh
+                .mesh
+                .attribute(ATTRIBUTE_VOXEL_EMISSION)
+                .is_some());
             assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_AO).is_some());
         }
     }

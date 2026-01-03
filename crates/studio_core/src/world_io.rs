@@ -89,7 +89,7 @@ pub type WorldIoResult<T> = Result<T, WorldIoError>;
 pub fn save_world<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIoResult<()> {
     let path = path.as_ref();
     let path_str = path.to_string_lossy().to_lowercase();
-    
+
     if path_str.ends_with(".json") {
         save_world_json(world, path)
     } else {
@@ -112,7 +112,7 @@ pub fn save_world<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIoResult<
 pub fn load_world<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
     let path = path.as_ref();
     let path_str = path.to_string_lossy().to_lowercase();
-    
+
     if path_str.ends_with(".json") {
         load_world_json(path)
     } else {
@@ -124,17 +124,17 @@ pub fn load_world<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
 pub fn save_world_binary<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIoResult<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
-    
+
     // Write header
     writer.write_all(MAGIC)?;
     writer.write_all(&VERSION.to_le_bytes())?;
-    
+
     // Write world data
     let data = bincode::serialize(world)?;
     let size = data.len() as u64;
     writer.write_all(&size.to_le_bytes())?;
     writer.write_all(&data)?;
-    
+
     writer.flush()?;
     Ok(())
 }
@@ -143,16 +143,16 @@ pub fn save_world_binary<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIo
 pub fn load_world_binary<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    
+
     // Read and verify magic bytes
     let mut magic = [0u8; 8];
     reader.read_exact(&mut magic)?;
     if &magic != MAGIC {
         return Err(WorldIoError::InvalidFormat(
-            "Invalid magic bytes - not a voxworld file".to_string()
+            "Invalid magic bytes - not a voxworld file".to_string(),
         ));
     }
-    
+
     // Read and check version
     let mut version_bytes = [0u8; 4];
     reader.read_exact(&mut version_bytes)?;
@@ -160,15 +160,15 @@ pub fn load_world_binary<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
     if version > VERSION {
         return Err(WorldIoError::UnsupportedVersion(version));
     }
-    
+
     // Read world data
     let mut size_bytes = [0u8; 8];
     reader.read_exact(&mut size_bytes)?;
     let size = u64::from_le_bytes(size_bytes) as usize;
-    
+
     let mut data = vec![0u8; size];
     reader.read_exact(&mut data)?;
-    
+
     let world: VoxelWorld = bincode::deserialize(&data)?;
     Ok(world)
 }
@@ -177,10 +177,9 @@ pub fn load_world_binary<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
 pub fn save_world_json<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIoResult<()> {
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
-    
-    serde_json::to_writer_pretty(writer, world)
-        .map_err(|e| WorldIoError::Json(e.to_string()))?;
-    
+
+    serde_json::to_writer_pretty(writer, world).map_err(|e| WorldIoError::Json(e.to_string()))?;
+
     Ok(())
 }
 
@@ -188,10 +187,10 @@ pub fn save_world_json<P: AsRef<Path>>(world: &VoxelWorld, path: P) -> WorldIoRe
 pub fn load_world_json<P: AsRef<Path>>(path: P) -> WorldIoResult<VoxelWorld> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    
-    let world: VoxelWorld = serde_json::from_reader(reader)
-        .map_err(|e| WorldIoError::Json(e.to_string()))?;
-    
+
+    let world: VoxelWorld =
+        serde_json::from_reader(reader).map_err(|e| WorldIoError::Json(e.to_string()))?;
+
     Ok(world)
 }
 
@@ -218,9 +217,9 @@ pub fn world_file_info<P: AsRef<Path>>(path: P) -> WorldIoResult<WorldFileInfo> 
     let path = path.as_ref();
     let metadata = std::fs::metadata(path)?;
     let file_size = metadata.len();
-    
+
     let path_str = path.to_string_lossy().to_lowercase();
-    
+
     if path_str.ends_with(".json") {
         Ok(WorldFileInfo {
             format: WorldFormat::Json,
@@ -231,20 +230,20 @@ pub fn world_file_info<P: AsRef<Path>>(path: P) -> WorldIoResult<WorldFileInfo> 
         // Read header from binary file
         let file = File::open(path)?;
         let mut reader = BufReader::new(file);
-        
+
         let mut magic = [0u8; 8];
         reader.read_exact(&mut magic)?;
-        
+
         if &magic != MAGIC {
             return Err(WorldIoError::InvalidFormat(
-                "Invalid magic bytes".to_string()
+                "Invalid magic bytes".to_string(),
             ));
         }
-        
+
         let mut version_bytes = [0u8; 4];
         reader.read_exact(&mut version_bytes)?;
         let version = u32::from_le_bytes(version_bytes);
-        
+
         Ok(WorldFileInfo {
             format: WorldFormat::Binary,
             version: Some(version),
@@ -308,13 +307,13 @@ mod tests {
     #[test]
     fn test_auto_format_detection() {
         let world = create_test_world();
-        
+
         // Binary
         let temp_binary = NamedTempFile::with_suffix(".voxworld").unwrap();
         save_world(&world, temp_binary.path()).unwrap();
         let loaded = load_world(temp_binary.path()).unwrap();
         assert_eq!(loaded.total_voxel_count(), world.total_voxel_count());
-        
+
         // JSON
         let temp_json = NamedTempFile::with_suffix(".json").unwrap();
         save_world(&world, temp_json.path()).unwrap();
@@ -327,7 +326,7 @@ mod tests {
         let temp_file = NamedTempFile::with_suffix(".voxworld").unwrap();
         let mut file = File::create(temp_file.path()).unwrap();
         file.write_all(b"INVALID!").unwrap();
-        
+
         let result = load_world_binary(temp_file.path());
         assert!(matches!(result, Err(WorldIoError::InvalidFormat(_))));
     }
@@ -337,7 +336,7 @@ mod tests {
         let world = create_test_world();
         let temp_file = NamedTempFile::with_suffix(".voxworld").unwrap();
         save_world_binary(&world, temp_file.path()).unwrap();
-        
+
         let info = world_file_info(temp_file.path()).unwrap();
         assert_eq!(info.format, WorldFormat::Binary);
         assert_eq!(info.version, Some(VERSION));

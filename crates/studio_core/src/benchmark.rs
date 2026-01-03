@@ -22,8 +22,8 @@
 //! FPS: 60.0 | Frame: 16.6ms | Min: 58.2 | Max: 17.2ms
 //! ```
 
-use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::prelude::*;
 
 /// Configuration for benchmark reporting.
 #[derive(Resource)]
@@ -63,8 +63,12 @@ impl BenchmarkStats {
 
         let avg_fps = self.fps_values.iter().sum::<f64>() / self.fps_values.len() as f64;
         let avg_frame_ms = self.frame_times.iter().sum::<f64>() / self.frame_times.len() as f64;
-        
-        let min_fps = self.fps_values.iter().cloned().fold(f64::INFINITY, f64::min);
+
+        let min_fps = self
+            .fps_values
+            .iter()
+            .cloned()
+            .fold(f64::INFINITY, f64::min);
         let max_frame_ms = self.frame_times.iter().cloned().fold(0.0, f64::max);
 
         BenchmarkResult {
@@ -190,24 +194,24 @@ mod tests {
     #[test]
     fn test_benchmark_stats_calculation() {
         let mut stats = BenchmarkStats::default();
-        
+
         // Add some sample data
         stats.fps_values = vec![60.0, 58.0, 62.0, 59.0];
         stats.frame_times = vec![16.6, 17.2, 16.1, 16.9];
 
         let result = stats.calculate();
-        
+
         assert_eq!(result.sample_count, 4);
-        
+
         // Average FPS: (60 + 58 + 62 + 59) / 4 = 59.75
         assert!((result.avg_fps - 59.75).abs() < 0.01);
-        
+
         // Average frame time: (16.6 + 17.2 + 16.1 + 16.9) / 4 = 16.7
         assert!((result.avg_frame_ms - 16.7).abs() < 0.01);
-        
+
         // Min FPS: 58
         assert!((result.min_fps - 58.0).abs() < 0.01);
-        
+
         // Max frame time: 17.2
         assert!((result.max_frame_ms - 17.2).abs() < 0.01);
     }

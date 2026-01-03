@@ -10,7 +10,9 @@
 use bevy::prelude::*;
 use bevy::render::{
     extract_component::ExtractComponent,
-    render_resource::{Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages},
+    render_resource::{
+        Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    },
     renderer::RenderDevice,
     texture::{CachedTexture, TextureCache},
 };
