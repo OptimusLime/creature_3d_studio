@@ -731,18 +731,188 @@ fn test_cube_falls_and_settles() {
 
 ---
 
-## PHASE 6: Integrate with Terrain Occupancy
+## PHASE 6: Terrain Occupancy Collision (Flat Voxel Floor)
 
-**Outcome:** Physics works with voxel terrain instead of Y=0 plane.
+**Outcome:** Physics works with a flat voxel terrain floor instead of Y=0 plane, verified by unit tests.
 
-**Verification:** `cargo run --example p22_voxel_fragment` shows fragments landing on terrain correctly.
+**Verification:** `cargo test -p studio_core --lib test_cube_on_voxel_floor` PASSES
+
+### What This Phase IS:
+- Replace `compute_ground_collision_force` with `compute_terrain_collision_force`
+- Terrain is a FLAT voxel floor (single layer of voxels at Y=0)
+- Use `WorldOccupancy` to check if voxel is solid
+- Each occupied voxel the particle overlaps generates a collision force
+- Forces aggregated exactly like particle-particle collision
+
+### What This Phase IS NOT:
+- Complex terrain shapes (stairs, overhangs, walls)
+- The full p22 example integration
+- GPU collision pipeline
 
 ### Tasks:
 
-- [ ] Replace ground plane collision with terrain occupancy lookup
-- [ ] Each terrain contact generates a force using the same formula
-- [ ] Aggregate terrain contact forces per rigid body
-- [ ] Visual verification in p22
+- [ ] Create `compute_terrain_collision_force(particle_pos, particle_vel, occupancy, config) -> Vec3`
+- [ ] For each voxel the particle overlaps:
+  - [ ] Check if voxel is occupied via `occupancy.get_voxel(ivec3)`
+  - [ ] If occupied, compute collision force using same formula as ground collision
+  - [ ] Terrain voxel center = virtual "ground particle" position
+  - [ ] Sum all voxel collision forces
+- [ ] Create test terrain: flat floor of voxels at Y=0 (10x10 grid)
+- [ ] Write `test_cube_on_voxel_floor` - cube lands on voxel floor, settles
+- [ ] Write `test_cube_misses_voxel_gap` - cube falls through gap in floor
+- [ ] Write `test_terrain_collision_force_matches_ground` - single voxel collision force equals ground collision force
+- [ ] All terrain collision tests pass
+
+### Test Examples:
+
+```rust
+#[test]
+fn test_terrain_collision_force_matches_ground() {
+    // A single voxel at (0,0,0) should produce same force as Y=0 ground plane
+    // when particle is directly above it
+    let config = PhysicsConfig::default();
+    
+    // Create terrain with single voxel at origin
+    let mut occupancy = WorldOccupancy::new();
+    occupancy.set_voxel(IVec3::new(0, 0, 0), true);
+    
+    // Particle at Y=0.3, centered over voxel (same as ground test)
+    let particle_pos = Vec3::new(0.5, 0.3, 0.5); // Center of voxel is (0.5, 0.5, 0.5)
+    let particle_vel = Vec3::ZERO;
+    
+    let terrain_force = compute_terrain_collision_force(particle_pos, particle_vel, &occupancy, &config);
+    let ground_force = compute_ground_collision_force(particle_pos, particle_vel, &config);
+    
+    // Forces should be very similar (not exact due to voxel center vs ground plane)
+    assert!((terrain_force.y - ground_force.y).abs() < 50.0, 
+        "Terrain force {} should be similar to ground force {}", terrain_force.y, ground_force.y);
+    assert!(terrain_force.y > 0.0, "Should push up");
+}
+
+#[test]
+fn test_cube_on_voxel_floor() {
+    // Create 10x10 voxel floor at Y=0
+    let mut occupancy = WorldOccupancy::new();
+    for x in 0..10 {
+        for z in 0..10 {
+            occupancy.set_voxel(IVec3::new(x, 0, z), true);
+        }
+    }
+    
+    let initial_pos = Vec3::new(5.0, 10.0, 5.0); // Above center of floor
+    let initial_vel = Vec3::ZERO;
+    let dt = 1.0 / 60.0;
+    let steps = 600;
+    
+    let positions = simulate_single_body_on_terrain(initial_pos, initial_vel, &occupancy, steps, dt);
+    
+    // Should fall
+    assert!(positions[10].y < positions[0].y, "Should fall");
+    
+    // Should settle on floor (Y ~= 1.0 + 0.5 = 1.5, floor top is Y=1, half particle above)
+    let final_y = positions.last().unwrap().y;
+    assert!((final_y - 1.5).abs() < 0.2, "Should settle near Y=1.5, got {}", final_y);
+    
+    // Should not explode
+    let max_y = positions.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    assert!(max_y < 15.0, "Should not explode, max_y was {}", max_y);
+}
+
+#[test]
+fn test_cube_falls_through_gap() {
+    // Create floor with gap in center
+    let mut occupancy = WorldOccupancy::new();
+    for x in 0..10 {
+        for z in 0..10 {
+            // Gap at (4,5) x (4,5)
+            if x < 4 || x > 5 || z < 4 || z > 5 {
+                occupancy.set_voxel(IVec3::new(x, 0, z), true);
+            }
+        }
+    }
+    
+    let initial_pos = Vec3::new(5.0, 10.0, 5.0); // Above the gap
+    let initial_vel = Vec3::ZERO;
+    let dt = 1.0 / 60.0;
+    let steps = 600;
+    
+    let positions = simulate_single_body_on_terrain(initial_pos, initial_vel, &occupancy, steps, dt);
+    
+    // Should fall through gap (Y goes negative)
+    let min_y = positions.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    assert!(min_y < 0.0, "Should fall through gap, min_y was {}", min_y);
+}
+```
+
+### Section J: Terrain Collision Checklist
+
+| # | Audit Item | Expected Behavior | Status |
+|---|------------|-------------------|--------|
+| J1 | Voxel occupancy lookup | `occupancy.get_voxel(ivec3)` returns true for solid | [ ] TODO |
+| J2 | Particle-voxel overlap detection | Check if particle sphere intersects voxel cube | [ ] TODO |
+| J3 | Voxel center as collision point | Voxel at (x,y,z) has center at (x+0.5, y+0.5, z+0.5) | [ ] TODO |
+| J4 | Collision normal from voxel | Normal points from voxel center toward particle | [ ] TODO |
+| J5 | Penetration calculation | Same formula as ground: diameter - distance | [ ] TODO |
+| J6 | Force formula matches ground | Same spring/damping/tangential as `_collisionReactionWithGround` | [ ] TODO |
+| J7 | Multiple voxel force sum | If particle overlaps N voxels, sum N forces | [ ] TODO |
+| J8 | Empty voxel = no force | No collision force from unoccupied voxels | [ ] TODO |
+
+---
+
+## PHASE 7: p22 Integration (Full Terrain + GPU Pipeline)
+
+**Outcome:** The p22_voxel_fragment example works correctly with the new physics.
+
+**Verification:** `cargo run --example p22_voxel_fragment` - fragments land on terrain, bounce, settle. Visual confirmation.
+
+### What This Phase IS:
+- Wire up the tested physics functions into the existing ECS systems
+- Replace broken physics in `voxel_fragment.rs` with calls to new `physics_math.rs` functions
+- Verify GPU collision pipeline feeds correct data to physics
+- End-to-end visual verification
+
+### What This Phase IS NOT:
+- Writing new physics code (that was Phases 1-6)
+- Fixing GPU collision detection (out of scope, assume it works)
+
+### Tasks:
+
+- [ ] Update `FragmentCollisionConfig` to use reference constants (Section I)
+- [ ] Update `fragment_terrain_collision_system` to use `compute_terrain_collision_force`
+- [ ] Update `gpu_fragment_physics_system` to use new integration functions
+- [ ] Update `integrate_velocity` call with correct friction order (E1)
+- [ ] Update quaternion integration to use correct formula (F2-F5)
+- [ ] Test with p22 example:
+  - [ ] Fragment spawns and falls
+  - [ ] Fragment lands on terrain (no fall-through)
+  - [ ] Fragment bounces (not explosively)
+  - [ ] Fragment settles within ~5 seconds
+  - [ ] No jitter at rest
+- [ ] Test with multiple fragments:
+  - [ ] Fragments collide with each other
+  - [ ] Fragments don't interpenetrate
+  - [ ] All fragments eventually settle
+
+### Files to Modify:
+
+| File | Changes |
+|------|---------|
+| `crates/studio_core/src/physics_math.rs` | Already done in Phases 1-6 |
+| `crates/studio_core/src/voxel_fragment.rs` | Replace physics code with calls to `physics_math` |
+| `crates/studio_core/src/lib.rs` | Export `physics_math` module |
+
+### Verification Checklist:
+
+| # | Visual Check | Expected | Status |
+|---|--------------|----------|--------|
+| V1 | Fragment falls | Y decreases over time | [ ] TODO |
+| V2 | Fragment hits terrain | Stops falling, bounces | [ ] TODO |
+| V3 | Bounce is reasonable | Goes up ~50% of drop height, not higher | [ ] TODO |
+| V4 | Fragment settles | Comes to rest within 5 seconds | [ ] TODO |
+| V5 | No jitter at rest | Fragment is visually still | [ ] TODO |
+| V6 | No explosion | Fragment stays in scene bounds | [ ] TODO |
+| V7 | Two fragments collide | They push apart, don't overlap | [ ] TODO |
+| V8 | Fragments on slope | Roll/slide down, don't stick | [ ] TODO |
 
 ---
 
@@ -756,7 +926,8 @@ fn test_cube_falls_and_settles() {
 | 3 | Aggregation correct | `cargo test` - aggregation tests pass |
 | 4 | Single body works | `cargo test test_cube_falls_and_settles` passes |
 | 5 | Two bodies work | `cargo test test_two_cubes_collide` passes |
-| 6 | Terrain works | Visual verification in p22 |
+| 6 | Terrain collision works | `cargo test test_cube_on_voxel_floor` passes |
+| 7 | p22 integration works | Visual verification - fragments land and settle correctly |
 
 ---
 
@@ -768,3 +939,4 @@ fn test_cube_falls_and_settles() {
 - Proceed to next phase without current phase verified
 - Make "optimizations" before correctness is proven
 - Write interactive examples as primary verification (TESTS FIRST)
+- Skip unit tests and go straight to visual verification
