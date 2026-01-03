@@ -1,8 +1,10 @@
 // Voxel Collision Compute Shader
 // GPU-accelerated collision detection for voxel fragments against terrain
+// AND fragment-to-fragment collision via spatial hash grid.
 //
-// This shader checks each voxel of a fragment against the world terrain occupancy
-// and outputs collision contact points for physics response.
+// This shader checks each voxel of a fragment against:
+// 1. World terrain occupancy (existing)
+// 2. Spatial hash grid for other fragment voxels (new)
 //
 // Texture format: R32Uint per texel, where each texel stores 32 bits (one Z-column)
 // Lookup: texel(x,y) contains bits for z=0..31
@@ -13,6 +15,18 @@
 
 const CHUNK_SIZE: i32 = 32;
 const MAX_CONTACTS_PER_FRAGMENT: u32 = 64u;
+
+// Spatial hash grid constants
+const HASH_GRID_SIZE: u32 = 64u;
+const HASH_GRID_TOTAL_CELLS: u32 = 262144u; // 64^3
+const HASH_GRID_ORIGIN_X: f32 = -32.0;
+const HASH_GRID_ORIGIN_Y: f32 = -32.0;
+const HASH_GRID_ORIGIN_Z: f32 = -32.0;
+const HASH_GRID_CELL_SIZE: f32 = 1.0; // Same as voxel size
+
+// Contact type constants
+const CONTACT_TYPE_TERRAIN: u32 = 0u;
+const CONTACT_TYPE_FRAGMENT: u32 = 1u;
 
 // ============================================================================
 // Bind Groups
@@ -30,6 +44,13 @@ const MAX_CONTACTS_PER_FRAGMENT: u32 = 64u;
 
 // Group 2: Uniforms
 @group(2) @binding(0) var<uniform> uniforms: CollisionUniforms;
+
+// Group 3: Spatial hash grid for fragment-to-fragment collision
+// Each cell stores up to 4 particle IDs as consecutive i32 values.
+// Layout: hash_grid[cell_idx * 4 + slot] where slot is 0-3
+// Particle ID encoding: (fragment_index << 16) | local_voxel_index
+// -1 indicates empty slot.
+@group(3) @binding(0) var<storage, read_write> hash_grid: array<atomic<i32>>;
 
 // ============================================================================
 // Structures
@@ -64,9 +85,17 @@ struct Contact {
     position: vec3<f32>,
     penetration: f32,
     
-    // Contact normal (pointing out of terrain)
+    // Contact normal (pointing out of terrain/other fragment)
     normal: vec3<f32>,
     fragment_index: u32,
+    
+    // Contact type: 0 = terrain, 1 = fragment
+    contact_type: u32,
+    // Other fragment index (only valid if contact_type == 1)
+    other_fragment: u32,
+    // Padding to maintain 16-byte alignment
+    _pad0: u32,
+    _pad1: u32,
 }
 
 struct CollisionUniforms {
@@ -149,6 +178,42 @@ fn rotate_by_quat(v: vec3<f32>, q: vec4<f32>) -> vec3<f32> {
     let uv = cross(qv, v);
     let uuv = cross(qv, uv);
     return v + ((uv * q.w) + uuv) * 2.0;
+}
+
+// ============================================================================
+// Spatial Hash Grid Functions
+// ============================================================================
+
+// Convert world position to grid cell coordinates
+fn world_to_grid_coords(world_pos: vec3<f32>) -> vec3<i32> {
+    let grid_pos = (world_pos - vec3<f32>(HASH_GRID_ORIGIN_X, HASH_GRID_ORIGIN_Y, HASH_GRID_ORIGIN_Z)) / HASH_GRID_CELL_SIZE;
+    return vec3<i32>(i32(floor(grid_pos.x)), i32(floor(grid_pos.y)), i32(floor(grid_pos.z)));
+}
+
+// Convert grid cell coordinates to linear index
+fn grid_coords_to_index(coords: vec3<i32>) -> i32 {
+    // Check bounds
+    if coords.x < 0 || coords.x >= i32(HASH_GRID_SIZE) ||
+       coords.y < 0 || coords.y >= i32(HASH_GRID_SIZE) ||
+       coords.z < 0 || coords.z >= i32(HASH_GRID_SIZE) {
+        return -1;
+    }
+    return coords.x + coords.y * i32(HASH_GRID_SIZE) + coords.z * i32(HASH_GRID_SIZE) * i32(HASH_GRID_SIZE);
+}
+
+// Encode a particle ID: (fragment_index << 16) | local_voxel_index
+fn encode_particle_id(fragment_index: u32, local_voxel_index: u32) -> i32 {
+    return i32((fragment_index << 16u) | (local_voxel_index & 0xFFFFu));
+}
+
+// Decode fragment index from particle ID
+fn decode_fragment_index(particle_id: i32) -> u32 {
+    return u32(particle_id >> 16);
+}
+
+// Decode local voxel index from particle ID
+fn decode_local_voxel_index(particle_id: i32) -> u32 {
+    return u32(particle_id) & 0xFFFFu;
 }
 
 // Calculate the contact normal for a collision
@@ -328,7 +393,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
     
     // Check for collision with terrain
     if is_terrain_occupied(voxel_pos) {
-        // Collision detected! Output a contact
+        // Collision detected! Output a terrain contact
         let normal = calculate_contact_normal(world_pos, voxel_pos);
         let penetration = calculate_penetration(world_pos, voxel_pos, normal);
         
@@ -341,8 +406,210 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
             contact.penetration = penetration;
             contact.normal = normal;
             contact.fragment_index = fragment.fragment_index;
+            contact.contact_type = CONTACT_TYPE_TERRAIN;
+            contact.other_fragment = 0u;
+            contact._pad0 = 0u;
+            contact._pad1 = 0u;
             
             contacts[contact_idx] = contact;
         }
     }
+    
+    // Check for collision with other fragments via spatial hash grid
+    let grid_coords = world_to_grid_coords(world_pos);
+    
+    // Check this cell and all 26 neighbors (3x3x3 = 27 cells)
+    for (var dx: i32 = -1; dx <= 1; dx++) {
+        for (var dy: i32 = -1; dy <= 1; dy++) {
+            for (var dz: i32 = -1; dz <= 1; dz++) {
+                let neighbor_coords = grid_coords + vec3<i32>(dx, dy, dz);
+                let cell_idx = grid_coords_to_index(neighbor_coords);
+                
+                if cell_idx < 0 {
+                    continue;
+                }
+                
+                // Check all 4 slots in this cell
+                let base_idx = u32(cell_idx) * 4u;
+                
+                for (var slot: u32 = 0u; slot < 4u; slot++) {
+                    let particle_id = atomicLoad(&hash_grid[base_idx + slot]);
+                    if particle_id < 0 {
+                        continue; // Empty slot
+                    }
+                    
+                    let other_frag_idx = decode_fragment_index(particle_id);
+                    
+                    // Skip self-collision (same fragment)
+                    if other_frag_idx == fragment.fragment_index {
+                        continue;
+                    }
+                    
+                    // We found a voxel from another fragment in a nearby cell!
+                    // This means we have a potential collision.
+                    // For Phase 1, we just emit a contact - Phase 2 will add physics response.
+                    
+                    // Get the other fragment's data to compute proper contact
+                    if other_frag_idx >= arrayLength(&fragments) {
+                        continue;
+                    }
+                    let other_fragment = fragments[other_frag_idx];
+                    
+                    // Decode the local voxel index of the other particle
+                    let other_local_idx = decode_local_voxel_index(particle_id);
+                    let other_size = other_fragment.size;
+                    
+                    // Convert linear index back to 3D local position
+                    let other_local_x = other_local_idx % other_size.x;
+                    let other_local_y = (other_local_idx / other_size.x) % other_size.y;
+                    let other_local_z = other_local_idx / (other_size.x * other_size.y);
+                    let other_local_pos = vec3<u32>(other_local_x, other_local_y, other_local_z);
+                    
+                    // Compute world position of other voxel (same transform as main kernel)
+                    let other_half_size = vec3<f32>(f32(other_size.x), f32(other_size.y), f32(other_size.z)) * 0.5;
+                    let other_local_float = vec3<f32>(f32(other_local_pos.x) + 0.5, f32(other_local_pos.y) + 0.5, f32(other_local_pos.z) + 0.5);
+                    let other_centered = other_local_float - other_half_size;
+                    let other_rotated = rotate_by_quat(other_centered, other_fragment.rotation);
+                    let other_world_pos = other_fragment.position + other_rotated;
+                    
+                    // Check if voxels are actually overlapping (within 1 voxel distance)
+                    let diff = world_pos - other_world_pos;
+                    let dist = length(diff);
+                    
+                    if dist < 1.0 { // Voxels are overlapping
+                        // Compute contact normal (points from other to self)
+                        var normal = vec3<f32>(0.0, 1.0, 0.0);
+                        if dist > 0.01 {
+                            normal = normalize(diff);
+                        }
+                        
+                        // Penetration is how much they overlap
+                        let penetration = 1.0 - dist;
+                        
+                        // Atomically allocate a slot in the output buffer
+                        let contact_idx = atomicAdd(&contact_count, 1u);
+                        
+                        if contact_idx < uniforms.max_contacts {
+                            var contact: Contact;
+                            contact.position = (world_pos + other_world_pos) * 0.5; // Midpoint
+                            contact.penetration = penetration;
+                            contact.normal = normal;
+                            contact.fragment_index = fragment.fragment_index;
+                            contact.contact_type = CONTACT_TYPE_FRAGMENT;
+                            contact.other_fragment = other_frag_idx;
+                            contact._pad0 = 0u;
+                            contact._pad1 = 0u;
+                            
+                            contacts[contact_idx] = contact;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Clear Hash Grid Kernel
+// ============================================================================
+
+// Clears the spatial hash grid by setting all slots to -1 (empty).
+// Each cell has 4 slots, so we clear HASH_GRID_TOTAL_CELLS * 4 values.
+// Dispatch with: ceil(HASH_GRID_TOTAL_CELLS * 4 / 64) workgroups
+@compute @workgroup_size(64, 1, 1)
+fn clear_hash_grid(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let slot_idx = global_id.x;
+    
+    if slot_idx >= HASH_GRID_TOTAL_CELLS * 4u {
+        return;
+    }
+    
+    // Set this slot to -1 (empty)
+    atomicStore(&hash_grid[slot_idx], -1);
+}
+
+// ============================================================================
+// Populate Hash Grid Kernel
+// ============================================================================
+
+// Populates the spatial hash grid with fragment voxel positions.
+// Each occupied voxel in a fragment is inserted into the grid.
+// Dispatch strategy: same as main collision kernel (per fragment, 8x8xZ workgroups)
+@compute @workgroup_size(8, 8, 1)
+fn populate_hash_grid(@builtin(global_invocation_id) global_id: vec3<u32>,
+                      @builtin(workgroup_id) workgroup_id: vec3<u32>) {
+    
+    // Fragment index comes from uniforms, set per dispatch
+    let fragment_idx = uniforms.fragment_index;
+    
+    if fragment_idx >= arrayLength(&fragments) {
+        return;
+    }
+    
+    let fragment = fragments[fragment_idx];
+    
+    // Local position within fragment (same as main kernel)
+    let local_pos = vec3<u32>(global_id.x, global_id.y, workgroup_id.z);
+    
+    // Check bounds
+    if local_pos.x >= fragment.size.x || 
+       local_pos.y >= fragment.size.y ||
+       local_pos.z >= fragment.size.z {
+        return;
+    }
+    
+    // Check if this voxel is occupied
+    if !is_fragment_voxel_occupied(fragment, local_pos) {
+        return;
+    }
+    
+    // Compute world position (same as main kernel)
+    let half_size = vec3<f32>(f32(fragment.size.x), f32(fragment.size.y), f32(fragment.size.z)) * 0.5;
+    let local_float = vec3<f32>(f32(local_pos.x) + 0.5, f32(local_pos.y) + 0.5, f32(local_pos.z) + 0.5);
+    let centered = local_float - half_size;
+    let rotated = rotate_by_quat(centered, fragment.rotation);
+    let world_pos = fragment.position + rotated;
+    
+    // Compute grid cell
+    let grid_coords = world_to_grid_coords(world_pos);
+    let cell_idx = grid_coords_to_index(grid_coords);
+    
+    if cell_idx < 0 {
+        return; // Out of grid bounds
+    }
+    
+    // Compute local voxel index (linear) for encoding
+    let local_voxel_idx = local_pos.x + local_pos.y * fragment.size.x + local_pos.z * fragment.size.x * fragment.size.y;
+    
+    // Encode particle ID
+    let particle_id = encode_particle_id(fragment.fragment_index, local_voxel_idx);
+    
+    // Atomically insert into hash grid cell
+    // Try each slot in order using atomicCompareExchangeWeak
+    // Note: WGSL atomicCompareExchangeWeak returns __atomic_compare_exchange_result<i32>
+    // which has old_value and exchanged fields
+    
+    let base_idx = u32(cell_idx) * 4u;
+    
+    // Try slot 0
+    var result = atomicCompareExchangeWeak(&hash_grid[base_idx + 0u], -1, particle_id);
+    if result.exchanged {
+        return;
+    }
+    
+    // Try slot 1
+    result = atomicCompareExchangeWeak(&hash_grid[base_idx + 1u], -1, particle_id);
+    if result.exchanged {
+        return;
+    }
+    
+    // Try slot 2
+    result = atomicCompareExchangeWeak(&hash_grid[base_idx + 2u], -1, particle_id);
+    if result.exchanged {
+        return;
+    }
+    
+    // Try slot 3
+    result = atomicCompareExchangeWeak(&hash_grid[base_idx + 3u], -1, particle_id);
+    // If this fails too, cell is full - particle is not inserted (collision missed)
 }

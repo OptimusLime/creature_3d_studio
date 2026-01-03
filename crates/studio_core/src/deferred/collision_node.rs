@@ -27,7 +27,7 @@ use super::collision_extract::ExtractedFragments;
 use super::collision_prepare::{CollisionBindGroups, CollisionFragmentBuffer, GpuCollisionState};
 use super::collision_readback::GpuCollisionContacts;
 use crate::voxel_collision_gpu::{
-    CollisionUniforms, GpuCollisionPipeline, GpuCollisionResult, GpuContact, 
+    CollisionUniforms, GpuCollisionPipeline, GpuCollisionResult, GpuContact, HASH_GRID_TOTAL_CELLS,
     MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
 };
 
@@ -39,9 +39,18 @@ pub struct CollisionComputeLabel;
 /// This runs as a system in the Render schedule, after bind groups are prepared.
 ///
 /// ## Dispatch Strategy
-/// 
-/// We dispatch once per fragment, updating a uniform with the current fragment index.
-/// This ensures each fragment is processed correctly regardless of count.
+///
+/// The collision pipeline runs in three phases:
+///
+/// 1. **Clear Hash Grid**: Single dispatch to reset the spatial hash grid
+///    - Workgroups: ceil(HASH_GRID_TOTAL_CELLS / 64)
+///
+/// 2. **Populate Hash Grid**: One dispatch per fragment to insert voxels
+///    - Same workgroup layout as collision: 8x8xZ per fragment
+///
+/// 3. **Collision Detection**: One dispatch per fragment
+///    - Checks terrain occupancy AND spatial hash grid
+///    - Outputs contacts for both terrain and fragment collisions
 ///
 /// For each fragment dispatch:
 /// - workgroups_x = ceil(size.x / 8)
@@ -87,9 +96,20 @@ pub fn run_collision_compute_system(
         return; // This is normal when no fragments exist
     }
 
-    // Get the compute pipeline
-    let Some(pipeline) = pipeline_cache.get_compute_pipeline(collision_pipeline.pipeline_id) else {
+    // Get all required pipelines
+    let Some(main_pipeline) = pipeline_cache.get_compute_pipeline(collision_pipeline.pipeline_id)
+    else {
         // Pipeline not ready yet
+        return;
+    };
+    let Some(clear_grid_pipeline) =
+        pipeline_cache.get_compute_pipeline(collision_pipeline.clear_grid_pipeline_id)
+    else {
+        return;
+    };
+    let Some(populate_grid_pipeline) =
+        pipeline_cache.get_compute_pipeline(collision_pipeline.populate_grid_pipeline_id)
+    else {
         return;
     };
 
@@ -103,8 +123,70 @@ pub fn run_collision_compute_system(
         label: Some("collision_compute_encoder"),
     });
 
-    // Dispatch once per fragment
-    // Each fragment gets its own compute pass with updated uniform containing fragment_index
+    // ========================================================================
+    // Phase 1: Clear Hash Grid
+    // ========================================================================
+    {
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("clear_hash_grid_pass"),
+            timestamp_writes: None,
+        });
+
+        compute_pass.set_pipeline(clear_grid_pipeline);
+        // Bind all groups even though clear only uses group 3
+        compute_pass.set_bind_group(0, &bind_groups.occupancy_bind_group, &[]);
+        compute_pass.set_bind_group(1, &bind_groups.fragment_bind_group, &[]);
+        compute_pass.set_bind_group(2, &bind_groups.uniform_bind_group, &[]);
+        compute_pass.set_bind_group(3, &bind_groups.hash_grid_bind_group, &[]);
+
+        // Dispatch: ceil(HASH_GRID_TOTAL_CELLS * 4 / 64) workgroups
+        // Each cell has 4 slots to clear
+        let total_slots = HASH_GRID_TOTAL_CELLS * 4;
+        let workgroups = (total_slots + 63) / 64;
+        compute_pass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    // ========================================================================
+    // Phase 2: Populate Hash Grid (one dispatch per fragment)
+    // ========================================================================
+    for (frag_idx, frag) in extracted_fragments.fragments.iter().enumerate() {
+        // Update uniforms with current fragment index
+        let uniforms = CollisionUniforms {
+            max_contacts: MAX_GPU_CONTACTS,
+            chunk_index_size: MAX_GPU_CHUNKS * 4,
+            fragment_index: frag_idx as u32,
+            fragment_count: fragment_buffer.count,
+        };
+        render_queue.write_buffer(
+            &collision_pipeline.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+
+        // Calculate dispatch size for this fragment
+        let workgroups_x = (frag.size.x + 7) / 8;
+        let workgroups_y = (frag.size.y + 7) / 8;
+        let workgroups_z = frag.size.z;
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("populate_hash_grid_pass"),
+                timestamp_writes: None,
+            });
+
+            compute_pass.set_pipeline(populate_grid_pipeline);
+            // Bind all groups even though populate only uses groups 1, 2, 3
+            compute_pass.set_bind_group(0, &bind_groups.occupancy_bind_group, &[]);
+            compute_pass.set_bind_group(1, &bind_groups.fragment_bind_group, &[]);
+            compute_pass.set_bind_group(2, &bind_groups.uniform_bind_group, &[]);
+            compute_pass.set_bind_group(3, &bind_groups.hash_grid_bind_group, &[]);
+            compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+        }
+    }
+
+    // ========================================================================
+    // Phase 3: Collision Detection (one dispatch per fragment)
+    // ========================================================================
     for (frag_idx, frag) in extracted_fragments.fragments.iter().enumerate() {
         // Update uniforms with current fragment index
         let uniforms = CollisionUniforms {
@@ -122,7 +204,7 @@ pub fn run_collision_compute_system(
         // Calculate dispatch size for this fragment
         // Workgroup size is 8x8x1, so we need:
         // - ceil(size.x / 8) workgroups in X
-        // - ceil(size.y / 8) workgroups in Y  
+        // - ceil(size.y / 8) workgroups in Y
         // - size.z workgroups in Z (each handles one Z slice)
         let workgroups_x = (frag.size.x + 7) / 8;
         let workgroups_y = (frag.size.y + 7) / 8;
@@ -130,7 +212,11 @@ pub fn run_collision_compute_system(
 
         trace!(
             "Fragment {}: size {:?}, dispatch {}x{}x{}",
-            frag_idx, frag.size, workgroups_x, workgroups_y, workgroups_z
+            frag_idx,
+            frag.size,
+            workgroups_x,
+            workgroups_y,
+            workgroups_z
         );
 
         // Begin compute pass for this fragment
@@ -140,10 +226,11 @@ pub fn run_collision_compute_system(
                 timestamp_writes: None,
             });
 
-            compute_pass.set_pipeline(pipeline);
+            compute_pass.set_pipeline(main_pipeline);
             compute_pass.set_bind_group(0, &bind_groups.occupancy_bind_group, &[]);
             compute_pass.set_bind_group(1, &bind_groups.fragment_bind_group, &[]);
             compute_pass.set_bind_group(2, &bind_groups.uniform_bind_group, &[]);
+            compute_pass.set_bind_group(3, &bind_groups.hash_grid_bind_group, &[]);
             compute_pass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
         }
     }
@@ -186,43 +273,48 @@ pub fn run_collision_compute_system(
         count_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).ok();
         });
-        
+
         // Poll until ready
         let _ = render_device.wgpu_device().poll(wgpu::PollType::wait());
-        
+
         if rx.recv().ok().and_then(|r| r.ok()).is_some() {
             let count_data = count_slice.get_mapped_range();
             let contact_count = *bytemuck::from_bytes::<u32>(&count_data);
             drop(count_data);
             collision_pipeline.count_readback_buffer.unmap();
-            
+
             trace!("GPU collision readback: {} contacts", contact_count);
-            
+
             if contact_count > 0 {
                 // Map the contacts buffer
-                let contacts_size = (contact_count as usize).min(MAX_GPU_CONTACTS as usize) 
+                let contacts_size = (contact_count as usize).min(MAX_GPU_CONTACTS as usize)
                     * std::mem::size_of::<GpuContact>();
-                let contacts_slice = collision_pipeline.readback_buffer.slice(..contacts_size as u64);
+                let contacts_slice = collision_pipeline
+                    .readback_buffer
+                    .slice(..contacts_size as u64);
                 let (tx2, rx2) = std::sync::mpsc::channel();
                 contacts_slice.map_async(wgpu::MapMode::Read, move |result| {
                     tx2.send(result).ok();
                 });
-                
+
                 let _ = render_device.wgpu_device().poll(wgpu::PollType::wait());
-                
+
                 if rx2.recv().ok().and_then(|r| r.ok()).is_some() {
                     let contacts_data = contacts_slice.get_mapped_range();
                     let gpu_contacts: &[GpuContact] = bytemuck::cast_slice(&contacts_data);
-                    
+
                     let result = GpuCollisionResult {
                         contacts: gpu_contacts.to_vec(),
                         fragment_entities: entity_map,
                     };
-                    
-                    trace!("GPU collision: {} contacts for {} entities", 
-                        result.contacts.len(), result.fragment_entities.len());
+
+                    trace!(
+                        "GPU collision: {} contacts for {} entities",
+                        result.contacts.len(),
+                        result.fragment_entities.len()
+                    );
                     contacts.set(result);
-                    
+
                     drop(contacts_data);
                 }
                 collision_pipeline.readback_buffer.unmap();

@@ -482,6 +482,26 @@ pub fn gpu_fragment_terrain_collision_system(
         return;
     }
 
+    // Log contact summary when fragment-fragment collisions occur (Phase 1 verification)
+    let terrain_total: usize = collision_result
+        .contacts
+        .iter()
+        .filter(|c| c.contact_type == 0)
+        .count();
+    let fragment_total: usize = collision_result
+        .contacts
+        .iter()
+        .filter(|c| c.contact_type == 1)
+        .count();
+    if fragment_total > 0 {
+        info!(
+            "GPU collision: {} contacts (terrain: {}, fragment: {})",
+            collision_result.contacts.len(),
+            terrain_total,
+            fragment_total
+        );
+    }
+
     // Build entity-to-index map for quick lookup
     let entity_to_idx: std::collections::HashMap<Entity, u32> = collision_result
         .fragment_entities

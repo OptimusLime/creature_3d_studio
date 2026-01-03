@@ -6,8 +6,7 @@
 use bevy::prelude::*;
 use bevy::render::{
     render_resource::{
-        BindGroup, BindGroupEntry, BindingResource, Buffer,
-        BufferInitDescriptor, BufferUsages,
+        BindGroup, BindGroupEntry, BindingResource, Buffer, BufferInitDescriptor, BufferUsages,
     },
     renderer::{RenderDevice, RenderQueue},
 };
@@ -36,6 +35,8 @@ pub struct CollisionBindGroups {
     pub fragment_bind_group: BindGroup,
     /// Group 2: Uniforms
     pub uniform_bind_group: BindGroup,
+    /// Group 3: Spatial hash grid for fragment-to-fragment collision
+    pub hash_grid_bind_group: BindGroup,
 }
 
 /// Buffer holding fragment data for the current frame.
@@ -56,7 +57,10 @@ pub fn init_gpu_occupancy(
         return;
     }
 
-    info!("Initializing GPU world occupancy with {} chunk capacity", MAX_GPU_CHUNKS);
+    info!(
+        "Initializing GPU world occupancy with {} chunk capacity",
+        MAX_GPU_CHUNKS
+    );
     let gpu_occupancy = GpuWorldOccupancy::new(&render_device, MAX_GPU_CHUNKS);
     commands.insert_resource(gpu_occupancy);
     commands.insert_resource(GpuCollisionState::default());
@@ -129,25 +133,27 @@ pub fn prepare_collision_bind_groups(
     // Layout: For each fragment, store occupancy data consecutively
     // Fragment i's data starts at occupancy_offset stored in GpuFragmentData
     let mut occupancy_buffer_data: Vec<u32> = Vec::new();
-    let mut gpu_fragments: Vec<GpuFragmentData> = Vec::with_capacity(extracted_fragments.fragments.len());
-    
+    let mut gpu_fragments: Vec<GpuFragmentData> =
+        Vec::with_capacity(extracted_fragments.fragments.len());
+
     for (idx, frag) in extracted_fragments.fragments.iter().enumerate() {
         let occupancy_offset = occupancy_buffer_data.len() as u32;
         let occupancy_data = &frag.occupancy_data;
         let occupancy_size = occupancy_data.len() as u32;
-        
+
         // Check if we have room
-        if occupancy_buffer_data.len() + occupancy_data.len() > MAX_FRAGMENT_OCCUPANCY_U32S as usize {
+        if occupancy_buffer_data.len() + occupancy_data.len() > MAX_FRAGMENT_OCCUPANCY_U32S as usize
+        {
             warn!(
                 "Fragment occupancy buffer overflow at fragment {}. Truncating.",
                 idx
             );
             break;
         }
-        
+
         // Append this fragment's occupancy data
         occupancy_buffer_data.extend_from_slice(occupancy_data);
-        
+
         // Create GPU fragment with correct offset/size
         gpu_fragments.push(GpuFragmentData::new_with_occupancy(
             frag.position,
@@ -242,7 +248,9 @@ pub fn prepare_collision_bind_groups(
             },
             BindGroupEntry {
                 binding: 3,
-                resource: collision_pipeline.fragment_occupancy_buffer.as_entire_binding(),
+                resource: collision_pipeline
+                    .fragment_occupancy_buffer
+                    .as_entire_binding(),
             },
         ],
     );
@@ -257,10 +265,21 @@ pub fn prepare_collision_bind_groups(
         }],
     );
 
+    // Group 3: Spatial hash grid
+    let hash_grid_bind_group = render_device.create_bind_group(
+        "collision_hash_grid_bind_group",
+        &collision_pipeline.hash_grid_layout,
+        &[BindGroupEntry {
+            binding: 0,
+            resource: collision_pipeline.hash_grid_buffer.as_entire_binding(),
+        }],
+    );
+
     commands.insert_resource(CollisionBindGroups {
         occupancy_bind_group,
         fragment_bind_group,
         uniform_bind_group,
+        hash_grid_bind_group,
     });
 }
 
@@ -276,7 +295,7 @@ pub fn init_collision_pipeline(
     if existing.is_some() {
         return;
     }
-    
+
     let Some(gpu_occupancy) = gpu_occupancy else {
         return;
     };
