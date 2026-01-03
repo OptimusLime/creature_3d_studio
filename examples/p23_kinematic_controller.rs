@@ -52,12 +52,18 @@ fn main() {
         })
         .with_update_systems(|app| {
             app.add_systems(PostStartup, spawn_player_system);
+            // Input and gravity run first
             app.add_systems(Update, (
                 spawn_player_deferred,
                 attach_player_camera,
                 player_input,
                 apply_gravity,
                 apply_player_velocity,
+            ).chain());
+            // check_grounded_state must run AFTER gpu_kinematic_collision_system
+            // which runs in VoxelFragmentPlugin. Use Last to ensure it runs after.
+            app.add_systems(Last, (
+                check_grounded_state,
                 camera_follow,
             ).chain());
         });
@@ -150,21 +156,12 @@ impl Default for MovementConfig {
 }
 
 /// Component for player-specific state.
-#[derive(Component)]
+#[derive(Component, Default)]
 struct Player {
     /// Current velocity (we track this manually for kinematic bodies)
     velocity: Vec3,
     /// Whether player is on ground (detected from GPU collision)
     grounded: bool,
-}
-
-impl Default for Player {
-    fn default() -> Self {
-        Self {
-            velocity: Vec3::ZERO,
-            grounded: false,
-        }
-    }
 }
 
 #[derive(Component)]
@@ -391,7 +388,6 @@ fn apply_gravity(
 fn apply_player_velocity(
     time: Res<Time>,
     mut player_query: Query<(&mut Player, &mut Transform)>,
-    gpu_contacts: Option<Res<studio_core::GpuCollisionContacts>>,
 ) {
     let dt = time.delta_secs();
     
@@ -402,22 +398,45 @@ fn apply_player_velocity(
         // Apply velocity
         transform.translation += player.velocity * clamped_dt;
         
-        // Check GPU contacts for grounded state
-        // The gpu_kinematic_collision_system runs after this and adjusts position,
-        // but we can check contacts here to update grounded state
-        if let Some(ref contacts) = gpu_contacts {
-            let result = contacts.get();
-            // Find our entity in the contacts
-            for (idx, &entity) in result.fragment_entities.iter().enumerate() {
-                // We can't easily get our entity here, so we check all floor contacts
-                // TODO: Better approach would be to store entity ID in Player component
-                if result.has_floor_contact_for_fragment(idx as u32) {
-                    player.grounded = true;
-                    if player.velocity.y < 0.0 {
-                        player.velocity.y = 0.0;
-                    }
-                    break;
-                }
+        // Reset grounded each frame - will be set true by check_grounded_state if we have floor contact
+        player.grounded = false;
+    }
+}
+
+/// Check GPU collision contacts to determine grounded state and zero velocity when landing.
+/// This runs AFTER gpu_kinematic_collision_system so position has been corrected.
+fn check_grounded_state(
+    gpu_contacts: Option<Res<studio_core::GpuCollisionContacts>>,
+    mut player_query: Query<(Entity, &mut Player)>,
+) {
+    let Some(gpu_contacts) = gpu_contacts else { return };
+    let result = gpu_contacts.get();
+    
+    if result.contacts.is_empty() {
+        return;
+    }
+    
+    // Build entity-to-index map
+    let entity_to_idx: std::collections::HashMap<Entity, u32> = result
+        .fragment_entities
+        .iter()
+        .enumerate()
+        .map(|(idx, &entity)| (entity, idx as u32))
+        .collect();
+    
+    for (entity, mut player) in player_query.iter_mut() {
+        // Look up this entity's collision index
+        let Some(&fragment_idx) = entity_to_idx.get(&entity) else {
+            continue;
+        };
+        
+        // Check if we have floor contact
+        if result.has_floor_contact_for_fragment(fragment_idx) {
+            player.grounded = true;
+            
+            // Zero vertical velocity when landing to prevent bouncing
+            if player.velocity.y < 0.0 {
+                player.velocity.y = 0.0;
             }
         }
     }
