@@ -1,6 +1,10 @@
+XeGTAO
 # Rust
 /target/
 Cargo.lock
+
+# Test output
+/screenshots/
 
 # IDE
 .idea/

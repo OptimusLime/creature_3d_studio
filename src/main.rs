@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use studio_core::CorePlugin;
+use studio_core::{CorePlugin, OrbitCameraBundle};
 use studio_physics::PhysicsPlugin;
 use studio_scripting::ScriptingPlugin;
 
@@ -9,13 +9,13 @@ fn main() {
         .add_plugins(CorePlugin)
         .add_plugins(PhysicsPlugin)
         .add_plugins(ScriptingPlugin)
+        // Black void background
+        .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
         .add_systems(Startup, setup)
         .run();
 }
 
 fn setup(mut commands: Commands) {
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(0.0, 5.0, 15.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
+    // Orbit camera looking at origin from distance 15
+    commands.spawn(OrbitCameraBundle::new(15.0, Vec3::ZERO));
 }
