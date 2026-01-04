@@ -2,95 +2,84 @@
 
 This document outlines the phased approach to porting MarkovJunior to Rust with Lua integration, following our HOW_WE_WORK principles of incremental building with verification.
 
-## Overview
+## Summary
 
-### Goals
-1. **Port MarkovJunior to Rust** - Pure Rust implementation of the core algorithm
-2. **Integrate with mlua** - Lua scripting for model definition and runtime control
-3. **Connect to VoxelWorld** - Output MarkovJunior results as voxels in our engine
-4. **Maintain test compliance** - Verify against C# reference at every step
+Port MarkovJunior procedural generation system from C# to Rust, integrate with our Lua scripting, and connect output to VoxelWorld for rendering in Bevy.
 
-### Key Integration Points
-- `VoxelWorld` - Our existing voxel storage (chunked, supports multi-chunk)
-- `creature_script.rs` - Existing Lua pattern for voxel placement
-- `studio_scripting` - Existing Lua VM infrastructure with hot-reload
+## Context & Motivation
+
+MarkovJunior is a probabilistic programming language for procedural generation using rewrite rules. We want to use it to generate voxel structures (dungeons, mazes, terrain) that can be rendered in our engine.
+
+## Naming Conventions for This PR
+
+- **Module:** `markov_junior` (matches original project name)
+- **Structs:** `MjGrid`, `MjRule`, `MjPalette` (Mj prefix to avoid conflicts)
+- **Files:** snake_case matching struct names (`mj_grid.rs`, `one_node.rs`)
+- **Tests:** `test_<function>_<scenario>` (e.g., `test_wave_single_value`)
+
+## Key Integration Points
+- `VoxelWorld` in `crates/studio_core/src/voxel.rs` - Our voxel storage
+- `creature_script.rs` - Existing Lua voxel placement pattern
+- `studio_scripting/src/lib.rs` - Lua VM with hot-reload
 
 ---
 
-## Step 1: Core Rust Port
+## Phase 0: End-to-End Skeleton
 
-### Phase 1.1: Foundation Data Structures
+**Outcome:** Minimal working pipeline from hardcoded model to VoxelWorld, rendered on screen.
 
-**Outcome:** Core data structures compile and have full unit test coverage.
-
-**Files to Create:**
-```
-crates/studio_core/src/markov_junior/
-├── mod.rs              # Module root, re-exports
-├── grid.rs             # Grid struct
-├── rule.rs             # Rule struct + parsing
-├── symmetry.rs         # SymmetryHelper equivalent
-└── array_helper.rs     # Array utilities
-```
+**Verification:** Run `cargo run --example p25_markov_junior`, see a 3x3x1 white cross pattern on black background, screenshot saved to `screenshots/p25_markov_junior.png`.
 
 **Tasks:**
 
-1. **Create `grid.rs`**
-   - `MjGrid` struct with `state: Vec<u8>`, `MX, MY, MZ: usize`
-   - `values: HashMap<char, u8>` for symbol -> index mapping
-   - `waves: HashMap<char, u32>` for symbol -> bitmask mapping
-   - `fn wave(&self, values: &str) -> u32` - convert string to wave bitmask
-   - `fn matches(&self, rule: &Rule, x, y, z) -> bool` - pattern matching
-
-   **Verification:**
+1. Create `crates/studio_core/src/markov_junior/mod.rs` with placeholder `MjGrid` struct:
    ```rust
-   #[test] fn test_grid_wave_single() { assert_eq!(grid.wave("B"), 0b001); }
-   #[test] fn test_grid_wave_multi() { assert_eq!(grid.wave("RB"), 0b011); }
-   #[test] fn test_grid_matches_simple() { /* B=W rule at (0,0,0) */ }
+   pub struct MjGrid { pub state: Vec<u8>, pub mx: usize, pub my: usize, pub mz: usize }
    ```
 
-2. **Create `rule.rs`**
-   - `Rule` struct with `input: Vec<u32>`, `output: Vec<u8>`, dimensions
-   - `ishifts: Vec<Vec<(i32, i32, i32)>>` - precomputed lookup
-   - `oshifts: Vec<Vec<(i32, i32, i32)>>` - for backward propagation
-   - `fn parse(input: &str, output: &str, grid: &MjGrid) -> Result<Rule>`
-   - `fn z_rotated(&self) -> Rule`, `fn y_rotated(&self) -> Rule`, `fn reflected(&self) -> Rule`
+2. Create `crates/studio_core/src/markov_junior/voxel_bridge.rs` with `to_voxel_world()` that maps value 0=empty, 1=white voxel.
 
-   **Verification:**
-   ```rust
-   #[test] fn test_rule_parse_1d() { /* "RBB" -> "GGR" */ }
-   #[test] fn test_rule_parse_2d() { /* "RB/WW" -> "GG/RR" */ }
-   #[test] fn test_rule_z_rotate() { /* verify rotation math */ }
-   #[test] fn test_rule_ishifts() { /* verify shift computation */ }
-   ```
+3. Create `examples/p25_markov_junior.rs` that:
+   - Creates a hardcoded 5x5x1 MjGrid with a cross pattern (center + 4 adjacent = value 1)
+   - Converts to VoxelWorld
+   - Renders with camera at (10, 10, 10) looking at origin
+   - Takes screenshot after 5 frames
 
-3. **Create `symmetry.rs`**
-   - `square_symmetries()` - 8 elements for 2D
-   - `cube_symmetries()` - 48 elements for 3D
-   - `get_symmetry(d2: bool, name: &str) -> Option<Vec<bool>>`
-   - Subgroup definitions: `()`, `(x)`, `(y)`, `(xy)`, etc.
+4. Add `pub mod markov_junior;` to `crates/studio_core/src/lib.rs`
 
-   **Verification:**
-   ```rust
-   #[test] fn test_square_symmetry_count() { assert_eq!(results.len(), 8); }
-   #[test] fn test_square_no_duplicates() { /* after dedup */ }
-   #[test] fn test_cube_symmetry_count() { assert_eq!(results.len(), 48); }
-   ```
+**This phase proves the pipeline works before adding algorithm complexity.**
 
-4. **Create `array_helper.rs`**
-   - `array_2d<T>(mx: usize, my: usize, val: T) -> Vec<Vec<T>>`
-   - `array_3d<T>(...) -> Vec<Vec<Vec<T>>>`
-   - `set_2d<T>(arr: &mut Vec<Vec<T>>, val: T)`
+---
 
-   **Verification:** Simple unit tests for each helper.
+## Phase 1: Foundation Data Structures
 
-**Phase 1.1 Verification:**
-```bash
-cargo test -p studio_core markov_junior::grid
-cargo test -p studio_core markov_junior::rule
-cargo test -p studio_core markov_junior::symmetry
-# All tests pass
-```
+**Outcome:** Grid and Rule structs compile, parse patterns, and match correctly.
+
+**Verification:** Run `cargo test -p studio_core markov_junior` and see:
+- `test_grid_wave_bw ... ok` (grid.wave("B") == 1, grid.wave("W") == 2, grid.wave("BW") == 3)
+- `test_grid_matches_rule ... ok` (rule "B" matches at (0,0,0) on grid starting with all B's)
+- `test_rule_parse_2d ... ok` (parse "RB/WW" produces input array of length 4)
+- `test_symmetry_square_8 ... ok` (square_symmetries returns exactly 8 unique variants)
+
+**Tasks:**
+
+1. Create `crates/studio_core/src/markov_junior/grid.rs`:
+   - Struct `MjGrid` with fields: `state: Vec<u8>`, `mx: usize`, `my: usize`, `mz: usize`, `c: u8` (color count), `values: HashMap<char, u8>`, `waves: HashMap<char, u32>`
+   - Method `fn new(mx, my, mz, values_str: &str) -> Self` that parses "BRGW" into mappings
+   - Method `fn wave(&self, chars: &str) -> u32` returning bitmask
+   - Method `fn matches(&self, rule: &MjRule, x: i32, y: i32, z: i32) -> bool`
+   - Test `test_grid_wave_bw`: create grid with "BW", assert wave("B")==1, wave("W")==2, wave("BW")==3
+
+2. Create `crates/studio_core/src/markov_junior/rule.rs`:
+   - Struct `MjRule` with fields: `input: Vec<u32>`, `output: Vec<u8>`, `imx/imy/imz: usize`, `omx/omy/omz: usize`, `p: f64`
+   - Function `fn parse(input_str: &str, output_str: &str, grid: &MjGrid) -> Result<MjRule>` where `/` = Y separator, ` ` = Z separator
+   - Test `test_rule_parse_2d`: parse "RB/WW" -> "GG/RR", verify input.len()==4, imx==2, imy==2
+
+3. Create `crates/studio_core/src/markov_junior/symmetry.rs`:
+   - Function `fn square_symmetries<T>(thing: T, rotate: fn, reflect: fn, same: fn) -> Vec<T>` returning up to 8 variants
+   - Test `test_symmetry_square_8`: pass identity rule, get 8 results (or fewer if symmetric)
+
+4. Update `crates/studio_core/src/markov_junior/mod.rs` to export all types.
 
 ---
 
@@ -138,25 +127,12 @@ crates/studio_core/src/markov_junior/
 5. **Create `parallel_node.rs`**
    - Apply all matches simultaneously (double-buffer)
 
-**Phase 1.2 Verification:**
-```rust
-#[test]
-fn test_one_node_basic() {
-    // Grid: BBBBB, Rule: B=W
-    // After 3 steps: should have 3 W's
-}
-
-#[test]
-fn test_all_node_fills_grid() {
-    // Rule: B=W, should fill entire grid in 1 step
-}
-
-#[test]
-fn test_markov_backtracker() {
-    // Maze backtracker: RBB=GGR, RGG=WWR
-    // Verify maze generation produces connected result
-}
-```
+**Phase 1.2 Verification:** Run `cargo test -p studio_core markov_junior::node` and see:
+- `test_one_node_applies_single_match ... ok` (5x1 grid "BBBBB" with rule B→W, after 1 step exactly 1 cell is W)
+- `test_all_node_fills_entire_grid ... ok` (5x1 grid "BBBBB" with rule B→W, after 1 step all 5 cells are W)
+- `test_all_node_non_overlapping ... ok` (5x1 grid with rule BB→WW, after 1 step exactly 4 cells are W, 1 remains B)
+- `test_markov_node_loops_until_done ... ok` (MarkovNode with B→W rule, runs until no matches, all cells become W)
+- `test_sequence_node_runs_in_order ... ok` (SequenceNode with [B→R, R→W], final grid all W)
 
 ---
 
@@ -197,29 +173,36 @@ crates/studio_core/src/markov_junior/
    }
    ```
 
-**Phase 1.3 Verification - C# Cross-Validation:**
+**Phase 1.3 Verification:** Run `cargo test -p studio_core markov_junior::interpreter` and see:
+- `test_interpreter_step_returns_false_when_done ... ok` (interpreter.step() returns false after model completes)
+- `test_interpreter_run_with_max_steps ... ok` (run(seed, 10) stops after exactly 10 steps even if not done)
+- `test_basic_model_matches_reference ... ok` (see cross-validation below)
 
-Create a test that:
-1. Runs C# MarkovJunior with seed 12345 on "Basic" model
-2. Captures final grid state
-3. Runs Rust implementation with same seed
-4. Compares byte-for-byte
+**C# Cross-Validation Setup:**
 
-```rust
-#[test]
-fn test_basic_matches_csharp() {
-    let expected = include_bytes!("../test_data/basic_seed_12345.bin");
-    let mut interp = create_basic_interpreter();
-    interp.run(12345, 1000);
-    assert_eq!(interp.grid.state, expected);
-}
-```
+1. Generate reference data (one-time setup):
+   ```bash
+   cd MarkovJunior && dotnet build
+   # Add to Program.cs: --dump-state flag that writes grid.state to binary file
+   dotnet run -- Basic 12345 --dump-state ../crates/studio_core/src/markov_junior/test_data/basic_12345.bin
+   ```
 
-**Generate reference data from C#:**
-```bash
-cd MarkovJunior
-dotnet run -- --model Basic --seed 12345 --output test_data/basic_seed_12345.bin
-```
+2. Binary format: `[MX:u32][MY:u32][MZ:u32][state:u8[MX*MY*MZ]]` little-endian
+
+3. Test implementation:
+   ```rust
+   #[test]
+   fn test_basic_model_matches_reference() {
+       let expected = include_bytes!("test_data/basic_12345.bin");
+       let (mx, my, mz, ref_state) = parse_reference(expected);
+       
+       let mut interp = Interpreter::new_basic_model(); // hardcoded Basic model
+       interp.run(12345, 10000);
+       
+       assert_eq!(interp.grid.mx, mx);
+       assert_eq!(interp.grid.state, ref_state, "Grid state mismatch vs C# reference");
+   }
+   ```
 
 ---
 
@@ -257,27 +240,15 @@ crates/studio_core/src/markov_junior/
    }
    ```
 
-**Phase 1.4 Verification:**
-```rust
-#[test]
-fn test_load_basic() {
-    let model = Model::load("MarkovJunior/models/Basic.xml").unwrap();
-    assert_eq!(model.grid.C, 2); // B, W
-}
+**Phase 1.4 Verification:** Run `cargo test -p studio_core markov_junior::loader` and see:
+- `test_load_basic_xml ... ok` (loads `MarkovJunior/models/Basic.xml`, grid.c == 2, values contains 'B' and 'W')
+- `test_load_maze_backtracker_xml ... ok` (loads model, root is MarkovNode with 2 OneNode children)
+- `test_load_missing_file_returns_error ... ok` (Model::load("nonexistent.xml") returns Err)
+- `test_maze_backtracker_matches_reference ... ok` (run with seed 42, compare to `test_data/maze_backtracker_42.bin`)
 
-#[test]
-fn test_load_maze_backtracker() {
-    let model = Model::load("MarkovJunior/models/MazeBacktracker.xml").unwrap();
-    // Verify structure: markov with 2 one nodes
-}
-
-#[test]
-fn test_maze_backtracker_matches_csharp() {
-    let mut model = Model::load("MarkovJunior/models/MazeBacktracker.xml").unwrap();
-    model.run(42);
-    let expected = include_bytes!("../test_data/maze_42.bin");
-    assert_eq!(model.grid.state, expected);
-}
+**Reference files to generate:**
+```bash
+dotnet run -- MazeBacktracker 42 --dump-state ../crates/studio_core/src/markov_junior/test_data/maze_backtracker_42.bin
 ```
 
 ---
@@ -301,25 +272,12 @@ crates/studio_core/src/markov_junior/
 3. `observation.rs` - Constraint propagation
 4. `search.rs` - Full A* (complex, can defer)
 
-**Phase 1.5 Verification:**
-```rust
-#[test]
-fn test_field_compute() {
-    // Grid with B's and one W
-    // Field from W should show distances
-}
-
-#[test]
-fn test_path_node_connects() {
-    // Start at corner, goal at opposite corner
-    // Path should connect them
-}
-
-#[test]
-fn test_dijkstra_dungeon_matches_csharp() {
-    // Compare against C# reference
-}
-```
+**Phase 1.5 Verification:** Run `cargo test -p studio_core markov_junior::field` and see:
+- `test_field_bfs_distance ... ok` (5x5 grid with W at center, field.compute() returns distance 2 at corners, 0 at center)
+- `test_field_unreachable_returns_max ... ok` (grid with wall blocking, unreachable cells have distance i32::MAX)
+- `test_path_node_connects_corners ... ok` (10x10 grid, path from (0,0) to (9,9), result has connected path of P values)
+- `test_path_node_no_path_returns_false ... ok` (blocked grid, path_node.go() returns false)
+- `test_dijkstra_dungeon_matches_reference ... ok` (NystromDungeon seed 123, compare to `test_data/nystrom_123.bin`)
 
 ---
 
@@ -344,20 +302,16 @@ crates/studio_core/src/markov_junior/
 3. `tile_node.rs` - Load tilesets, build propagator
 4. `overlap_node.rs` - Extract patterns from sample, build propagator
 
-**Phase 1.6 Verification:**
-```rust
-#[test]
-fn test_wfc_propagate_no_contradiction() {
-    // Simple 2-tile case should resolve
-}
+**Phase 1.6 Verification:** Run `cargo test -p studio_core markov_junior::wfc` and see:
+- `test_wave_entropy_calculation ... ok` (wave with 4 possible values has entropy ~2.0, wave with 1 value has entropy 0)
+- `test_wfc_propagate_reduces_possibilities ... ok` (after observe+propagate, adjacent cells have fewer possibilities)
+- `test_wfc_contradiction_detected ... ok` (impossible constraints return WfcResult::Contradiction)
+- `test_tile_wfc_resolves_all_cells ... ok` (simple 2-tile model, all cells have exactly 1 possibility after completion)
+- `test_overlap_wfc_flowers ... ok` (Flowers model seed 77, no contradiction, all cells resolved)
 
-#[test]
-fn test_tile_wfc_knots() {
-    let mut model = Model::load("MarkovJunior/models/Knots3D.xml").unwrap();
-    model.run(123);
-    // Verify no contradiction (all cells resolved)
-}
-```
+**WFC-specific validation:** For WFC, exact byte-match with C# is hard due to entropy tie-breaking. Instead verify:
+1. No contradictions (all cells have exactly 1 value)
+2. All adjacency constraints satisfied (check all neighbor pairs are valid)
 
 ---
 
@@ -556,20 +510,11 @@ local palette = mj.palette.create({
 })
 ```
 
-**Phase 3.1 Verification:**
-```rust
-#[test]
-fn test_grid_to_voxel_world() {
-    let mut grid = MjGrid::new(4, 4, 1, "BW");
-    grid.state[0] = 1; // W at (0,0,0)
-    
-    let palette = MjPalette::default();
-    let world = grid.to_voxel_world(&palette);
-    
-    assert!(world.get_voxel(0, 0, 0).is_some());
-    assert!(world.get_voxel(1, 0, 0).is_none()); // B = transparent
-}
-```
+**Phase 3.1 Verification:** Run `cargo test -p studio_core markov_junior::voxel_bridge` and see:
+- `test_grid_to_voxel_world_maps_values ... ok` (4x4x1 grid with W at (0,0,0), world.get_voxel(0,0,0) returns Some with white color)
+- `test_grid_to_voxel_world_skips_transparent ... ok` (B value at (1,0,0) maps to None/empty in VoxelWorld)
+- `test_palette_pico8_has_16_colors ... ok` (MjPalette::pico8() returns palette with 16 entries)
+- `test_palette_maps_char_to_color ... ok` (palette.get_voxel('R') returns red voxel)
 
 ---
 
@@ -640,10 +585,13 @@ fn setup(
 ```
 
 **Phase 3.2 Verification:**
-```bash
-cargo run --example p25_markov_junior
-# Visual: 3D maze appears on screen
-```
+1. Run `cargo run --example p25_markov_junior`
+2. Screenshot saved to `screenshots/p25_markov_junior.png`
+3. Verify screenshot shows:
+   - 3D structure visible (not black screen)
+   - Multiple voxels present (maze walls)
+   - Camera positioned to see entire structure
+4. Console output includes "Generated N voxels" where N > 100
 
 ---
 
@@ -681,10 +629,13 @@ fn mj_step_system(
 ```
 
 **Phase 3.3 Verification:**
-```bash
-cargo run --example p26_markov_animated
-# Visual: Watch maze grow step by step
-```
+1. Run `cargo run --example p26_markov_animated`
+2. Verify visual behavior:
+   - Initial frame shows only seed voxel(s)
+   - Structure grows over multiple frames (not instant)
+   - Press Space to pause/resume animation
+   - Console prints "Step N: M voxels" showing incremental growth
+3. Screenshot at frame 100 saved to `screenshots/p26_markov_animated_100.png`
 
 ---
 
@@ -730,10 +681,18 @@ end
 ```
 
 **Phase 3.4 Verification:**
-```bash
-cargo run --example p27_markov_lua_demo
-# Click "Generate" button, see voxel world update
-```
+1. Run `cargo run --example p27_markov_lua_demo`
+2. Verify UI:
+   - ImGui window titled "MarkovJunior Controls" appears
+   - "Generate" button visible
+   - "Step x100" button visible
+3. Click "Generate":
+   - Console prints "Generated with seed N"
+   - Voxel world updates (not empty)
+4. Modify `assets/scripts/markov_demo.lua`, save file:
+   - Console prints hot-reload message
+   - Next "Generate" click uses updated script
+5. Screenshot after generate saved to `screenshots/p27_markov_lua.png`
 
 ---
 
