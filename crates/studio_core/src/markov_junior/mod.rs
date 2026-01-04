@@ -26,13 +26,59 @@
 //! }
 //! ```
 
+pub mod all_node;
+pub mod convchain_node;
+pub mod convolution_node;
+pub mod field;
+pub mod helper;
+pub mod interpreter;
+pub mod loader;
+pub mod lua_api;
+pub mod map_node;
+pub mod model;
+pub mod node;
+#[cfg(test)]
+mod node_tests;
+pub mod observation;
+pub mod one_node;
+pub mod parallel_node;
+pub mod path_node;
+pub mod render;
 pub mod rule;
+pub mod rule_node;
+pub mod search;
 pub mod symmetry;
 pub mod voxel_bridge;
+pub mod wfc;
 
+pub use all_node::AllNode;
+pub use convchain_node::ConvChainNode;
+pub use convolution_node::{ConvolutionNode, ConvolutionRule};
+pub use field::{delta_pointwise, Field};
+pub use interpreter::Interpreter;
+pub use loader::{load_model, load_model_str, LoadError, LoadedModel};
+pub use map_node::{MapNode, ScaleFactor};
+pub use model::Model;
+pub use node::{ExecutionContext, MarkovNode, Node, SequenceNode};
+pub use observation::Observation;
+pub use one_node::OneNode;
+pub use parallel_node::ParallelNode;
+pub use path_node::PathNode;
 pub use rule::{MjRule, RuleParseError};
+pub use rule_node::RuleNodeData;
+pub use search::{run_search, Board};
 pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
+pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
+
+// PNG rendering (no GPU needed)
+pub use render::{
+    default_colors, pico8_colors, render_2d, render_3d_isometric, render_to_png,
+    render_to_png_with_colors, save_png,
+};
+
+// Lua API
+pub use lua_api::{register_markov_junior_api, MjLuaVoxelWorld};
 
 use std::collections::HashMap;
 use std::fmt;
