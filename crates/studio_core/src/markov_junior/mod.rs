@@ -30,11 +30,31 @@ pub mod rule;
 pub mod symmetry;
 pub mod voxel_bridge;
 
-pub use rule::MjRule;
+pub use rule::{MjRule, RuleParseError};
 pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
 
 use std::collections::HashMap;
+use std::fmt;
+
+/// Error type for grid construction.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GridError {
+    /// Duplicate character found in values string
+    DuplicateCharacter(char),
+}
+
+impl fmt::Display for GridError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GridError::DuplicateCharacter(c) => {
+                write!(f, "duplicate character '{}' in values string", c)
+            }
+        }
+    }
+}
+
+impl std::error::Error for GridError {}
 
 /// A 3D grid of voxel states for MarkovJunior.
 ///
@@ -47,6 +67,8 @@ use std::collections::HashMap;
 pub struct MjGrid {
     /// Flat array of voxel states (byte indices, not wave bitmasks)
     pub state: Vec<u8>,
+    /// Mask for tracking which cells have been modified/claimed (used by AllNode)
+    pub mask: Vec<bool>,
     /// Width (X dimension)
     pub mx: usize,
     /// Height (Y dimension)
@@ -67,8 +89,10 @@ impl MjGrid {
     /// Create a new grid filled with zeros (no value/wave mappings).
     /// Use `with_values` for a grid with proper mappings.
     pub fn new(mx: usize, my: usize, mz: usize) -> Self {
+        let size = mx * my * mz;
         Self {
-            state: vec![0; mx * my * mz],
+            state: vec![0; size],
+            mask: vec![false; size],
             mx,
             my,
             mz,
@@ -87,7 +111,21 @@ impl MjGrid {
     /// - 'R' -> index 2, wave 0b100
     ///
     /// The wildcard '*' is automatically added with wave = (1 << c) - 1
+    ///
+    /// # Panics
+    /// Panics if the values string contains duplicate characters.
+    /// Use `try_with_values` for fallible construction.
     pub fn with_values(mx: usize, my: usize, mz: usize, values_str: &str) -> Self {
+        Self::try_with_values(mx, my, mz, values_str).expect("duplicate character in values string")
+    }
+
+    /// Try to create a grid with value mappings, returning an error on duplicate characters.
+    pub fn try_with_values(
+        mx: usize,
+        my: usize,
+        mz: usize,
+        values_str: &str,
+    ) -> Result<Self, GridError> {
         let mut grid = Self::new(mx, my, mz);
 
         // Remove spaces from values string
@@ -97,6 +135,9 @@ impl MjGrid {
         grid.characters = values_str.chars().collect();
 
         for (i, ch) in values_str.chars().enumerate() {
+            if grid.values.contains_key(&ch) {
+                return Err(GridError::DuplicateCharacter(ch));
+            }
             grid.values.insert(ch, i as u8);
             grid.waves.insert(ch, 1 << i);
         }
@@ -104,7 +145,7 @@ impl MjGrid {
         // Add wildcard '*' that matches all values
         grid.waves.insert('*', (1u32 << grid.c) - 1);
 
-        grid
+        Ok(grid)
     }
 
     /// Get the wave bitmask for a string of characters.
@@ -225,9 +266,15 @@ impl MjGrid {
         }
     }
 
-    /// Clear the grid (set all cells to 0).
+    /// Clear the grid (set all cells to 0) and reset mask.
     pub fn clear(&mut self) {
         self.state.fill(0);
+        self.mask.fill(false);
+    }
+
+    /// Clear just the mask (used before each AllNode step).
+    pub fn clear_mask(&mut self) {
+        self.mask.fill(false);
     }
 
     /// Count voxels with non-zero values.
@@ -273,6 +320,12 @@ mod tests {
         assert_eq!(grid.waves.get(&'B'), Some(&1));
         assert_eq!(grid.waves.get(&'W'), Some(&2));
         assert_eq!(grid.waves.get(&'*'), Some(&3)); // wildcard
+    }
+
+    #[test]
+    fn test_grid_duplicate_character_error() {
+        let result = MjGrid::try_with_values(5, 5, 1, "BWB");
+        assert!(matches!(result, Err(GridError::DuplicateCharacter('B'))));
     }
 
     #[test]

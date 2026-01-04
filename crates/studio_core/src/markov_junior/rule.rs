@@ -17,6 +17,9 @@ pub struct MjRule {
     pub input: Vec<u32>,
     /// Output pattern as byte values (0xff = don't change)
     pub output: Vec<u8>,
+    /// Compact input: single value per cell, 0xff for wildcard
+    /// Used for fast observation matching
+    pub binput: Vec<u8>,
     /// Input pattern dimensions
     pub imx: usize,
     pub imy: usize,
@@ -29,6 +32,12 @@ pub struct MjRule {
     pub p: f64,
     /// Number of colors (for symmetry operations)
     pub c: u8,
+    /// Precomputed input shifts: ishifts[color] = [(x,y,z), ...] positions that match color
+    /// Used for incremental pattern matching
+    pub ishifts: Vec<Vec<(i32, i32, i32)>>,
+    /// Precomputed output shifts: oshifts[color] = [(x,y,z), ...] positions that output color
+    /// Only populated when input and output dimensions match
+    pub oshifts: Vec<Vec<(i32, i32, i32)>>,
 }
 
 impl fmt::Debug for MjRule {
@@ -76,6 +85,92 @@ impl fmt::Display for RuleParseError {
 impl std::error::Error for RuleParseError {}
 
 impl MjRule {
+    /// Create a rule directly from pattern arrays.
+    /// Computes binput, ishifts, and oshifts automatically.
+    pub fn from_patterns(
+        input: Vec<u32>,
+        imx: usize,
+        imy: usize,
+        imz: usize,
+        output: Vec<u8>,
+        omx: usize,
+        omy: usize,
+        omz: usize,
+        c: u8,
+        p: f64,
+    ) -> Self {
+        // Compute binput
+        let wildcard = (1u32 << c) - 1;
+        let binput: Vec<u8> = input
+            .iter()
+            .map(|&w| {
+                if w == wildcard {
+                    0xff
+                } else {
+                    w.trailing_zeros() as u8
+                }
+            })
+            .collect();
+
+        // Compute ishifts
+        let mut ishifts: Vec<Vec<(i32, i32, i32)>> = vec![Vec::new(); c as usize];
+        for z in 0..imz {
+            for y in 0..imy {
+                for x in 0..imx {
+                    let idx = x + y * imx + z * imx * imy;
+                    let mut w = input[idx];
+                    for color in 0..c as usize {
+                        if (w & 1) == 1 {
+                            ishifts[color].push((x as i32, y as i32, z as i32));
+                        }
+                        w >>= 1;
+                    }
+                }
+            }
+        }
+
+        // Compute oshifts (only when dimensions match)
+        let oshifts = if omx == imx && omy == imy && omz == imz {
+            let mut oshifts: Vec<Vec<(i32, i32, i32)>> = vec![Vec::new(); c as usize];
+            for z in 0..omz {
+                for y in 0..omy {
+                    for x in 0..omx {
+                        let idx = x + y * omx + z * omx * omy;
+                        let o = output[idx];
+                        if o != 0xff {
+                            if (o as usize) < oshifts.len() {
+                                oshifts[o as usize].push((x as i32, y as i32, z as i32));
+                            }
+                        } else {
+                            for color in 0..c as usize {
+                                oshifts[color].push((x as i32, y as i32, z as i32));
+                            }
+                        }
+                    }
+                }
+            }
+            oshifts
+        } else {
+            Vec::new()
+        };
+
+        Self {
+            input,
+            output,
+            binput,
+            imx,
+            imy,
+            imz,
+            omx,
+            omy,
+            omz,
+            p,
+            c,
+            ishifts,
+            oshifts,
+        }
+    }
+
     /// Parse a rule from input/output pattern strings.
     ///
     /// Pattern format:
@@ -118,9 +213,65 @@ impl MjRule {
             }
         }
 
+        // Compute binput: single value per cell, 0xff for wildcard
+        let wildcard = (1u32 << grid.c) - 1;
+        let binput: Vec<u8> = input
+            .iter()
+            .map(|&w| {
+                if w == wildcard {
+                    0xff
+                } else {
+                    w.trailing_zeros() as u8
+                }
+            })
+            .collect();
+
+        // Compute ishifts: for each color, which positions in input match it
+        let mut ishifts: Vec<Vec<(i32, i32, i32)>> = vec![Vec::new(); grid.c as usize];
+        for z in 0..imz {
+            for y in 0..imy {
+                for x in 0..imx {
+                    let idx = x + y * imx + z * imx * imy;
+                    let mut w = input[idx];
+                    for c in 0..grid.c as usize {
+                        if (w & 1) == 1 {
+                            ishifts[c].push((x as i32, y as i32, z as i32));
+                        }
+                        w >>= 1;
+                    }
+                }
+            }
+        }
+
+        // Compute oshifts: for each color, which positions output it
+        // Only when dimensions match (same grid rule)
+        let oshifts = if omx == imx && omy == imy && omz == imz {
+            let mut oshifts: Vec<Vec<(i32, i32, i32)>> = vec![Vec::new(); grid.c as usize];
+            for z in 0..omz {
+                for y in 0..omy {
+                    for x in 0..omx {
+                        let idx = x + y * omx + z * omx * omy;
+                        let o = output[idx];
+                        if o != 0xff {
+                            oshifts[o as usize].push((x as i32, y as i32, z as i32));
+                        } else {
+                            // Wildcard output: add to all colors
+                            for c in 0..grid.c as usize {
+                                oshifts[c].push((x as i32, y as i32, z as i32));
+                            }
+                        }
+                    }
+                }
+            }
+            oshifts
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             input,
             output,
+            binput,
             imx,
             imy,
             imz,
@@ -129,12 +280,19 @@ impl MjRule {
             omz,
             p: 1.0,
             c: grid.c,
+            ishifts,
+            oshifts,
         })
     }
 
     /// Parse a pattern string into characters and dimensions.
     ///
     /// Returns (chars, MX, MY, MZ) where chars is in x + y*MX + z*MX*MY order.
+    ///
+    /// C# reference (Rule.cs Parse method):
+    /// - Split by ' ' for Z layers, then by '/' for Y rows
+    /// - Z layers are REVERSED: linesz = lines[MZ - 1 - z]
+    /// - Y rows are NOT reversed
     fn parse_pattern(s: &str) -> Result<(Vec<char>, usize, usize, usize), RuleParseError> {
         if s.is_empty() {
             return Err(RuleParseError::EmptyPattern);
@@ -144,58 +302,41 @@ impl MjRule {
         let layers: Vec<&str> = s.split(' ').collect();
         let mz = layers.len();
 
-        let mut all_chars = Vec::new();
-        let mut mx = 0;
-        let mut my = 0;
+        // Determine dimensions from first layer
+        let first_rows: Vec<&str> = layers[0].split('/').collect();
+        let my = first_rows.len();
+        let mx = if !first_rows.is_empty() {
+            first_rows[0].chars().count()
+        } else {
+            return Err(RuleParseError::EmptyPattern);
+        };
 
-        for (z, layer) in layers.iter().enumerate() {
+        // Pre-allocate result array
+        let mut result = vec![' '; mx * my * mz];
+
+        // Process layers with Z reversal to match C#
+        // C#: linesz = lines[MZ - 1 - z]
+        for z in 0..mz {
+            let layer = layers[mz - 1 - z]; // Reverse Z order!
             let rows: Vec<&str> = layer.split('/').collect();
 
-            if z == 0 {
-                my = rows.len();
-            } else if rows.len() != my {
+            if rows.len() != my {
                 return Err(RuleParseError::NonRectangularPattern);
             }
 
-            // Process rows in reverse order (top row is last in Y)
-            // Actually in MarkovJunior, the first row in the string is y=0
-            // Looking at C# Parse: linesz = lines[MZ - 1 - z], then y iterates normally
-            // The Z is reversed but Y is not. Let's keep it simple for now.
             for (y, row) in rows.iter().enumerate() {
-                if z == 0 && y == 0 {
-                    mx = row.chars().count();
-                } else if row.chars().count() != mx {
+                if row.chars().count() != mx {
                     return Err(RuleParseError::NonRectangularPattern);
                 }
 
-                // We need to store in x + y*MX + z*MX*MY order
-                // Build up the chars array properly
-                let row_chars: Vec<char> = row.chars().collect();
-
-                // Calculate starting index for this row
-                let base_idx = y * mx + z * mx * my;
-                while all_chars.len() < base_idx + mx {
-                    all_chars.push(' '); // placeholder
-                }
-
-                for (x, ch) in row_chars.into_iter().enumerate() {
+                for (x, ch) in row.chars().enumerate() {
                     let idx = x + y * mx + z * mx * my;
-                    if idx < all_chars.len() {
-                        all_chars[idx] = ch;
-                    } else {
-                        all_chars.push(ch);
-                    }
+                    result[idx] = ch;
                 }
             }
         }
 
-        // Compact: ensure we have exactly mx * my * mz chars
-        all_chars.truncate(mx * my * mz);
-        if all_chars.len() != mx * my * mz {
-            return Err(RuleParseError::NonRectangularPattern);
-        }
-
-        Ok((all_chars, mx, my, mz))
+        Ok((result, mx, my, mz))
     }
 
     /// Create a Z-rotated (around Z axis) version of this rule.
@@ -204,14 +345,17 @@ impl MjRule {
         let mut new_input = vec![0u32; self.input.len()];
         let mut new_output = vec![0u8; self.output.len()];
 
+        let new_imx = self.imy;
+        let new_imy = self.imx;
+        let new_omx = self.omy;
+        let new_omy = self.omx;
+
         // For each position in new array, find source position
         // new[x + y*IMY + z*IMX*IMY] = old[IMX-1-y + x*IMX + z*IMX*IMY]
         for z in 0..self.imz {
-            for y in 0..self.imx {
-                // new Y goes up to old IMX
-                for x in 0..self.imy {
-                    // new X goes up to old IMY
-                    let new_idx = x + y * self.imy + z * self.imx * self.imy;
+            for y in 0..new_imy {
+                for x in 0..new_imx {
+                    let new_idx = x + y * new_imx + z * new_imx * new_imy;
                     let old_idx = (self.imx - 1 - y) + x * self.imx + z * self.imx * self.imy;
                     new_input[new_idx] = self.input[old_idx];
                 }
@@ -219,27 +363,19 @@ impl MjRule {
         }
 
         for z in 0..self.omz {
-            for y in 0..self.omx {
-                for x in 0..self.omy {
-                    let new_idx = x + y * self.omy + z * self.omx * self.omy;
+            for y in 0..new_omy {
+                for x in 0..new_omx {
+                    let new_idx = x + y * new_omx + z * new_omx * new_omy;
                     let old_idx = (self.omx - 1 - y) + x * self.omx + z * self.omx * self.omy;
                     new_output[new_idx] = self.output[old_idx];
                 }
             }
         }
 
-        Self {
-            input: new_input,
-            output: new_output,
-            imx: self.imy,
-            imy: self.imx,
-            imz: self.imz,
-            omx: self.omy,
-            omy: self.omx,
-            omz: self.omz,
-            p: self.p,
-            c: self.c,
-        }
+        Self::from_patterns(
+            new_input, new_imx, new_imy, self.imz, new_output, new_omx, new_omy, self.omz, self.c,
+            self.p,
+        )
     }
 
     /// Create a reflected (X-axis mirror) version of this rule.
@@ -268,18 +404,10 @@ impl MjRule {
             }
         }
 
-        Self {
-            input: new_input,
-            output: new_output,
-            imx: self.imx,
-            imy: self.imy,
-            imz: self.imz,
-            omx: self.omx,
-            omy: self.omy,
-            omz: self.omz,
-            p: self.p,
-            c: self.c,
-        }
+        Self::from_patterns(
+            new_input, self.imx, self.imy, self.imz, new_output, self.omx, self.omy, self.omz,
+            self.c, self.p,
+        )
     }
 
     /// Check if two rules are the same (same dimensions and patterns).
@@ -322,13 +450,17 @@ mod tests {
 
     #[test]
     fn test_parse_pattern_3d() {
+        // Pattern "AB CD" means: layer at z=high is "AB", layer at z=low is "CD"
+        // C# reverses Z, so in memory:
+        // - z=0 gets "CD" (the LAST layer in string)
+        // - z=1 gets "AB" (the FIRST layer in string)
         let (chars, mx, my, mz) = MjRule::parse_pattern("AB CD").unwrap();
         assert_eq!((mx, my, mz), (2, 1, 2));
-        // z=0: AB, z=1: CD
-        assert_eq!(chars[0], 'A'); // (0,0,0)
-        assert_eq!(chars[1], 'B'); // (1,0,0)
-        assert_eq!(chars[2], 'C'); // (0,0,1)
-        assert_eq!(chars[3], 'D'); // (1,0,1)
+        // After Z reversal: z=0 is CD, z=1 is AB
+        assert_eq!(chars[0], 'C'); // (0,0,0)
+        assert_eq!(chars[1], 'D'); // (1,0,0)
+        assert_eq!(chars[2], 'A'); // (0,0,1)
+        assert_eq!(chars[3], 'B'); // (1,0,1)
     }
 
     #[test]
