@@ -53,9 +53,12 @@ pub use deferred::{
 pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use physics_math::{
     aggregate_particle_forces, apply_gravity, compute_ground_collision_force,
-    compute_particle_collision_force, compute_terrain_collision_force, integrate_angular_velocity,
+    compute_kinematic_correction, compute_particle_collision_force,
+    compute_terrain_collision_force, detect_terrain_collisions, generate_surface_particles,
+    has_ceiling_contact, has_floor_contact, has_wall_contact, integrate_angular_velocity,
     integrate_position, integrate_rotation, integrate_velocity, simulate_single_body,
-    simulate_single_body_on_terrain, simulate_two_bodies, PhysicsConfig,
+    simulate_single_body_on_terrain, simulate_two_bodies, BodyId, BodyState, FragmentParticleData,
+    ParticleConfig, PhysicsConfig, PhysicsEngine, TerrainContact,
 };
 pub use scene_utils::{
     centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset, spawn_chunk,
@@ -82,10 +85,11 @@ pub use voxel_collision_gpu::{
     GpuWorldOccupancy, MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
 };
 pub use voxel_fragment::{
-    detect_settling_fragments, fragment_terrain_collision_system, gpu_fragment_physics_system,
-    gpu_kinematic_collision_system, spawn_fragment, spawn_fragment_with_mesh,
-    FragmentCollisionConfig, FragmentConfig, FragmentPhysics, FragmentPreview, GpuCollisionMode,
-    StaticVoxelWorld, TerrainOccupancy, VoxelFragment, VoxelFragmentBundle, VoxelFragmentPlugin,
+    detect_settling_fragments, draw_fragment_debug_gizmos, draw_terrain_debug_gizmos,
+    fragment_terrain_collision_system, spawn_fragment, spawn_fragment_with_mesh,
+    FragmentCollisionConfig, FragmentConfig, FragmentDebugConfig, FragmentPhysics, FragmentPreview,
+    FragmentSurfaceParticles, StaticVoxelWorld, TerrainOccupancy, VoxelFragment,
+    VoxelFragmentBundle, VoxelFragmentPlugin,
 };
 pub use voxel_mesh::{
     build_chunk_mesh, build_chunk_mesh_greedy, build_chunk_mesh_greedy_with_borders,
