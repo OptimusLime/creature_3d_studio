@@ -3,9 +3,9 @@
 ## Current State
 
 **Branch:** `feature/markov-junior-rust`
-**Phase:** Phase 4.0 IN PROGRESS (2D Verification Infrastructure)
-**Tests:** 280 passing (237 Phase 1 + 25 Phase 2 + 18 Phase 3)
-**Total Lines:** ~10,500
+**Phase:** Phase 4.1 IN PROGRESS (2D Verification Complete, 3D Next)
+**Tests:** 285 passing
+**Total Lines:** ~11,000
 
 ---
 
@@ -69,15 +69,42 @@ All MarkovJunior algorithm features ported from C#:
 - "Step x100" button for incremental animation
 - Model switching with automatic reset
 
-### Phase 4.0: 2D Verification Infrastructure (IN PROGRESS)
+### Phase 4.0: 2D Verification Infrastructure (COMPLETE)
 - `mj.list_models_with_refs()` - scans for models with reference images
 - `mj.load_model_xml(path, options)` - loads model with size override
 - `grid:render_to_rgba()` - returns RGBA bytes for display
-- Reference images copied to `assets/reference_images/mj/` (17 models)
+- Reference images copied to `assets/reference_images/mj/` (29 models)
 - "MJ Verification" ImGui window with model selection buttons
-- "Generate 2D" and "Run Full" buttons for testing each model
-- Saves output to `screenshots/verify_<model>.png` for comparison
+- `test_verification_run_all_2d_models` - automated test for all 2D models
 - See `docs/markov_junior/VERIFICATION_PLAN.md` for full plan
+
+### Phase 4.1: 2D Model Verification (COMPLETE) - **13/14 PASSING**
+- **CRITICAL BUG FIXED:** `load_children_from_xml` depth tracking
+  - When parsing nested elements, `read_element_content()` consumed the End event
+  - But outer depth counter was never decremented
+  - Caused sibling nodes after nested elements to be skipped
+  - River.xml, Circuit.xml, etc. were missing phases (e.g., `<all in="RW" out="UU"/>`)
+- See `docs/markov_junior/RIVER_DEBUG.md` for debugging details
+
+**2D Verification Results (14 models):**
+| Model | Steps | Cells | Status |
+|-------|-------|-------|--------|
+| Basic | 3600 | 3600 | PASS |
+| Growth | 128880 | 128881 | PASS |
+| MazeGrowth | 32040 | 64081 | PASS |
+| MazeBacktracker | 64080 | 64081 | PASS |
+| DungeonGrowth | 282 | 4385 | PASS |
+| Flowers | 340 | 3433 | PASS |
+| Circuit | 13924 | 3481 | PASS |
+| River | 12354 | 6400 | PASS |
+| Trail | 13924 | 2066 | PASS |
+| Wilson | 5716 | 1681 | PASS |
+| CompleteSAW | 0 | 0 | FAIL (missing `from` attr in `<observe>`) |
+| RegularSAW | 106 | 213 | PASS |
+| LoopErasedWalk | 13924 | 229 | PASS |
+| NystromDungeon | 472 | 894 | PASS |
+
+Screenshots saved to `screenshots/verification/{Model}_ours.png`
 
 ---
 
@@ -216,13 +243,13 @@ cargo test -p studio_core markov_junior
 | 3.6 | 3D VoxelWorld Live Rendering | COMPLETE | 0 |
 | 3.7 | Model Browser Dropdown | PENDING | - |
 | 3.8 | 2D Texture Viewport | PENDING | - |
-| **4.0** | **2D Verification Infrastructure** | **IN PROGRESS** | **0** |
-| 4.1 | 2D Model Testing | PENDING | - |
-| 4.2 | Targeted Bug Fixes | PENDING | - |
-| 4.3 | 3D Verification | PENDING | - |
+| 4.0 | 2D Verification Infrastructure | COMPLETE | 3 |
+| 4.1 | 2D Model Testing | COMPLETE | 2 |
+| **4.2** | **3D Model Verification** | **IN PROGRESS** | **-** |
+| 4.3 | Targeted Bug Fixes | PENDING | - |
 | 4.4 | Automated Regression Tests | PENDING | - |
 
-**Phase 4 Focus:** Systematic verification that our implementation matches C# MarkovJunior
+**Phase 4.2 Focus:** Verify 3D models from MarkovJunior examples match C# output
 
 ---
 
@@ -274,38 +301,30 @@ cargo run --example p27_markov_imgui
 
 ## Critical Reminders
 
-1. **280 tests must pass** before any commit
+1. **285 tests must pass** before any commit
 2. **HOW_WE_WORK.md** - incremental, verifiable, automated
 3. **Each phase has verification criteria** - don't mark complete until verified
 4. **PNG output is deterministic** - same seed = same image
 5. **Value 0 is always transparent** - matches C# convention `visible[i] = value != 0`
 6. **Use colors_for_grid()** for PNG rendering, `MjPalette::from_grid()` for VoxelWorld
 7. **Main app requires** VoxelMaterialPlugin + DeferredRenderingPlugin for 3D rendering
+8. **Depth tracking bug** - when using `read_element_content()`, decrement depth after (see commit b9b54cd)
 
 ---
 
 ## Phase 4 Verification Status
 
-**Models with Reference Images:** 17
+### 2D Models: 13/14 PASSING
 
-| Model | Tested | Result | Notes |
-|-------|--------|--------|-------|
-| Apartemazements | - | - | 3D |
-| Basic | - | - | |
-| Circuit | - | - | |
-| CompleteSAW | - | - | |
-| DungeonGrowth | - | - | |
-| Flowers | - | - | |
-| Growth | - | - | |
-| LoopErasedWalk | - | - | |
-| MazeBacktracker | - | - | |
-| MazeGrowth | - | - | |
-| NystromDungeon | - | - | |
-| RegularSAW | - | - | |
-| River | - | - | |
-| SokobanLevel1 | - | - | |
-| StairsPath | - | - | 3D |
-| Trail | - | - | |
-| Wilson | - | - | |
+All 2D models with reference images have been tested. See Phase 4.1 table above.
 
-**Next Step:** Run `cargo run`, use "MJ Verification" window to test each model, document results.
+### 3D Models: NOT YET TESTED
+
+**Next Step:** Create 3D verification test that runs 3D models and saves isometric screenshots.
+
+Known 3D models in MarkovJunior:
+- Apartemazements
+- StairsPath
+- BasicDijkstra3D
+- Knots3D
+- And many others with `size3D` in models.xml
