@@ -1938,6 +1938,8 @@ fn load_children_from_xml(
                             ctx,
                         )?;
                         children.push(node);
+                        // read_element_content consumed the End event, so decrement depth
+                        depth -= 1;
                     }
                 }
             }

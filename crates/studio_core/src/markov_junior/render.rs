@@ -1033,4 +1033,603 @@ mod tests {
         // Test passes if at least some models ran
         assert!(passed > 0, "At least some models should run successfully");
     }
+
+    /// Debug test: Run River.xml with incremental screenshots to diagnose phase transitions.
+    /// Saves a screenshot every N steps to screenshots/verification/river_debug/
+    #[test]
+    fn test_river_incremental_debug() {
+        use crate::markov_junior::Model;
+
+        let out_dir = verification_dir().join("river_debug");
+        std::fs::create_dir_all(&out_dir).expect("Failed to create river debug directory");
+
+        // Load River.xml with correct size from models.xml (80x80)
+        let xml_path = models_path().join("River.xml");
+
+        // First, let's verify the XML structure
+        let xml_content = std::fs::read_to_string(&xml_path).expect("Failed to read River.xml");
+        println!("River.xml content:\n{}", xml_content);
+
+        let mut model =
+            Model::load_with_size(&xml_path, 80, 80, 1).expect("Failed to load River.xml");
+
+        println!("\n========================================");
+        println!("RIVER.XML INCREMENTAL DEBUG");
+        println!("Output: {}", out_dir.display());
+        println!("========================================\n");
+
+        // Run with seed 0, save screenshot every 100 steps
+        model.reset(0);
+
+        let screenshot_interval = 100;
+        let max_steps = 10000;
+        let mut step = 0;
+        let mut screenshot_count = 0;
+
+        // Initial screenshot (step 0)
+        {
+            let grid = model.grid();
+            let colors = colors_for_grid(grid);
+            let img = render_2d(grid, &colors, 4);
+            let path = out_dir.join(format!("river_{:04}.png", screenshot_count));
+            save_png(&img, &path).unwrap();
+            println!(
+                "Step {:>5}: {} non-zero cells -> {}",
+                0,
+                grid.count_nonzero(),
+                path.file_name().unwrap().to_string_lossy()
+            );
+            screenshot_count += 1;
+        }
+
+        // Run step by step
+        let mut running = true;
+        while running && step < max_steps {
+            running = model.step();
+            step += 1;
+
+            // Save screenshot at intervals and at specific early steps
+            let should_save = step <= 10
+                || step == 20
+                || step == 50
+                || step % screenshot_interval == 0
+                || step >= 6395; // Debug final steps
+
+            if should_save {
+                let grid = model.grid();
+                let colors = colors_for_grid(grid);
+                let img = render_2d(grid, &colors, 4);
+                let path = out_dir.join(format!("river_{:04}.png", screenshot_count));
+                save_png(&img, &path).unwrap();
+
+                // Count each value
+                let mut counts = [0usize; 6];
+                for &v in &grid.state {
+                    if (v as usize) < 6 {
+                        counts[v as usize] += 1;
+                    }
+                }
+
+                println!(
+                    "Step {:>5}: B={} W={} R={} U={} G={} E={} -> {}",
+                    step,
+                    counts[0],
+                    counts[1],
+                    counts[2],
+                    counts[3],
+                    counts[4],
+                    counts[5],
+                    path.file_name().unwrap().to_string_lossy()
+                );
+                screenshot_count += 1;
+            }
+        }
+
+        // Final screenshot
+        {
+            let grid = model.grid();
+            let colors = colors_for_grid(grid);
+            let img = render_2d(grid, &colors, 4);
+            let path = out_dir.join("river_final.png");
+            save_png(&img, &path).unwrap();
+
+            let mut counts = [0usize; 6];
+            for &v in &grid.state {
+                if (v as usize) < 6 {
+                    counts[v as usize] += 1;
+                }
+            }
+
+            println!("\n========================================");
+            println!("RIVER FINAL STATE");
+            println!("========================================");
+            println!("Total steps: {}", step);
+            println!("Model still running: {}", running);
+            println!(
+                "B(black)={} W(white)={} R(red)={} U(blue)={} G(green)={} E(brown)={}",
+                counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]
+            );
+            println!("Saved to: {}", path.display());
+            println!("========================================\n");
+        }
+
+        // Copy reference for comparison
+        let ref_src = reference_images_dir().join("River.gif");
+        if ref_src.exists() {
+            let ref_dst = out_dir.join("River_ref.gif");
+            let _ = std::fs::copy(&ref_src, &ref_dst);
+        }
+
+        // Basic assertion - we should have more than just W and R
+        let grid = model.grid();
+        let u_count = grid.state.iter().filter(|&&v| v == 3).count(); // U
+        let g_count = grid.state.iter().filter(|&&v| v == 4).count(); // G
+        let e_count = grid.state.iter().filter(|&&v| v == 5).count(); // E
+
+        // Count RW adjacencies (R=2, W=1)
+        let mut rw_count = 0;
+        let mut wr_count = 0;
+        let mx = grid.mx;
+        let my = grid.my;
+        for y in 0..my {
+            for x in 0..(mx - 1) {
+                let i = x + y * mx;
+                let j = i + 1;
+                if grid.state[i] == 2 && grid.state[j] == 1 {
+                    rw_count += 1; // R followed by W
+                }
+                if grid.state[i] == 1 && grid.state[j] == 2 {
+                    wr_count += 1; // W followed by R
+                }
+            }
+        }
+        // Also check vertical
+        let mut rw_vert = 0;
+        let mut wr_vert = 0;
+        for y in 0..(my - 1) {
+            for x in 0..mx {
+                let i = x + y * mx;
+                let j = x + (y + 1) * mx;
+                if grid.state[i] == 2 && grid.state[j] == 1 {
+                    rw_vert += 1;
+                }
+                if grid.state[i] == 1 && grid.state[j] == 2 {
+                    wr_vert += 1;
+                }
+            }
+        }
+
+        println!("Expected: U>0, G>0, E>0 (river, banks, trees)");
+        println!("Actual: U={}, G={}, E={}", u_count, g_count, e_count);
+        println!(
+            "RW adjacencies: horizontal RW={} WR={}, vertical RW={} WR={}",
+            rw_count, wr_count, rw_vert, wr_vert
+        );
+
+        // This will likely fail - that's the point! We're debugging.
+        // Comment out assertion to see the debug output.
+        // assert!(u_count > 0, "Should have river cells (U)");
+    }
+
+    /// Debug test: Check what rule variants are generated by symmetry expansion.
+    /// This helps diagnose if `RW -> UU` is correctly expanded to also match `WR`.
+    #[test]
+    fn test_debug_symmetry_expansion_for_river() {
+        use crate::markov_junior::loader::load_model;
+        use crate::markov_junior::symmetry::{square_symmetries, SquareSubgroup};
+        use crate::markov_junior::MjGrid;
+        use crate::markov_junior::MjRule;
+
+        // Create a grid with River values: BWRUGE
+        let grid = MjGrid::with_values(10, 10, 1, "BWRUGE");
+
+        // Parse the rule "RW" -> "UU" (Phase 4 of River.xml)
+        let base_rule = MjRule::parse("RW", "UU", &grid).expect("Failed to parse RW->UU rule");
+
+        println!("\n========================================");
+        println!("DEBUG: Symmetry expansion for RW -> UU");
+        println!("========================================\n");
+
+        // Check base rule
+        println!("Base rule:");
+        println!(
+            "  Input pattern dimensions: {}x{}x{}",
+            base_rule.imx, base_rule.imy, base_rule.imz
+        );
+        println!("  Input waves: {:?}", base_rule.input);
+        println!("  Output values: {:?}", base_rule.output);
+
+        // Values mapping: B=0, W=1, R=2, U=3, G=4, E=5
+        // So R=2 has wave 0b000100=4, W=1 has wave 0b000010=2
+        println!("\n  Expected for RW pattern:");
+        println!("    Position 0 (R): wave should match R (value 2) -> wave = 1 << 2 = 4");
+        println!("    Position 1 (W): wave should match W (value 1) -> wave = 1 << 1 = 2");
+        println!("  Actual waves: {:?}", base_rule.input);
+
+        // Apply full symmetry
+        let variants = square_symmetries(&base_rule, Some(SquareSubgroup::All));
+
+        println!("\n========================================");
+        println!("Symmetry variants (All 8 transformations):");
+        println!("========================================\n");
+
+        for (i, rule) in variants.iter().enumerate() {
+            // Decode what pattern this variant matches
+            let pattern_desc = if rule.imx == 2 && rule.imy == 1 {
+                // Horizontal 2x1
+                let w0 = rule.input[0]; // First cell
+                let w1 = rule.input[1]; // Second cell
+                format!(
+                    "[{}][{}] (horizontal)",
+                    wave_to_char(w0, &grid),
+                    wave_to_char(w1, &grid)
+                )
+            } else if rule.imx == 1 && rule.imy == 2 {
+                // Vertical 1x2
+                let w0 = rule.input[0]; // Top cell
+                let w1 = rule.input[1]; // Bottom cell
+                format!(
+                    "[{}]/[{}] (vertical)",
+                    wave_to_char(w0, &grid),
+                    wave_to_char(w1, &grid)
+                )
+            } else {
+                format!("{}x{}", rule.imx, rule.imy)
+            };
+
+            println!("  Variant {}: {} -> {:?}", i, pattern_desc, rule.output);
+            println!("             input waves: {:?}", rule.input);
+        }
+
+        println!("\n========================================");
+        println!("ANALYSIS:");
+        println!("========================================\n");
+
+        // Check if we have a variant that matches WR (horizontal)
+        // WR means: position 0 = W (wave 2), position 1 = R (wave 4)
+        let has_wr_horizontal = variants
+            .iter()
+            .any(|r| r.imx == 2 && r.imy == 1 && r.input[0] == 2 && r.input[1] == 4);
+
+        // Check if we have a variant that matches R/W (vertical, R on top, W below)
+        // This means: position 0 = R (wave 4), position 1 = W (wave 2) in 1x2 pattern
+        let has_rw_vertical = variants
+            .iter()
+            .any(|r| r.imx == 1 && r.imy == 2 && r.input[0] == 4 && r.input[1] == 2);
+
+        // Check if we have W/R (vertical, W on top, R below)
+        let has_wr_vertical = variants
+            .iter()
+            .any(|r| r.imx == 1 && r.imy == 2 && r.input[0] == 2 && r.input[1] == 4);
+
+        println!(
+            "Has WR horizontal (W=wave2 followed by R=wave4): {}",
+            has_wr_horizontal
+        );
+        println!("Has R/W vertical (R on top): {}", has_rw_vertical);
+        println!("Has W/R vertical (W on top): {}", has_wr_vertical);
+
+        // Now let's load River.xml and check the actual rules in the AllNode at phase 4
+        println!("\n========================================");
+        println!("Loading River.xml to check actual rules:");
+        println!("========================================\n");
+
+        let path = models_path().join("River.xml");
+        let model = load_model(&path).expect("Failed to load River.xml");
+
+        // The root should be a SequenceNode
+        // We can't easily access the rules inside, so let's just verify loading works
+        println!("River.xml loaded successfully.");
+        println!("Grid values: {:?}", model.grid.values);
+        println!("Grid waves: {:?}", model.grid.waves);
+
+        // Assertions
+        assert!(
+            has_wr_horizontal,
+            "Symmetry should produce WR horizontal variant to match WR adjacencies!"
+        );
+        assert!(
+            has_rw_vertical,
+            "Symmetry should produce R/W vertical variant!"
+        );
+        assert!(
+            has_wr_vertical,
+            "Symmetry should produce W/R vertical variant!"
+        );
+
+        println!("\nSUCCESS: All expected symmetry variants are present!");
+    }
+
+    /// Helper: Convert a wave bitmask back to a character for display
+    fn wave_to_char(wave: u32, grid: &MjGrid) -> char {
+        // If it's a single-bit wave, find the matching character
+        if wave.count_ones() == 1 {
+            let value = wave.trailing_zeros() as u8;
+            for (&ch, &v) in &grid.values {
+                if v == value {
+                    return ch;
+                }
+            }
+        }
+        // Wildcard or multi-value
+        '*'
+    }
+
+    /// Debug test: Direct test of AllNode matching logic
+    #[test]
+    fn test_debug_allnode_rw_matching() {
+        use crate::markov_junior::node::{ExecutionContext, Node};
+        use crate::markov_junior::symmetry::{square_symmetries, SquareSubgroup};
+        use crate::markov_junior::AllNode;
+        use crate::markov_junior::MjGrid;
+        use crate::markov_junior::MjRule;
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        println!("\n========================================");
+        println!("DEBUG: AllNode RW matching test");
+        println!("========================================\n");
+
+        // Create a grid with River values: BWRUGE
+        // Grid values: B=0, W=1, R=2, U=3, G=4, E=5
+        let mut grid = MjGrid::with_values(4, 4, 1, "BWRUGE");
+
+        // Set up a pattern with W and R adjacent:
+        // Row 0: R W B B  (RW at (0,0))
+        // Row 1: B W R B  (WR at (1,1))
+        // Row 2: B B W B
+        // Row 3: B B R B
+        //                  (W/R vertical at (2,2)-(2,3))
+
+        grid.state[0] = 2; // R at (0,0)
+        grid.state[1] = 1; // W at (1,0)
+        grid.state[2] = 0; // B at (2,0)
+        grid.state[3] = 0; // B at (3,0)
+
+        grid.state[4] = 0; // B at (0,1)
+        grid.state[5] = 1; // W at (1,1)
+        grid.state[6] = 2; // R at (2,1)
+        grid.state[7] = 0; // B at (3,1)
+
+        grid.state[8] = 0; // B at (0,2)
+        grid.state[9] = 0; // B at (1,2)
+        grid.state[10] = 1; // W at (2,2)
+        grid.state[11] = 0; // B at (3,2)
+
+        grid.state[12] = 0; // B at (0,3)
+        grid.state[13] = 0; // B at (1,3)
+        grid.state[14] = 2; // R at (2,3)
+        grid.state[15] = 0; // B at (3,3)
+
+        println!("Grid state:");
+        for y in 0..4 {
+            let mut row = String::new();
+            for x in 0..4 {
+                let v = grid.state[x + y * 4];
+                let ch = match v {
+                    0 => 'B',
+                    1 => 'W',
+                    2 => 'R',
+                    3 => 'U',
+                    _ => '?',
+                };
+                row.push(ch);
+            }
+            println!("  Row {}: {}", y, row);
+        }
+
+        // Parse the rule "RW" -> "UU" with full symmetry
+        let base_rule = MjRule::parse("RW", "UU", &grid).expect("Failed to parse RW->UU rule");
+        let rules = square_symmetries(&base_rule, Some(SquareSubgroup::All));
+
+        println!(
+            "\nRules after symmetry expansion ({} variants):",
+            rules.len()
+        );
+        for (i, rule) in rules.iter().enumerate() {
+            println!(
+                "  Rule {}: dims {}x{}, input {:?}, output {:?}",
+                i, rule.imx, rule.imy, rule.input, rule.output
+            );
+        }
+
+        // Create AllNode with these rules
+        let mut all_node = AllNode::new(rules, grid.state.len());
+
+        // Run one step
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
+
+        println!("\nBefore AllNode.go():");
+        println!("  match_count: {}", all_node.data.match_count);
+
+        let result = all_node.go(&mut ctx);
+
+        println!("\nAfter AllNode.go():");
+        println!("  result: {}", result);
+        println!("  changes: {:?}", ctx.changes);
+
+        // Check grid state
+        println!("\nGrid state after:");
+        for y in 0..4 {
+            let mut row = String::new();
+            for x in 0..4 {
+                let v = ctx.grid.state[x + y * 4];
+                let ch = match v {
+                    0 => 'B',
+                    1 => 'W',
+                    2 => 'R',
+                    3 => 'U',
+                    _ => '?',
+                };
+                row.push(ch);
+            }
+            println!("  Row {}: {}", y, row);
+        }
+
+        // Count U cells
+        let u_count = ctx.grid.state.iter().filter(|&&v| v == 3).count();
+        println!("\nU count: {}", u_count);
+
+        // Now test individual matching
+        println!("\n========================================");
+        println!("Testing individual rule matches:");
+        println!("========================================\n");
+
+        // Re-create grid for testing
+        let mut grid2 = MjGrid::with_values(4, 4, 1, "BWRUGE");
+        grid2.state[0] = 2; // R at (0,0)
+        grid2.state[1] = 1; // W at (1,0)
+        grid2.state[5] = 1; // W at (1,1)
+        grid2.state[6] = 2; // R at (2,1)
+        grid2.state[10] = 1; // W at (2,2)
+        grid2.state[14] = 2; // R at (2,3)
+
+        let base_rule = MjRule::parse("RW", "UU", &grid2).expect("Failed to parse RW->UU rule");
+        let rules = square_symmetries(&base_rule, Some(SquareSubgroup::All));
+
+        // Test at position (0,0) - should match RW horizontal
+        println!("Testing at (0,0) - pattern RW horizontal:");
+        for (i, rule) in rules.iter().enumerate() {
+            let m = grid2.matches(rule, 0, 0, 0);
+            println!("  Rule {} ({}x{}): matches={}", i, rule.imx, rule.imy, m);
+        }
+
+        // Test at position (1,1) - should match WR horizontal
+        println!("\nTesting at (1,1) - pattern WR horizontal:");
+        for (i, rule) in rules.iter().enumerate() {
+            let m = grid2.matches(rule, 1, 1, 0);
+            println!("  Rule {} ({}x{}): matches={}", i, rule.imx, rule.imy, m);
+        }
+
+        // Test at position (2,2) - should match W/R vertical
+        println!("\nTesting at (2,2) - pattern W/R vertical:");
+        for (i, rule) in rules.iter().enumerate() {
+            let m = grid2.matches(rule, 2, 2, 0);
+            println!("  Rule {} ({}x{}): matches={}", i, rule.imx, rule.imy, m);
+        }
+
+        // Assertions
+        assert!(result, "AllNode should have found matches!");
+        assert!(u_count > 0, "Should have converted some cells to U!");
+    }
+
+    /// Debug test: Test a minimal river-like sequence
+    /// This tests the actual sequence transition behavior
+    #[test]
+    fn test_debug_river_minimal_sequence() {
+        use crate::markov_junior::Model;
+
+        println!("\n========================================");
+        println!("DEBUG: Minimal River-like sequence test");
+        println!("========================================\n");
+
+        // Create a minimal river-like model:
+        // 1. Phase 1: Place one W
+        // 2. Phase 2: Place one R
+        // 3. Phase 3: Grow W and R (until no more B)
+        // 4. Phase 4: RW -> UU (this is the failing part in River)
+        let xml = r#"
+        <sequence values="BWRU">
+            <one in="B" out="W" steps="1"/>
+            <one in="B" out="R" steps="1"/>
+            <one>
+                <rule in="RB" out="RR"/>
+                <rule in="WB" out="WW"/>
+            </one>
+            <all in="RW" out="UU"/>
+        </sequence>
+        "#;
+
+        let mut model = Model::load_str(xml, 8, 8, 1).expect("Failed to load model");
+
+        // Reset the model to start execution
+        model.reset(42);
+
+        // Run step by step and watch what happens
+        let mut step = 0;
+        let max_steps = 100;
+
+        println!("Running step by step:");
+        while step < max_steps {
+            let grid = model.grid();
+            let mut counts = [0usize; 4];
+            for &v in &grid.state {
+                if (v as usize) < 4 {
+                    counts[v as usize] += 1;
+                }
+            }
+
+            // Count RW adjacencies
+            let mx = grid.mx;
+            let my = grid.my;
+            let mut rw_count = 0;
+            let mut wr_count = 0;
+            for y in 0..my {
+                for x in 0..(mx - 1) {
+                    let i = x + y * mx;
+                    let j = i + 1;
+                    if grid.state[i] == 2 && grid.state[j] == 1 {
+                        rw_count += 1;
+                    }
+                    if grid.state[i] == 1 && grid.state[j] == 2 {
+                        wr_count += 1;
+                    }
+                }
+            }
+
+            if step % 10 == 0 || counts[0] < 10 || counts[3] > 0 {
+                println!(
+                    "  Step {:>3}: B={:>2} W={:>2} R={:>2} U={:>2} | RW={} WR={}",
+                    step, counts[0], counts[1], counts[2], counts[3], rw_count, wr_count
+                );
+            }
+
+            if !model.step() {
+                println!("  Model stopped at step {}", step);
+                break;
+            }
+            step += 1;
+        }
+
+        let grid = model.grid();
+        let u_count = grid.state.iter().filter(|&&v| v == 3).count();
+
+        println!("\nFinal state:");
+        let mut counts = [0usize; 4];
+        for &v in &grid.state {
+            if (v as usize) < 4 {
+                counts[v as usize] += 1;
+            }
+        }
+        println!(
+            "  B={} W={} R={} U={}",
+            counts[0], counts[1], counts[2], counts[3]
+        );
+
+        // Print grid visually
+        println!("\nGrid visualization:");
+        for y in 0..grid.my {
+            let mut row = String::new();
+            for x in 0..grid.mx {
+                let v = grid.state[x + y * grid.mx];
+                let ch = match v {
+                    0 => '.',
+                    1 => 'W',
+                    2 => 'R',
+                    3 => 'U',
+                    _ => '?',
+                };
+                row.push(ch);
+            }
+            println!("  {}", row);
+        }
+
+        // Assertion: we should have some U cells!
+        assert!(
+            u_count > 0,
+            "Phase 4 should have converted RW/WR to U! Got {} U cells",
+            u_count
+        );
+    }
 }
