@@ -1058,10 +1058,10 @@ mod tests {
         println!("Output: {}", out_dir.display());
         println!("========================================\n");
 
-        // Run with seed 0, save screenshot every 100 steps
+        // Run with seed 0, save screenshot ~once per second at 60fps = every 60 steps
         model.reset(0);
 
-        let screenshot_interval = 100;
+        let screenshot_interval = 1000; // Save every 1000 steps (~16 seconds at 60fps)
         let max_steps = 10000;
         let mut step = 0;
         let mut screenshot_count = 0;
@@ -1088,12 +1088,8 @@ mod tests {
             running = model.step();
             step += 1;
 
-            // Save screenshot at intervals and at specific early steps
-            let should_save = step <= 10
-                || step == 20
-                || step == 50
-                || step % screenshot_interval == 0
-                || step >= 6395; // Debug final steps
+            // Save screenshot at wide intervals only
+            let should_save = step % screenshot_interval == 0;
 
             if should_save {
                 let grid = model.grid();
