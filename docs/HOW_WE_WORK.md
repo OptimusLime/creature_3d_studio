@@ -350,3 +350,48 @@ If ANY answer is negative, the task is NOT DONE. Return to debugging.
 8. **Stay honest** - PR checklists reflect reality, not aspirations
 9. **Evaluate objectively** - See what IS, not what you HOPE to see
 10. **Quality gates** - "Does it work?" is not the same as "Is it good enough?"
+
+---
+
+## Workflow: Testing New Features
+
+**CRITICAL: Always run code to verify it works.**
+
+When implementing a new feature that integrates with an existing application:
+
+### Write Contained Examples First
+
+1. **Create a standalone example** in `examples/` that tests the feature in isolation
+2. **Run the example** with `cargo run --example <name>`
+3. **Verify it works** before integrating into the main app
+4. This catches dependency issues, missing plugins, resource conflicts early
+
+### Why This Matters
+
+The main app has complex plugin dependencies. A feature might:
+- Depend on resources that aren't initialized
+- Conflict with other systems
+- Require specific plugin ordering
+
+A contained example isolates the feature and reveals these issues immediately.
+
+### Example: MarkovJunior 3D Rendering
+
+**Wrong approach:**
+1. Add rendering system to ScriptingPlugin
+2. Assume it will work because the code compiles
+3. Discover at runtime that `Assets<VoxelMaterial>` doesn't exist ❌
+
+**Correct approach:**
+1. Create `examples/p27_markov_imgui.rs` that tests the feature standalone
+2. Run `cargo run --example p27_markov_imgui`
+3. Verify it produces correct output (PNG + 3D screenshot)
+4. Then integrate into main app
+5. Run `cargo run` and verify the same behavior ✓
+
+### Lesson Learned
+
+In Phase 3.6, we added `render_generated_voxel_world` to ScriptingPlugin without testing. The main app crashed because `VoxelMaterialPlugin` wasn't loaded. Creating `p27_markov_imgui.rs` first would have:
+- Caught the missing plugin dependency
+- Proven the rendering code works
+- Provided a reference for what plugins the main app needs

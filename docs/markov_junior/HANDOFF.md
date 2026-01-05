@@ -3,9 +3,9 @@
 ## Current State
 
 **Branch:** `feature/markov-junior-rust`
-**Phase:** Phase 3.0 COMPLETE (PNG Rendering Foundation), Phase 3.1+ PENDING
-**Tests:** 273 passing (237 Phase 1 + 25 Phase 2 + 11 Phase 3.0)
-**Total Lines:** ~9,650
+**Phase:** Phase 3.6 COMPLETE (3D VoxelWorld Live Rendering)
+**Tests:** 280 passing (237 Phase 1 + 25 Phase 2 + 18 Phase 3)
+**Total Lines:** ~10,200
 
 ---
 
@@ -22,7 +22,7 @@ All MarkovJunior algorithm features ported from C#:
 - `mj.load_model()`, `mj.create_model()` - model loading/creation
 - `model:run()`, `model:step()`, `model:run_animated()` - execution
 - `grid:to_voxel_world()` - VoxelWorld conversion
-- `scene.set_voxel_world()` - stores in GeneratedVoxelWorld resource (NOT YET RENDERED)
+- `scene.set_voxel_world()` - stores in GeneratedVoxelWorld resource
 
 ### Phase 3.0: PNG Rendering Foundation (COMPLETE) - 11 tests
 - `render.rs` module - direct grid → PNG (no Bevy required)
@@ -31,98 +31,75 @@ All MarkovJunior algorithm features ported from C#:
 - `Model::load_with_size()` - load XML with custom dimensions
 - Automated tests that run real models and output PNGs
 
----
+### Phase 3.1: Rendering Quality Verification (COMPLETE) - 3 tests
+- `RenderPalette` - loads colors from C# palette.xml (50+ character→color mappings)
+- `colors_for_grid()` - maps grid character indices to proper palette colors
+- Fixed 2D color bug: MazeGrowth now renders gray/white (A/W) instead of red/white
+- Fixed 3D isometric artifacts: vertical banding on right face eliminated
+- Matched C# Sprite brightness values: top=215, left=143, right=71
 
-## Phase 3: Full Integration Plan
+### Phase 3.2: Bevy 3D Example (COMPLETE) - 1 test
+- `examples/p26_markov_bevy_3d.rs` - full 3D rendering example
+- `MjPalette::from_grid()` - creates VoxelWorld palette from grid's character set
+- Uses programmatic B→W growth model in 16³ grid
+- Deferred lighting with proper shading and shadows
+- Screenshot saved to `screenshots/p26_markov_bevy_3d.png`
 
-Following HOW_WE_WORK.md principles: incremental, verifiable, automated.
+### Phase 3.3: ImGui PNG Save Button (COMPLETE) - 3 tests
+- `grid:render_to_png(path, [pixel_size])` - Lua method for saving PNGs
+- "Save PNG" button in main.lua MarkovJunior window
+- Saves isometric 3D renders to `screenshots/mj_generated_<seed>.png`
+- Uses proper palette.xml colors via `colors_for_grid()`
 
-### Phase 3.1: Verify 2D Rendering Quality
+### Phase 3.6: 3D VoxelWorld Live Rendering (COMPLETE)
+- `render_generated_voxel_world` system in `studio_scripting/src/lib.rs`
+- Watches `GeneratedVoxelWorld` resource for dirty flag
+- Despawns old meshes, builds new chunk meshes with greedy meshing
+- Spawns with `DeferredRenderable` marker for proper lighting
+- `GeneratedVoxelMesh` component for cleanup tracking
+- Main app now includes `VoxelMaterialPlugin` and `DeferredRenderingPlugin`
+- `DeferredPointLight` added for scene lighting
 
-**Outcome:** Our 2D PNG output matches or approximates C# MarkovJunior output quality.
-
-**Verification:**
-1. Run `cargo test -p studio_core test_markov_render_quality_2d`
-2. Test loads MazeBacktracker.xml, runs with seed 42
-3. Compares output dimensions, non-zero cell count to expected values
-4. PNG output visually inspected: corridors visible, maze structure clear
-
-**Tasks:**
-1. Add test that verifies MazeBacktracker output has expected structure
-2. Add test that verifies pixel colors match palette correctly
-3. Document any visual differences from C# reference
-
-**Est. Lines:** ~50
-
----
-
-### Phase 3.2: Verify 3D Rendering Quality  
-
-**Outcome:** Our 3D isometric rendering produces recognizable structures.
-
-**Current Issue:** The 3D renders look "suspicious" - need to verify against C# reference.
-
-**Verification:**
-1. Run `cargo test -p studio_core test_markov_render_quality_3d`
-2. Compare our isometric cube render to C# Graphics.cs IsometricRender
-3. Verify face shading (top/left/right brightness)
-4. Verify depth sorting (back-to-front painter's algorithm)
-
-**Tasks:**
-1. Create test with known 3D structure (e.g., 3x3x3 staircase)
-2. Verify each visible face has correct color/shading
-3. Compare to C# output if possible
-4. Fix any rendering bugs found
-
-**Est. Lines:** ~100
+### Phase 3.X: Enhanced Demo (COMPLETE)
+- `examples/p27_markov_imgui.rs` - standalone test example
+- `main.lua` updated with model type selection:
+  - **Growth** - organic 3D growth from center (16³)
+  - **Maze3D** - 3D maze corridors using WBB→WAW rule (17³)
+  - **Dungeon** - floor expansion pattern (24×24×8)
+- "Step x100" button for incremental animation
+- Model switching with automatic reset
 
 ---
 
-### Phase 3.3: Bevy Example with Screenshot
+## How to Use
 
-**Outcome:** Example that loads MarkovJunior XML, runs it, renders in Bevy 3D, takes screenshot.
+### Run the Main App
+```bash
+cargo run
+```
 
-**File:** `examples/p26_markov_bevy_3d.rs`
+1. **Select model type**: Click Growth, Maze3D, or Dungeon
+2. **Generate**: Click "Generate" to create 3D structure
+3. **Animate**: Click "Step x100" repeatedly to watch it grow
+4. **Save**: Click "Save PNG" to save isometric render
 
-**Verification:**
-1. Run `cargo run --example p26_markov_bevy_3d`
-2. Screenshot saved to `screenshots/p26_markov_bevy_3d.png`
-3. Screenshot shows 3D voxel structure (NOT isometric PNG, real 3D)
-4. Console prints "Generated N voxels" where N > 100
+### Run the Standalone Example
+```bash
+cargo run --example p27_markov_imgui
+```
+Creates PNG and 3D screenshot automatically.
 
-**Tasks:**
-1. Create example using VoxelWorldApp pattern
-2. Load MazeGrowth.xml or similar model
-3. Convert grid to VoxelWorld
-4. Render with deferred lighting + shadows
-5. Auto-screenshot and exit
-
-**Est. Lines:** ~80
-
----
-
-### Phase 3.4: ImGui PNG Save Button
-
-**Outcome:** ImGui button that generates 2D MarkovJunior output and saves PNG to disk.
-
-**File:** Modify `assets/scripts/ui/main.lua` and `crates/studio_scripting/src/lib.rs`
-
-**Verification:**
-1. Run `cargo run`
-2. Click "Generate 2D" button in MarkovJunior window
-3. Console shows "Saved to screenshots/mj_generated.png"
-4. PNG file exists and shows maze pattern
-
-**Tasks:**
-1. Add `mj.render_to_png(grid, path, pixel_size)` Lua function
-2. Add to main.lua: button that calls render_to_png
-3. Test hot-reload of script
-
-**Est. Lines:** ~40 Rust, ~20 Lua
+### Run All Tests
+```bash
+cargo test -p studio_core markov_junior
+# Expected: 280 passed
+```
 
 ---
 
-### Phase 3.5: ImGui Inline Image Display
+## Remaining Phases
+
+### Phase 3.4: ImGui Inline Image Display (PENDING)
 
 **Outcome:** Generated 2D output displays directly in ImGui window (no file save required).
 
@@ -142,7 +119,7 @@ Following HOW_WE_WORK.md principles: incremental, verifiable, automated.
 
 ---
 
-### Phase 3.6: ImGui Animation Preview
+### Phase 3.5: ImGui Animation Preview (PENDING)
 
 **Outcome:** Can watch 2D MarkovJunior execute step-by-step in ImGui window.
 
@@ -163,28 +140,7 @@ Following HOW_WE_WORK.md principles: incremental, verifiable, automated.
 
 ---
 
-### Phase 3.7: 3D VoxelWorld Live Rendering
-
-**Outcome:** Generated 3D MarkovJunior output renders in the Bevy 3D viewport.
-
-**Verification:**
-1. Run `cargo run`
-2. Click "Generate 3D" in MarkovJunior window
-3. 3D voxel structure appears in scene (not ImGui, actual 3D)
-4. Click again: old structure removed, new one appears
-
-**Tasks:**
-1. Create `render_generated_voxel_world` system
-2. Read from `GeneratedVoxelWorld` resource (already populated by scene.set_voxel_world)
-3. Build chunk meshes using `build_chunk_mesh_greedy`
-4. Spawn with marker component for cleanup
-5. Register system in ScriptingPlugin
-
-**Est. Lines:** ~80
-
----
-
-### Phase 3.8: Model Browser Dropdown
+### Phase 3.7: Model Browser Dropdown (PENDING)
 
 **Outcome:** Dropdown in ImGui listing all XML models, can select and run any.
 
@@ -206,12 +162,12 @@ Following HOW_WE_WORK.md principles: incremental, verifiable, automated.
 
 ---
 
-### Phase 3.9: 2D Texture Viewport
+### Phase 3.8: 2D Texture Viewport (PENDING)
 
 **Outcome:** Full-window 2D view rendering MarkovJunior output as a Bevy texture (not ImGui).
 
 **Verification:**
-1. Run `cargo run --example p27_markov_2d_viewport`
+1. Run `cargo run --example p28_markov_2d_viewport`
 2. Entire window shows 2D MarkovJunior output
 3. Press Space to regenerate with new seed
 4. Press S to save screenshot
@@ -228,56 +184,19 @@ Following HOW_WE_WORK.md principles: incremental, verifiable, automated.
 
 ## Phase Summary Table
 
-| Phase | Description | Dependencies | Est. Lines | Status |
-|-------|-------------|--------------|------------|--------|
-| 3.0 | PNG Rendering Foundation | - | ~400 | COMPLETE |
-| 3.1 | Verify 2D Rendering Quality | 3.0 | ~50 | PENDING |
-| 3.2 | Verify 3D Rendering Quality | 3.0 | ~100 | PENDING |
-| 3.3 | Bevy Example with Screenshot | 3.0 | ~80 | PENDING |
-| 3.4 | ImGui PNG Save Button | 3.0 | ~60 | PENDING |
-| 3.5 | ImGui Inline Image Display | 3.4 | ~130 | PENDING |
-| 3.6 | ImGui Animation Preview | 3.5 | ~130 | PENDING |
-| 3.7 | 3D VoxelWorld Live Rendering | 3.3 | ~80 | PENDING |
-| 3.8 | Model Browser Dropdown | 3.4, 3.7 | ~140 | PENDING |
-| 3.9 | 2D Texture Viewport | 3.0 | ~120 | PENDING |
+| Phase | Description | Status | Tests Added |
+|-------|-------------|--------|-------------|
+| 3.0 | PNG Rendering Foundation | COMPLETE | 11 |
+| 3.1 | Rendering Quality Verification | COMPLETE | 3 |
+| 3.2 | Bevy Example with Screenshot | COMPLETE | 1 |
+| 3.3 | ImGui PNG Save Button | COMPLETE | 3 |
+| 3.4 | ImGui Inline Image Display | PENDING | - |
+| 3.5 | ImGui Animation Preview | PENDING | - |
+| 3.6 | 3D VoxelWorld Live Rendering | COMPLETE | 0 |
+| 3.7 | Model Browser Dropdown | PENDING | - |
+| 3.8 | 2D Texture Viewport | PENDING | - |
 
-**Total Remaining:** ~890 lines across 9 phases
-
----
-
-## Execution Order
-
-**Recommended order based on dependencies and value:**
-
-1. **Phase 3.1-3.2** (Verification) - Ensure our rendering is correct before building more
-2. **Phase 3.3** (Bevy Example) - Proves full 3D integration works
-3. **Phase 3.4** (ImGui Save) - Quick win, simple feature
-4. **Phase 3.7** (3D Live Render) - Big visual impact
-5. **Phase 3.5** (ImGui Display) - Enables fast iteration
-6. **Phase 3.6** (Animation) - Cool demo feature
-7. **Phase 3.8** (Model Browser) - Polish feature
-8. **Phase 3.9** (2D Viewport) - Alternative visualization
-
----
-
-## Commands
-
-```bash
-# Run all tests (should be 273)
-cargo test -p studio_core markov_junior
-
-# Run render tests only (11)
-cargo test -p studio_core markov_junior::render
-
-# View generated test PNGs
-ls screenshots/test_markov_*.png
-
-# Run main app (has MarkovJunior ImGui window)
-cargo run
-
-# Run existing p25 example (hardcoded cross)
-cargo run --example p25_markov_junior
-```
+**Remaining:** 4 phases (~400 lines)
 
 ---
 
@@ -285,19 +204,52 @@ cargo run --example p25_markov_junior
 
 | File | Purpose |
 |------|---------|
-| `crates/studio_core/src/markov_junior/render.rs` | PNG rendering (Phase 3.0) |
-| `crates/studio_core/src/markov_junior/model.rs` | Model API, load_with_size |
-| `crates/studio_core/src/markov_junior/voxel_bridge.rs` | Grid → VoxelWorld |
-| `crates/studio_scripting/src/lib.rs` | GeneratedVoxelWorld resource, scene.set_voxel_world |
-| `assets/scripts/ui/main.lua` | MarkovJunior demo window |
-| `docs/markov_junior/IMPLEMENTATION_PLAN.md` | Original full plan |
+| `crates/studio_core/src/markov_junior/render.rs` | PNG rendering, RenderPalette, isometric cubes |
+| `crates/studio_core/src/markov_junior/lua_api.rs` | Lua API: mj.*, grid:render_to_png() |
+| `crates/studio_core/src/markov_junior/voxel_bridge.rs` | Grid → VoxelWorld, MjPalette::from_grid |
+| `crates/studio_scripting/src/lib.rs` | GeneratedVoxelWorld, render_generated_voxel_world system |
+| `src/main.rs` | Main app with VoxelMaterialPlugin, DeferredRenderingPlugin |
+| `examples/p26_markov_bevy_3d.rs` | Standalone 3D Bevy rendering example |
+| `examples/p27_markov_imgui.rs` | Phase 3.3/3.6 verification example |
+| `assets/scripts/ui/main.lua` | MarkovJunior demo with model selection |
+| `MarkovJunior/resources/palette.xml` | C# color palette reference |
+| `MarkovJunior/source/Graphics.cs` | C# rendering reference |
+
+---
+
+## Commands
+
+```bash
+# Run all MarkovJunior tests (280)
+cargo test -p studio_core markov_junior
+
+# Run render tests only
+cargo test -p studio_core markov_junior::render
+
+# Run Lua API tests only
+cargo test -p studio_core markov_junior::lua_api
+
+# View generated test PNGs
+ls screenshots/test_markov_*.png
+
+# Run main app (interactive demo)
+cargo run
+
+# Run p26 example (3D Bevy screenshot)
+cargo run --example p26_markov_bevy_3d
+
+# Run p27 example (Phase 3.3/3.6 verification)
+cargo run --example p27_markov_imgui
+```
 
 ---
 
 ## Critical Reminders
 
-1. **273 tests must pass** before any commit
+1. **280 tests must pass** before any commit
 2. **HOW_WE_WORK.md** - incremental, verifiable, automated
 3. **Each phase has verification criteria** - don't mark complete until verified
 4. **PNG output is deterministic** - same seed = same image
-5. **GeneratedVoxelWorld resource exists** but nothing renders it yet (Phase 3.7)
+5. **Value 0 is always transparent** - matches C# convention `visible[i] = value != 0`
+6. **Use colors_for_grid()** for PNG rendering, `MjPalette::from_grid()` for VoxelWorld
+7. **Main app requires** VoxelMaterialPlugin + DeferredRenderingPlugin for 3D rendering

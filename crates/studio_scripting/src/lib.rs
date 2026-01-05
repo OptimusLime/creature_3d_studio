@@ -27,7 +27,9 @@ use rand::Rng;
 use std::cell::Cell;
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
+use studio_core::deferred::DeferredRenderable;
 use studio_core::voxel::VoxelWorld;
+use studio_core::voxel_mesh::{build_world_meshes_with_options, VoxelMaterial};
 use studio_physics::{CommandQueue, PhysicsState};
 
 const SCRIPT_PATH: &str = "assets/scripts/ui/main.lua";
@@ -40,7 +42,14 @@ pub struct GeneratedVoxelWorld {
     pub world: Option<VoxelWorld>,
     /// Whether the world has been updated since last render.
     pub dirty: bool,
+    /// Entities spawned for the current world (for cleanup on regenerate).
+    pub spawned_entities: Vec<Entity>,
 }
+
+/// Marker component for entities spawned by GeneratedVoxelWorld.
+/// Used to identify and despawn old meshes when regenerating.
+#[derive(Component)]
+pub struct GeneratedVoxelMesh;
 
 // Thread-local pointers to frame-scoped resources.
 // Only valid during on_draw callback execution.
@@ -103,7 +112,10 @@ impl Plugin for ScriptingPlugin {
         app.add_plugins(bevy_mod_imgui::ImguiPlugin::default())
             .init_resource::<GeneratedVoxelWorld>()
             .add_systems(Startup, (init_scripting, setup_file_watcher))
-            .add_systems(Update, (check_hot_reload, render_ui).chain());
+            .add_systems(
+                Update,
+                (check_hot_reload, render_ui, render_generated_voxel_world).chain(),
+            );
     }
 }
 
@@ -422,4 +434,81 @@ fn render_ui(
                 });
         }
     }
+}
+
+/// System that renders GeneratedVoxelWorld when dirty.
+///
+/// When `scene.set_voxel_world()` is called from Lua, this system:
+/// 1. Despawns any previously spawned chunk meshes
+/// 2. Builds new chunk meshes from the VoxelWorld
+/// 3. Spawns them with proper materials and deferred rendering markers
+///
+/// Uses Option<> for materials because VoxelMaterial may not be registered
+/// if CorePlugin isn't loaded (e.g., in tests or simple apps).
+fn render_generated_voxel_world(
+    mut commands: Commands,
+    mut generated: ResMut<GeneratedVoxelWorld>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: Option<ResMut<Assets<VoxelMaterial>>>,
+) {
+    // Only process if dirty
+    if !generated.dirty {
+        return;
+    }
+
+    // Mark as processed
+    generated.dirty = false;
+
+    // Despawn old entities
+    for entity in generated.spawned_entities.drain(..) {
+        commands.entity(entity).despawn();
+    }
+
+    // Get the world, or return if none
+    let Some(world) = generated.world.as_ref() else {
+        return;
+    };
+
+    // Skip if empty
+    if world.chunk_count() == 0 {
+        info!("[generated] No chunks to render");
+        return;
+    }
+
+    // Need materials to render - if not available, skip
+    let Some(mut materials) = materials else {
+        warn!("[generated] VoxelMaterial not available - CorePlugin may not be loaded");
+        return;
+    };
+
+    // Create shared material for all chunks
+    let material = materials.add(VoxelMaterial::default());
+
+    // Build chunk meshes with greedy meshing enabled
+    let chunk_meshes = build_world_meshes_with_options(world, true);
+
+    info!("[generated] Spawning {} chunk meshes", chunk_meshes.len());
+
+    // Spawn each chunk
+    for chunk_mesh in chunk_meshes {
+        let world_offset = chunk_mesh.translation();
+        let mesh_handle = meshes.add(chunk_mesh.mesh);
+
+        let entity = commands
+            .spawn((
+                Mesh3d(mesh_handle),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(world_offset),
+                DeferredRenderable,
+                GeneratedVoxelMesh,
+            ))
+            .id();
+
+        generated.spawned_entities.push(entity);
+    }
+
+    info!(
+        "[generated] Spawned {} entities for generated voxel world",
+        generated.spawned_entities.len()
+    );
 }

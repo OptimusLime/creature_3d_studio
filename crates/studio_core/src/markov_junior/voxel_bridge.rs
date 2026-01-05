@@ -65,6 +65,34 @@ impl MjPalette {
         }
     }
 
+    /// Create a palette from a grid's character set using C# palette.xml colors.
+    /// This maps each character in the grid to its proper color.
+    ///
+    /// Value 0 is always empty (transparent).
+    /// Values 1+ are mapped to their character's color from palette.xml.
+    pub fn from_grid(grid: &MjGrid) -> Self {
+        use super::render::RenderPalette;
+
+        let render_palette = RenderPalette::from_palette_xml();
+        let mut colors = HashMap::new();
+
+        // Map each character in the grid to a voxel color
+        // grid.characters[i] corresponds to value (i) in the grid state
+        for (i, &ch) in grid.characters.iter().enumerate() {
+            let value = i as u8; // Grid value index
+            if value == 0 {
+                continue; // Value 0 is always empty
+            }
+
+            if let Some(rgba) = render_palette.get(ch) {
+                let voxel = Voxel::solid(rgba[0], rgba[1], rgba[2]);
+                colors.insert(value, voxel);
+            }
+        }
+
+        Self { colors }
+    }
+
     /// Create the PICO-8 16-color palette.
     pub fn pico8() -> Self {
         let mut colors = HashMap::new();
@@ -132,6 +160,26 @@ mod tests {
         assert!(palette.get(0).is_none()); // 0 is always empty
         assert!(palette.get(1).is_some()); // 1 = white
         assert!(palette.get(2).is_some()); // 2 = red
+    }
+
+    #[test]
+    fn test_palette_from_grid() {
+        // MazeGrowth.xml uses values="BWA"
+        let grid = MjGrid::with_values(4, 4, 1, "BWA");
+        let palette = MjPalette::from_grid(&grid);
+
+        // Value 0 (B) should be empty (value 0 convention)
+        assert!(palette.get(0).is_none(), "Value 0 should be empty");
+
+        // Value 1 (W) should be off-white from palette.xml
+        let w = palette.get(1).expect("W should have a color");
+        assert_eq!(w.color[0], 0xFF, "W should be off-white (R)");
+        assert_eq!(w.color[1], 0xF1, "W should be off-white (G)");
+
+        // Value 2 (A) should be gray from palette.xml
+        let a = palette.get(2).expect("A should have a color");
+        assert_eq!(a.color[0], 0xC2, "A should be gray (R)");
+        assert_eq!(a.color[1], 0xC3, "A should be gray (G)");
     }
 
     #[test]

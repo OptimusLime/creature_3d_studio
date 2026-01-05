@@ -73,8 +73,8 @@ pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
 
 // PNG rendering (no GPU needed)
 pub use render::{
-    default_colors, pico8_colors, render_2d, render_3d_isometric, render_to_png,
-    render_to_png_with_colors, save_png,
+    colors_for_grid, default_colors, pico8_colors, render_2d, render_3d_isometric, render_to_png,
+    render_to_png_with_colors, save_png, RenderPalette,
 };
 
 // Lua API

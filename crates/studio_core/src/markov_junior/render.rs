@@ -7,12 +7,138 @@
 
 use super::MjGrid;
 use image::{ImageBuffer, Rgba, RgbaImage};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Default background color (dark gray, matches C# GUI.BACKGROUND)
 const BACKGROUND: [u8; 4] = [34, 34, 34, 255];
 
-/// Default color palette for rendering.
+/// MarkovJunior palette mapping characters to RGBA colors.
+/// Based on the C# palette.xml file.
+#[derive(Debug, Clone)]
+pub struct RenderPalette {
+    /// Character to RGBA color mapping
+    colors: HashMap<char, [u8; 4]>,
+}
+
+impl Default for RenderPalette {
+    fn default() -> Self {
+        Self::from_palette_xml()
+    }
+}
+
+impl RenderPalette {
+    /// Create palette from C# MarkovJunior palette.xml colors.
+    /// This is the standard palette used by the reference implementation.
+    pub fn from_palette_xml() -> Self {
+        let mut colors = HashMap::new();
+
+        // Primary colors (uppercase) from palette.xml
+        colors.insert('B', [0x00, 0x00, 0x00, 0xFF]); // Black
+        colors.insert('I', [0x1D, 0x2B, 0x53, 0xFF]); // Indigo
+        colors.insert('P', [0x7E, 0x25, 0x53, 0xFF]); // Purple
+        colors.insert('E', [0x00, 0x87, 0x51, 0xFF]); // Emerald
+        colors.insert('N', [0xAB, 0x52, 0x36, 0xFF]); // browN
+        colors.insert('D', [0x5F, 0x57, 0x4F, 0xFF]); // Dead/Dark
+        colors.insert('A', [0xC2, 0xC3, 0xC7, 0xFF]); // Alive/grAy
+        colors.insert('W', [0xFF, 0xF1, 0xE8, 0xFF]); // White
+        colors.insert('R', [0xFF, 0x00, 0x4D, 0xFF]); // Red
+        colors.insert('O', [0xFF, 0xA3, 0x00, 0xFF]); // Orange
+        colors.insert('Y', [0xFF, 0xEC, 0x27, 0xFF]); // Yellow
+        colors.insert('G', [0x00, 0xE4, 0x36, 0xFF]); // Green
+        colors.insert('U', [0x29, 0xAD, 0xFF, 0xFF]); // blUe
+        colors.insert('S', [0x83, 0x76, 0x9C, 0xFF]); // Slate
+        colors.insert('K', [0xFF, 0x77, 0xA8, 0xFF]); // pinK
+        colors.insert('F', [0xFF, 0xCC, 0xAA, 0xFF]); // Fawn
+
+        // Secondary colors (lowercase) from palette.xml
+        colors.insert('b', [0x29, 0x18, 0x14, 0xFF]); // black
+        colors.insert('i', [0x11, 0x1D, 0x35, 0xFF]); // indigo
+        colors.insert('p', [0x42, 0x21, 0x36, 0xFF]); // purple
+        colors.insert('e', [0x12, 0x53, 0x59, 0xFF]); // emerald
+        colors.insert('n', [0x74, 0x2F, 0x29, 0xFF]); // brown
+        colors.insert('d', [0x49, 0x33, 0x3B, 0xFF]); // dead/dark
+        colors.insert('a', [0xA2, 0x88, 0x79, 0xFF]); // alive/gray
+        colors.insert('w', [0xF3, 0xEF, 0x7D, 0xFF]); // white
+        colors.insert('r', [0xBE, 0x12, 0x50, 0xFF]); // red
+        colors.insert('o', [0xFF, 0x6C, 0x24, 0xFF]); // orange
+        colors.insert('y', [0xA8, 0xE7, 0x2E, 0xFF]); // yellow
+        colors.insert('g', [0x00, 0xB5, 0x43, 0xFF]); // green
+        colors.insert('u', [0x06, 0x5A, 0xB5, 0xFF]); // blue
+        colors.insert('s', [0x75, 0x46, 0x65, 0xFF]); // slate
+        colors.insert('k', [0xFF, 0x6E, 0x59, 0xFF]); // pink
+        colors.insert('f', [0xFF, 0x9D, 0x81, 0xFF]); // fawn
+
+        // Additional colors
+        colors.insert('C', [0x00, 0xFF, 0xFF, 0xFF]); // Cyan
+        colors.insert('c', [0x5F, 0xCD, 0xE4, 0xFF]); // cyan
+        colors.insert('H', [0xE4, 0xBB, 0x40, 0xFF]); // Honey
+        colors.insert('h', [0x8A, 0x6F, 0x30, 0xFF]); // honey
+        colors.insert('J', [0x4B, 0x69, 0x2F, 0xFF]); // Jungle
+        colors.insert('j', [0x45, 0x10, 0x7E, 0xFF]); // jungle
+        colors.insert('L', [0x84, 0x7E, 0x87, 0xFF]); // Light
+        colors.insert('l', [0x69, 0x6A, 0x6A, 0xFF]); // light
+        colors.insert('M', [0xFF, 0x00, 0xFF, 0xFF]); // Magenta
+        colors.insert('m', [0x9C, 0x09, 0xCC, 0xFF]); // magenta
+        colors.insert('Q', [0x9B, 0xAD, 0xB7, 0xFF]); // aQua
+        colors.insert('q', [0x3F, 0x3F, 0x74, 0xFF]); // aqua
+        colors.insert('T', [0x37, 0x94, 0x6E, 0xFF]); // Teal
+        colors.insert('t', [0x32, 0x3C, 0x39, 0xFF]); // teal
+        colors.insert('V', [0x8F, 0x97, 0x4A, 0xFF]); // oliVe
+        colors.insert('v', [0x52, 0x4B, 0x24, 0xFF]); // olive
+        colors.insert('X', [0xFF, 0x00, 0x00, 0xFF]); // X (pure red)
+        colors.insert('x', [0xD9, 0x57, 0x63, 0xFF]); // x
+        colors.insert('Z', [0xFF, 0xFF, 0xFF, 0xFF]); // Z (pure white)
+        colors.insert('z', [0xCB, 0xDB, 0xFC, 0xFF]); // z
+
+        Self { colors }
+    }
+
+    /// Get the color for a character.
+    pub fn get(&self, ch: char) -> Option<[u8; 4]> {
+        self.colors.get(&ch).copied()
+    }
+
+    /// Get colors as a Vec ordered by grid index.
+    /// Maps grid state values (0, 1, 2...) to their character colors.
+    ///
+    /// IMPORTANT: Value 0 is ALWAYS transparent/empty in MarkovJunior convention,
+    /// regardless of what character it represents. This matches C# behavior where
+    /// `visible[i] = value != 0`.
+    ///
+    /// For a grid with values="BWA":
+    /// - State 0 → transparent (empty/background)
+    /// - State 1 → 'W' → White  
+    /// - State 2 → 'A' → Gray
+    pub fn to_index_colors(&self, grid: &MjGrid) -> Vec<[u8; 4]> {
+        let mut colors = Vec::with_capacity(grid.c as usize);
+
+        for i in 0..grid.c {
+            if i == 0 {
+                // Value 0 is always transparent (empty/background) - matches C# convention
+                colors.push([0, 0, 0, 0]);
+            } else if (i as usize) < grid.characters.len() {
+                let ch = grid.characters[i as usize];
+                let color = self.get(ch).unwrap_or([255, 0, 255, 255]); // magenta fallback
+                colors.push(color);
+            } else {
+                // Out of range = magenta (error indicator)
+                colors.push([255, 0, 255, 255]);
+            }
+        }
+
+        colors
+    }
+}
+
+/// Get colors for a grid using the standard MarkovJunior palette.
+/// This maps each character in the grid's values to its proper color.
+pub fn colors_for_grid(grid: &MjGrid) -> Vec<[u8; 4]> {
+    let palette = RenderPalette::default();
+    palette.to_index_colors(grid)
+}
+
+/// Default color palette for rendering (legacy - use colors_for_grid instead).
 /// Maps grid value indices to RGBA colors.
 /// Index 0 is transparent (empty), indices 1+ are visible colors.
 pub fn default_colors() -> Vec<[u8; 4]> {
@@ -191,61 +317,72 @@ pub fn render_3d_isometric(grid: &MjGrid, colors: &[[u8; 4]], block_size: u32) -
     img
 }
 
-/// Draw a simple isometric cube at the given position.
+/// Draw an isometric cube at the given position.
+/// Matches the C# MarkovJunior Graphics.cs Sprite implementation.
+///
+/// The C# sprite uses:
+/// - width = 2 * size
+/// - height = 2 * size - 1
+/// - Coordinate system: local_x = i - size + 1, local_y = size - j - 1
+/// - Face brightness: top=215, left=143, right=71 (out of 256)
 fn draw_isometric_cube(img: &mut RgbaImage, x: i32, y: i32, size: i32, color: [u8; 4]) {
     let (r, g, b, a) = (color[0], color[1], color[2], color[3]);
 
-    // Three faces with different brightness
-    let top_color = Rgba([r, g, b, a]);
-    let left_color = Rgba([
-        (r as u32 * 140 / 255) as u8,
-        (g as u32 * 140 / 255) as u8,
-        (b as u32 * 140 / 255) as u8,
-        a,
-    ]);
-    let right_color = Rgba([
-        (r as u32 * 90 / 255) as u8,
-        (g as u32 * 90 / 255) as u8,
-        (b as u32 * 90 / 255) as u8,
-        a,
-    ]);
+    // C# brightness values from Sprite class
+    const C1: u32 = 215; // top (brightest)
+    const C2: u32 = 143; // left (medium)
+    const C3: u32 = 71; // right (darkest)
 
-    let width = img.width() as i32;
-    let height = img.height() as i32;
+    let img_width = img.width() as i32;
+    let img_height = img.height() as i32;
 
-    // Draw each pixel in the isometric cube shape
-    for dy in 0..(2 * size) {
-        for dx in 0..(2 * size) {
-            let px = x + dx;
-            let py = y + dy - size;
+    let sprite_width = 2 * size;
+    let sprite_height = 2 * size - 1;
 
-            if px < 0 || px >= width || py < 0 || py >= height {
-                continue;
+    // Draw each pixel using C# coordinate system
+    for j in 0..sprite_height {
+        for i in 0..sprite_width {
+            // C# local coordinates: local_x = i - size + 1, local_y = size - j - 1
+            let local_x = i - size + 1;
+            let local_y = size - j - 1;
+
+            // C# boundary check from Sprite.f():
+            // if (2*y - x >= 2*size || 2*y + x > 2*size || 2*y - x < -2*size || 2*y + x <= -2*size) return transparent;
+            let two_y_minus_x = 2 * local_y - local_x;
+            let two_y_plus_x = 2 * local_y + local_x;
+
+            if two_y_minus_x >= 2 * size
+                || two_y_plus_x > 2 * size
+                || two_y_minus_x < -2 * size
+                || two_y_plus_x <= -2 * size
+            {
+                continue; // transparent
             }
 
-            // Determine which face this pixel belongs to
-            let local_x = dx - size;
-            let local_y = size - dy;
-
-            // Check if inside the diamond shape
-            let in_diamond = 2 * local_y.abs() + local_x.abs() <= 2 * size;
-            if !in_diamond {
-                continue;
-            }
-
-            // Determine face based on position
-            let pixel_color = if local_y > local_x.abs() / 2 {
-                // Top face
-                top_color
-            } else if local_x > 0 {
-                // Right face
-                right_color
+            // Determine face (from C# Sprite.f()):
+            // if (x > 0 && 2*y < x) return c3;      // right face
+            // if (x <= 0 && 2*y <= -x) return c2;   // left face
+            // else return c1;                        // top face
+            let grayscale = if local_x > 0 && 2 * local_y < local_x {
+                C3 // right face (darkest)
+            } else if local_x <= 0 && 2 * local_y <= -local_x {
+                C2 // left face (medium)
             } else {
-                // Left face
-                left_color
+                C1 // top face (brightest)
             };
 
-            img.put_pixel(px as u32, py as u32, pixel_color);
+            // Apply grayscale to color
+            let pr = ((r as u32) * grayscale / 256) as u8;
+            let pg = ((g as u32) * grayscale / 256) as u8;
+            let pb = ((b as u32) * grayscale / 256) as u8;
+
+            // Calculate screen position
+            let px = x + i;
+            let py = y + j;
+
+            if px >= 0 && px < img_width && py >= 0 && py < img_height {
+                img.put_pixel(px as u32, py as u32, Rgba([pr, pg, pb, a]));
+            }
         }
     }
 }
@@ -258,6 +395,7 @@ pub fn save_png(img: &RgbaImage, path: &Path) -> Result<(), image::ImageError> {
 /// Convenience function: render grid and save to PNG.
 ///
 /// Automatically chooses 2D or 3D rendering based on grid dimensions.
+/// Uses the grid's character mappings to determine correct colors from palette.xml.
 ///
 /// # Arguments
 /// * `grid` - The grid to render
@@ -267,7 +405,8 @@ pub fn save_png(img: &RgbaImage, path: &Path) -> Result<(), image::ImageError> {
 /// # Returns
 /// Ok(()) on success, Err on IO/image error
 pub fn render_to_png(grid: &MjGrid, path: &Path, pixel_size: u32) -> Result<(), image::ImageError> {
-    let colors = default_colors();
+    // Use grid-aware colors that respect character->color mapping
+    let colors = colors_for_grid(grid);
     let img = if grid.mz == 1 {
         render_2d(grid, &colors, pixel_size)
     } else {
@@ -391,6 +530,59 @@ mod tests {
         assert_eq!(colors.len(), 16);
         assert_eq!(colors[0][3], 0); // first is transparent
         assert_ne!(colors[1][3], 0); // rest are opaque
+    }
+
+    #[test]
+    fn test_render_palette_from_xml() {
+        let palette = RenderPalette::from_palette_xml();
+
+        // Test some key colors from palette.xml
+        assert_eq!(palette.get('B'), Some([0x00, 0x00, 0x00, 0xFF])); // Black
+        assert_eq!(palette.get('W'), Some([0xFF, 0xF1, 0xE8, 0xFF])); // White (off-white)
+        assert_eq!(palette.get('R'), Some([0xFF, 0x00, 0x4D, 0xFF])); // Red
+        assert_eq!(palette.get('G'), Some([0x00, 0xE4, 0x36, 0xFF])); // Green
+        assert_eq!(palette.get('A'), Some([0xC2, 0xC3, 0xC7, 0xFF])); // Alive/grAy
+    }
+
+    #[test]
+    fn test_colors_for_grid_maps_correctly() {
+        // MazeGrowth.xml uses values="BWA"
+        let grid = MjGrid::with_values(4, 4, 1, "BWA");
+        let colors = colors_for_grid(&grid);
+
+        // Index 0 (B) should be transparent (value 0 = empty convention)
+        assert_eq!(
+            colors[0],
+            [0, 0, 0, 0],
+            "B should be transparent at index 0"
+        );
+
+        // Index 1 (W) should be off-white from palette
+        assert_eq!(
+            colors[1],
+            [0xFF, 0xF1, 0xE8, 0xFF],
+            "W should be off-white at index 1"
+        );
+
+        // Index 2 (A) should be gray from palette
+        assert_eq!(
+            colors[2],
+            [0xC2, 0xC3, 0xC7, 0xFF],
+            "A should be gray at index 2"
+        );
+    }
+
+    #[test]
+    fn test_colors_for_grid_mazebacktracker() {
+        // MazeBacktracker.xml uses values="BRGW"
+        let grid = MjGrid::with_values(4, 4, 1, "BRGW");
+        let colors = colors_for_grid(&grid);
+
+        assert_eq!(colors.len(), 4);
+        assert_eq!(colors[0], [0, 0, 0, 0], "B should be transparent");
+        assert_eq!(colors[1], [0xFF, 0x00, 0x4D, 0xFF], "R should be red");
+        assert_eq!(colors[2], [0x00, 0xE4, 0x36, 0xFF], "G should be green");
+        assert_eq!(colors[3], [0xFF, 0xF1, 0xE8, 0xFF], "W should be off-white");
     }
 
     // ========================================================================

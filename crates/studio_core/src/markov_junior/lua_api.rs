@@ -385,13 +385,43 @@ impl UserData for MjLuaGrid {
 
         // grid:to_voxel_world() -> VoxelWorld userdata (for direct scene integration)
         // Returns a lightweight reference that can be passed to scene.set_voxel_world()
+        // Uses MjPalette::from_grid() to map characters to proper palette.xml colors.
         methods.add_method("to_voxel_world", |_, this, ()| {
             use super::voxel_bridge::MjPalette;
 
-            let palette = MjPalette::default();
+            // Use from_grid to get proper character->color mapping from palette.xml
+            let palette = MjPalette::from_grid(&this.inner);
             let world = this.inner.to_voxel_world(&palette);
             Ok(MjLuaVoxelWorld { inner: world })
         });
+
+        // grid:render_to_png(path, [pixel_size]) -> bool
+        // Renders the grid to a PNG file at the given path.
+        // Uses proper colors from palette.xml based on grid's character set.
+        // pixel_size defaults to 4 for 2D grids, 8 for 3D isometric.
+        //
+        // C# Reference: Graphics.cs Render() dispatches to BitmapRender or IsometricRender
+        methods.add_method(
+            "render_to_png",
+            |_, this, (path, pixel_size): (String, Option<u32>)| {
+                use super::render::render_to_png;
+                use std::path::Path;
+
+                // Default pixel size: 4 for 2D, 8 for 3D
+                let pixel_size = pixel_size.unwrap_or(if this.inner.mz == 1 { 4 } else { 8 });
+
+                let path = Path::new(&path);
+                render_to_png(&this.inner, path, pixel_size).map_err(|e| {
+                    mlua::Error::RuntimeError(format!(
+                        "Failed to save PNG '{}': {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+
+                Ok(true)
+            },
+        );
     }
 }
 
@@ -1267,5 +1297,117 @@ mod tests {
 
         let result: bool = lua.load(script).eval().unwrap();
         assert!(result, "HANDOFF.md Phase 2.2 verification should pass");
+    }
+
+    // ========================================================================
+    // Phase 3.3: PNG Rendering Tests
+    // ========================================================================
+
+    /// Test grid:render_to_png() saves a PNG file.
+    #[test]
+    fn test_grid_render_to_png() {
+        let lua = Lua::new();
+        register_markov_junior_api(&lua).unwrap();
+
+        let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("screenshots");
+
+        let output_path = output_dir.join("test_lua_render_to_png.png");
+        // Clean up from previous runs
+        let _ = std::fs::remove_file(&output_path);
+
+        let script = format!(
+            r#"
+            local model = mj.create_model({{
+                values = "BW",
+                size = {{8, 8, 1}}
+            }})
+            model:one("B", "W")
+            local grid = model:run(42, 32)
+            return grid:render_to_png("{}")
+            "#,
+            output_path.display().to_string().replace('\\', "/")
+        );
+
+        let result: bool = lua.load(&script).eval().unwrap();
+        assert!(result, "render_to_png should return true");
+        assert!(output_path.exists(), "PNG file should be created");
+
+        // Verify file has content
+        let metadata = std::fs::metadata(&output_path).unwrap();
+        assert!(metadata.len() > 100, "PNG file should have content");
+    }
+
+    /// Test grid:render_to_png() with 3D grid produces isometric output.
+    #[test]
+    fn test_grid_render_to_png_3d() {
+        let lua = Lua::new();
+        register_markov_junior_api(&lua).unwrap();
+
+        let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("screenshots");
+
+        let output_path = output_dir.join("test_lua_render_to_png_3d.png");
+        let _ = std::fs::remove_file(&output_path);
+
+        let script = format!(
+            r#"
+            local model = mj.create_model({{
+                values = "BW",
+                size = {{8, 8, 8}},
+                origin = true
+            }})
+            model:one("WB", "WW")
+            local grid = model:run(42, 200)
+            return grid:render_to_png("{}", 6)
+            "#,
+            output_path.display().to_string().replace('\\', "/")
+        );
+
+        let result: bool = lua.load(&script).eval().unwrap();
+        assert!(result, "render_to_png should return true for 3D");
+        assert!(output_path.exists(), "3D PNG file should be created");
+    }
+
+    /// Test grid:render_to_png() with custom pixel size.
+    #[test]
+    fn test_grid_render_to_png_custom_size() {
+        let lua = Lua::new();
+        register_markov_junior_api(&lua).unwrap();
+
+        let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("screenshots");
+
+        let output_path = output_dir.join("test_lua_render_to_png_large.png");
+        let _ = std::fs::remove_file(&output_path);
+
+        let script = format!(
+            r#"
+            local model = mj.create_model({{
+                values = "BW",
+                size = {{4, 4, 1}}
+            }})
+            model:one("B", "W")
+            local grid = model:run(42)
+            return grid:render_to_png("{}", 16)  -- Large pixels
+            "#,
+            output_path.display().to_string().replace('\\', "/")
+        );
+
+        let result: bool = lua.load(&script).eval().unwrap();
+        assert!(result, "render_to_png should work with custom pixel size");
+        assert!(output_path.exists(), "Large pixel PNG should be created");
     }
 }
