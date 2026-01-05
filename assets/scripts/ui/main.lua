@@ -10,6 +10,12 @@ local current_seed = 42
 local generated = false
 local model_type = "maze3d"  -- "growth", "maze3d", "dungeon"
 
+-- Verification state
+local verification_models = nil
+local current_verification_idx = 1
+local verification_model = nil
+local verification_generated = false
+
 -- Create different types of 3D models
 local function create_mj_model(type)
     if type == "growth" then
@@ -179,6 +185,135 @@ function on_draw()
                 end
             else
                 scene.print("Generate first before saving!")
+            end
+        end
+    end)
+    
+    -- MJ Verification Window (Phase 4)
+    imgui.window("MJ Verification", function()
+        imgui.text("2D Model Verification")
+        imgui.separator()
+        
+        -- Load models list on first run
+        if not verification_models then
+            verification_models = mj.list_models_with_refs()
+            if #verification_models > 0 then
+                scene.print(string.format("Found %d models with reference images", #verification_models))
+            else
+                scene.print("No models with reference images found")
+            end
+        end
+        
+        -- Show model count
+        imgui.text(string.format("Models: %d", #verification_models))
+        
+        if #verification_models == 0 then
+            imgui.text("No verification models found!")
+            imgui.text("Check: assets/reference_images/mj/")
+            return
+        end
+        
+        -- Model selection buttons
+        imgui.separator()
+        imgui.text("Select Model:")
+        
+        local models_per_row = 4
+        for i, model_info in ipairs(verification_models) do
+            if i > 1 and (i - 1) % models_per_row ~= 0 then
+                imgui.same_line()
+            end
+            
+            local is_selected = (i == current_verification_idx)
+            local label = model_info.name
+            if is_selected then
+                label = "[" .. label .. "]"
+            end
+            
+            if imgui.button(label) then
+                current_verification_idx = i
+                verification_model = nil
+                verification_generated = false
+                scene.print("Selected: " .. model_info.name)
+            end
+        end
+        
+        imgui.separator()
+        
+        -- Current model info
+        local current_info = verification_models[current_verification_idx]
+        if current_info then
+            imgui.text("Model: " .. current_info.name)
+            imgui.text("Size: " .. tostring(current_info.size) .. "x" .. tostring(current_info.size))
+            imgui.text("Reference: " .. current_info.ref_path)
+            
+            imgui.separator()
+            
+            -- Generate button
+            if imgui.button("Generate 2D") then
+                scene.print("Loading: " .. current_info.xml_path)
+                
+                -- Load model with correct size from models.xml
+                verification_model = mj.load_model_xml(current_info.xml_path, {
+                    size = current_info.size,
+                    mz = 1
+                })
+                
+                -- Run with seed 0 for reproducibility
+                local max_steps = current_info.size * current_info.size * 2
+                local steps = verification_model:run(0, max_steps)
+                
+                local grid = verification_model:grid()
+                local nonzero = grid:count_nonzero()
+                
+                -- Save our output
+                local output_path = "screenshots/verify_" .. current_info.name .. ".png"
+                grid:render_to_png(output_path, 2)
+                
+                verification_generated = true
+                scene.print(string.format("Generated %s: %d steps, %d cells", 
+                    current_info.name, steps, nonzero))
+                scene.print("Saved to: " .. output_path)
+                scene.print("Reference: " .. current_info.ref_path)
+            end
+            
+            imgui.same_line()
+            
+            if imgui.button("Run Full") then
+                scene.print("Running FULL: " .. current_info.xml_path)
+                
+                verification_model = mj.load_model_xml(current_info.xml_path, {
+                    size = current_info.size,
+                    mz = 1
+                })
+                
+                -- Run to completion
+                local steps = verification_model:run(0, 0)
+                
+                local grid = verification_model:grid()
+                local nonzero = grid:count_nonzero()
+                
+                -- Save our output
+                local output_path = "screenshots/verify_" .. current_info.name .. "_full.png"
+                grid:render_to_png(output_path, 2)
+                
+                verification_generated = true
+                scene.print(string.format("FULL %s: %d steps, %d cells", 
+                    current_info.name, steps, nonzero))
+                scene.print("Saved to: " .. output_path)
+            end
+            
+            if verification_generated and verification_model then
+                imgui.separator()
+                local grid = verification_model:grid()
+                imgui.text(string.format("Grid: %dx%dx%d", 
+                    grid:size()[1], grid:size()[2], grid:size()[3]))
+                imgui.text(string.format("Non-zero: %d", grid:count_nonzero()))
+                imgui.text(string.format("Steps: %d", verification_model:counter()))
+                
+                imgui.separator()
+                imgui.text("Compare images in screenshots/:")
+                imgui.text("  Our: verify_" .. current_info.name .. ".png")
+                imgui.text("  Ref: " .. current_info.ref_path)
             end
         end
     end)

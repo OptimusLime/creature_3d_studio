@@ -3,9 +3,9 @@
 ## Current State
 
 **Branch:** `feature/markov-junior-rust`
-**Phase:** Phase 3.6 COMPLETE (3D VoxelWorld Live Rendering)
+**Phase:** Phase 4.0 IN PROGRESS (2D Verification Infrastructure)
 **Tests:** 280 passing (237 Phase 1 + 25 Phase 2 + 18 Phase 3)
-**Total Lines:** ~10,200
+**Total Lines:** ~10,500
 
 ---
 
@@ -69,6 +69,16 @@ All MarkovJunior algorithm features ported from C#:
 - "Step x100" button for incremental animation
 - Model switching with automatic reset
 
+### Phase 4.0: 2D Verification Infrastructure (IN PROGRESS)
+- `mj.list_models_with_refs()` - scans for models with reference images
+- `mj.load_model_xml(path, options)` - loads model with size override
+- `grid:render_to_rgba()` - returns RGBA bytes for display
+- Reference images copied to `assets/reference_images/mj/` (17 models)
+- "MJ Verification" ImGui window with model selection buttons
+- "Generate 2D" and "Run Full" buttons for testing each model
+- Saves output to `screenshots/verify_<model>.png` for comparison
+- See `docs/markov_junior/VERIFICATION_PLAN.md` for full plan
+
 ---
 
 ## How to Use
@@ -82,6 +92,17 @@ cargo run
 2. **Generate**: Click "Generate" to create 3D structure
 3. **Animate**: Click "Step x100" repeatedly to watch it grow
 4. **Save**: Click "Save PNG" to save isometric render
+
+### Run Verification (Phase 4)
+```bash
+cargo run
+```
+
+1. Open the **"MJ Verification"** window
+2. Click a model name (e.g., **MazeGrowth**)
+3. Click **"Generate 2D"** to run with limited steps
+4. Click **"Run Full"** to run to completion
+5. Compare `screenshots/verify_<model>.png` with `assets/reference_images/mj/<model>.gif`
 
 ### Run the Standalone Example
 ```bash
@@ -195,8 +216,13 @@ cargo test -p studio_core markov_junior
 | 3.6 | 3D VoxelWorld Live Rendering | COMPLETE | 0 |
 | 3.7 | Model Browser Dropdown | PENDING | - |
 | 3.8 | 2D Texture Viewport | PENDING | - |
+| **4.0** | **2D Verification Infrastructure** | **IN PROGRESS** | **0** |
+| 4.1 | 2D Model Testing | PENDING | - |
+| 4.2 | Targeted Bug Fixes | PENDING | - |
+| 4.3 | 3D Verification | PENDING | - |
+| 4.4 | Automated Regression Tests | PENDING | - |
 
-**Remaining:** 4 phases (~400 lines)
+**Phase 4 Focus:** Systematic verification that our implementation matches C# MarkovJunior
 
 ---
 
@@ -205,13 +231,15 @@ cargo test -p studio_core markov_junior
 | File | Purpose |
 |------|---------|
 | `crates/studio_core/src/markov_junior/render.rs` | PNG rendering, RenderPalette, isometric cubes |
-| `crates/studio_core/src/markov_junior/lua_api.rs` | Lua API: mj.*, grid:render_to_png() |
+| `crates/studio_core/src/markov_junior/lua_api.rs` | Lua API: mj.*, grid:render_to_png(), list_models_with_refs |
 | `crates/studio_core/src/markov_junior/voxel_bridge.rs` | Grid → VoxelWorld, MjPalette::from_grid |
 | `crates/studio_scripting/src/lib.rs` | GeneratedVoxelWorld, render_generated_voxel_world system |
 | `src/main.rs` | Main app with VoxelMaterialPlugin, DeferredRenderingPlugin |
 | `examples/p26_markov_bevy_3d.rs` | Standalone 3D Bevy rendering example |
 | `examples/p27_markov_imgui.rs` | Phase 3.3/3.6 verification example |
-| `assets/scripts/ui/main.lua` | MarkovJunior demo with model selection |
+| `assets/scripts/ui/main.lua` | MarkovJunior demo + verification UI |
+| `assets/reference_images/mj/` | C# reference images for verification |
+| `docs/markov_junior/VERIFICATION_PLAN.md` | Phase 4 verification approach |
 | `MarkovJunior/resources/palette.xml` | C# color palette reference |
 | `MarkovJunior/source/Graphics.cs` | C# rendering reference |
 
@@ -253,3 +281,31 @@ cargo run --example p27_markov_imgui
 5. **Value 0 is always transparent** - matches C# convention `visible[i] = value != 0`
 6. **Use colors_for_grid()** for PNG rendering, `MjPalette::from_grid()` for VoxelWorld
 7. **Main app requires** VoxelMaterialPlugin + DeferredRenderingPlugin for 3D rendering
+
+---
+
+## Phase 4 Verification Status
+
+**Models with Reference Images:** 17
+
+| Model | Tested | Result | Notes |
+|-------|--------|--------|-------|
+| Apartemazements | - | - | 3D |
+| Basic | - | - | |
+| Circuit | - | - | |
+| CompleteSAW | - | - | |
+| DungeonGrowth | - | - | |
+| Flowers | - | - | |
+| Growth | - | - | |
+| LoopErasedWalk | - | - | |
+| MazeBacktracker | - | - | |
+| MazeGrowth | - | - | |
+| NystromDungeon | - | - | |
+| RegularSAW | - | - | |
+| River | - | - | |
+| SokobanLevel1 | - | - | |
+| StairsPath | - | - | 3D |
+| Trail | - | - | |
+| Wilson | - | - | |
+
+**Next Step:** Run `cargo run`, use "MJ Verification" window to test each model, document results.

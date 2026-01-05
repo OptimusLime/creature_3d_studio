@@ -51,10 +51,8 @@
 
 use mlua::{Lua, Result as LuaResult, UserData, UserDataMethods};
 use std::cell::RefCell;
-use std::rc::Rc;
-
-#[cfg(test)]
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use super::model::Model;
 use super::MjGrid;
@@ -129,9 +127,167 @@ pub fn register_markov_junior_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
+    // mj.list_models_with_refs() -> table of models with reference images
+    // Returns models that have corresponding images in assets/reference_images/mj/
+    mj.set(
+        "list_models_with_refs",
+        lua.create_function(|lua, ()| {
+            let models_dir = PathBuf::from("MarkovJunior/models");
+            let refs_dir = PathBuf::from("assets/reference_images/mj");
+
+            let result = lua.create_table()?;
+
+            // Check if directories exist
+            if !models_dir.exists() || !refs_dir.exists() {
+                return Ok(result);
+            }
+
+            // Get list of reference images (strip extension to get base name)
+            let mut ref_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+            if let Ok(entries) = std::fs::read_dir(&refs_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension() {
+                        if ext == "gif" || ext == "png" {
+                            if let Some(stem) = path.file_stem() {
+                                ref_names.insert(stem.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Load models.xml to get size info
+            let models_xml_path = PathBuf::from("MarkovJunior/models.xml");
+            let model_configs = parse_models_xml(&models_xml_path);
+
+            // Scan models directory for matching XMLs
+            let mut idx = 1;
+            if let Ok(entries) = std::fs::read_dir(&models_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "xml").unwrap_or(false) {
+                        if let Some(stem) = path.file_stem() {
+                            let name = stem.to_string_lossy().to_string();
+                            if ref_names.contains(&name) {
+                                // Find matching reference image
+                                let ref_path = if refs_dir.join(format!("{}.png", name)).exists() {
+                                    refs_dir.join(format!("{}.png", name))
+                                } else {
+                                    refs_dir.join(format!("{}.gif", name))
+                                };
+
+                                // Look up size from models.xml
+                                let (size, is_3d) =
+                                    model_configs.get(&name).cloned().unwrap_or((60, false));
+
+                                let entry_table = lua.create_table()?;
+                                entry_table.set("name", name.clone())?;
+                                entry_table.set("xml_path", path.display().to_string())?;
+                                entry_table.set("ref_path", ref_path.display().to_string())?;
+                                entry_table.set("size", size)?;
+                                entry_table.set("is_3d", is_3d)?;
+
+                                result.set(idx, entry_table)?;
+                                idx += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(result)
+        })?,
+    )?;
+
+    // mj.load_model_xml(path, options) -> MjLuaModel
+    // Load model from XML with optional size override
+    // options = { size = 60 } or { mx = 32, my = 32, mz = 1 }
+    mj.set(
+        "load_model_xml",
+        lua.create_function(|_, (path, options): (String, Option<mlua::Table>)| {
+            let (mx, my, mz) = if let Some(opts) = options {
+                // Check for 'size' (square grid)
+                if let Ok(size) = opts.get::<usize>("size") {
+                    let mz: usize = opts.get("mz").unwrap_or(1);
+                    (size, size, mz)
+                } else {
+                    // Check for individual dimensions
+                    let mx: usize = opts.get("mx").unwrap_or(16);
+                    let my: usize = opts.get("my").unwrap_or(16);
+                    let mz: usize = opts.get("mz").unwrap_or(1);
+                    (mx, my, mz)
+                }
+            } else {
+                (16, 16, 1)
+            };
+
+            let model = Model::load_with_size(&path, mx, my, mz).map_err(|e| {
+                mlua::Error::RuntimeError(format!("Failed to load model '{}': {}", path, e))
+            })?;
+
+            Ok(MjLuaModel {
+                inner: Rc::new(RefCell::new(model)),
+            })
+        })?,
+    )?;
+
     lua.globals().set("mj", mj)?;
 
     Ok(())
+}
+
+/// Parse models.xml to extract size information for each model.
+/// Returns a map of model name -> (size, is_3d).
+fn parse_models_xml(path: &PathBuf) -> std::collections::HashMap<String, (usize, bool)> {
+    let mut result = std::collections::HashMap::new();
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return result,
+    };
+
+    // Simple XML parsing - look for <model name="..." size="..." d="3"?>
+    for line in content.lines() {
+        if !line.contains("<model") {
+            continue;
+        }
+
+        // Extract name
+        let name = if let Some(start) = line.find("name=\"") {
+            let rest = &line[start + 6..];
+            if let Some(end) = rest.find('"') {
+                rest[..end].to_string()
+            } else {
+                continue;
+            }
+        } else {
+            continue;
+        };
+
+        // Extract size
+        let size = if let Some(start) = line.find("size=\"") {
+            let rest = &line[start + 6..];
+            if let Some(end) = rest.find('"') {
+                rest[..end].parse().unwrap_or(60)
+            } else {
+                60
+            }
+        } else {
+            60
+        };
+
+        // Check if 3D (has d="3")
+        let is_3d = line.contains("d=\"3\"");
+
+        // Only store if not already present (first entry wins for 2D)
+        // We prefer 2D configurations for verification
+        if !result.contains_key(&name) && !is_3d {
+            result.insert(name, (size, is_3d));
+        }
+    }
+
+    result
 }
 
 /// Wrapper around Model for Lua userdata.
@@ -422,6 +578,35 @@ impl UserData for MjLuaGrid {
                 Ok(true)
             },
         );
+
+        // grid:render_to_rgba([pixel_size]) -> {data: bytes, width: int, height: int}
+        // Renders the grid to RGBA bytes (for ImGui display).
+        // Returns a table with data (string of bytes), width, and height.
+        methods.add_method("render_to_rgba", |lua, this, pixel_size: Option<u32>| {
+            use super::render::{colors_for_grid, render_2d, render_3d_isometric};
+
+            // Default pixel size: 4 for 2D, 8 for 3D
+            let pixel_size = pixel_size.unwrap_or(if this.inner.mz == 1 { 4 } else { 8 });
+
+            let colors = colors_for_grid(&this.inner);
+            let img = if this.inner.mz == 1 {
+                render_2d(&this.inner, &colors, pixel_size)
+            } else {
+                render_3d_isometric(&this.inner, &colors, pixel_size)
+            };
+
+            let width = img.width();
+            let height = img.height();
+            let data: Vec<u8> = img.into_raw();
+
+            let result = lua.create_table()?;
+            // Convert to Lua string (binary-safe)
+            result.set("data", lua.create_string(&data)?)?;
+            result.set("width", width)?;
+            result.set("height", height)?;
+
+            Ok(result)
+        });
     }
 }
 
