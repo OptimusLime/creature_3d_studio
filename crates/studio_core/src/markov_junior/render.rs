@@ -1034,6 +1034,107 @@ mod tests {
         assert!(passed > 0, "At least some models should run successfully");
     }
 
+    /// 3D model configurations for verification
+    fn verification_3d_models() -> Vec<(&'static str, usize)> {
+        // (name, size) - all cubic grids
+        vec![
+            ("Growth", 29),           // Simple 3D growth
+            ("MazeGrowth", 27),       // 3D maze
+            ("Knots3D", 8),           // 3D knots
+            ("Apartemazements", 8),   // Apartment buildings
+            ("StairsPath", 33),       // Stairs pathfinding
+            ("NoDeadEnds", 19),       // 3D maze no dead ends
+            ("PillarsOfEternity", 9), // Pillar structures
+            ("Escher", 8),            // Escher-style patterns
+            ("ClosedSurface", 12),    // Closed 3D surface
+            ("ColoredKnots", 12),     // Colored 3D knots
+        ]
+    }
+
+    /// 3D VERIFICATION TEST
+    /// Runs 3D models and saves isometric screenshots.
+    #[test]
+    fn test_verification_run_all_3d_models() {
+        use crate::markov_junior::Model;
+
+        let out_dir = verification_dir();
+        std::fs::create_dir_all(&out_dir).expect("Failed to create verification directory");
+
+        let models = verification_3d_models();
+        let mut results: Vec<(String, usize, usize, bool)> = Vec::new();
+
+        println!("\n========================================");
+        println!("MARKOV JUNIOR 3D VERIFICATION TEST");
+        println!("Running {} 3D models", models.len());
+        println!("Output: {}", out_dir.display());
+        println!("========================================\n");
+
+        for (name, size) in &models {
+            let xml_path = models_path().join(format!("{}.xml", name));
+
+            print!("Running {} ({}x{}x{})... ", name, size, size, size);
+
+            // Load model with cubic 3D size
+            let model_result = Model::load_with_size(&xml_path, *size, *size, *size);
+
+            let mut model = match model_result {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("FAILED TO LOAD: {}", e);
+                    results.push((name.to_string(), 0, 0, false));
+                    continue;
+                }
+            };
+
+            // Run with seed 0, reasonable step limit for 3D
+            let max_steps = size * size * size * 2;
+            let steps = model.run(0, max_steps);
+            let grid = model.grid();
+            let nonzero = grid.count_nonzero();
+
+            // Save isometric 3D render
+            let our_path = out_dir.join(format!("{}_3d_ours.png", name));
+            let colors = colors_for_grid(grid);
+            let img = render_3d_isometric(grid, &colors, 4); // cube_size=4
+            if let Err(e) = save_png(&img, &our_path) {
+                println!("FAILED TO SAVE: {}", e);
+                results.push((name.to_string(), steps, nonzero, false));
+                continue;
+            }
+
+            println!("OK - {} steps, {} cells", steps, nonzero);
+            results.push((name.to_string(), steps, nonzero, true));
+        }
+
+        // Print summary
+        let passed = results.iter().filter(|(_, _, _, ok)| *ok).count();
+        let failed = results.len() - passed;
+
+        println!("\n========================================");
+        println!("3D VERIFICATION SUMMARY");
+        println!("========================================");
+        println!("{:<24} {:>8} {:>8}   Status", "Model", "Steps", "Cells");
+        println!("{}", "-".repeat(48));
+        for (name, steps, cells, ok) in &results {
+            println!(
+                "{:<24} {:>8} {:>8}   {}",
+                name,
+                steps,
+                cells,
+                if *ok { "OK" } else { "FAIL" }
+            );
+        }
+        println!("{}", "-".repeat(48));
+        println!("PASSED: {}, FAILED: {}", passed, failed);
+        println!("\nOutput: {}", out_dir.display());
+        println!("========================================\n");
+
+        assert!(
+            passed > 0,
+            "At least some 3D models should run successfully"
+        );
+    }
+
     /// Debug test: Run River.xml with incremental screenshots to diagnose phase transitions.
     /// Saves a screenshot every N steps to screenshots/verification/river_debug/
     #[test]
