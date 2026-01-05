@@ -1857,10 +1857,12 @@ mod tests {
             let mx = mx.min(80);
             let my = my.min(80);
             let mz = mz.min(40);
+            // Use config steps if specified, otherwise estimate based on grid size
+            // Most models need at least size^2 * 2 steps to complete
             let max_steps = if cfg_steps > 0 {
-                cfg_steps.min(50000)
+                cfg_steps.min(200000)
             } else {
-                (mx * my * mz).max(1000).min(50000)
+                (mx * my * mz * 4).max(10000).min(200000)
             };
 
             print!("{:<30} {:>3}x{:<3}x{:<2} ", name, mx, my, mz);
@@ -1886,15 +1888,23 @@ mod tests {
             let steps = model.run(0, max_steps);
             let grid = model.grid();
             let nonzero = grid.count_nonzero();
+            let is_complete = !model.is_running();
 
-            // Save screenshot
+            // Save screenshot with status in filename
             let colors = colors_for_grid(grid);
+            let status_suffix = if is_complete { "_done" } else { "_partial" };
             let save_result = if mz > 1 {
                 let img = render_3d_isometric(grid, &colors, 4);
-                save_png(&img, &out_dir.join(format!("{}.png", name)))
+                save_png(
+                    &img,
+                    &out_dir.join(format!("{}{}.png", name, status_suffix)),
+                )
             } else {
                 let img = render_2d(grid, &colors, 2);
-                save_png(&img, &out_dir.join(format!("{}.png", name)))
+                save_png(
+                    &img,
+                    &out_dir.join(format!("{}{}.png", name, status_suffix)),
+                )
             };
 
             if let Err(e) = save_result {
@@ -1904,7 +1914,8 @@ mod tests {
                 continue;
             }
 
-            println!("OK {:>6} steps {:>6} cells", steps, nonzero);
+            let status = if is_complete { "DONE" } else { "partial" };
+            println!("{:<8} {:>6} steps {:>6} cells", status, steps, nonzero);
             passed += 1;
         }
 
