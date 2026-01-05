@@ -809,4 +809,228 @@ mod tests {
             output_path.display()
         );
     }
+
+    // ========================================================================
+    // VERIFICATION TEST: Run ALL models with references, save to verification/
+    // ========================================================================
+
+    fn verification_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("screenshots/verification")
+    }
+
+    fn reference_images_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("assets/reference_images/mj")
+    }
+
+    /// Model configuration from models.xml
+    struct ModelConfig {
+        name: &'static str,
+        size: usize,
+        is_3d: bool,
+    }
+
+    /// All models that have reference images, with their correct sizes from models.xml
+    fn verification_models() -> Vec<ModelConfig> {
+        vec![
+            ModelConfig {
+                name: "Basic",
+                size: 60,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "Growth",
+                size: 359,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "MazeGrowth",
+                size: 359,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "MazeBacktracker",
+                size: 359,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "DungeonGrowth",
+                size: 79,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "Flowers",
+                size: 60,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "Circuit",
+                size: 59,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "River",
+                size: 80,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "Trail",
+                size: 59,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "Wilson",
+                size: 59,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "CompleteSAW",
+                size: 19,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "RegularSAW",
+                size: 39,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "LoopErasedWalk",
+                size: 59,
+                is_3d: false,
+            },
+            ModelConfig {
+                name: "NystromDungeon",
+                size: 39,
+                is_3d: false,
+            },
+            // 3D models - skip for now, will add later
+            // ModelConfig { name: "Apartemazements", size: 8, is_3d: true },
+            // ModelConfig { name: "StairsPath", size: 33, is_3d: true },
+        ]
+    }
+
+    /// MASTER VERIFICATION TEST
+    /// Runs ALL 2D models with reference images to completion.
+    /// Saves output to screenshots/verification/{model}_ours.png
+    /// Also copies reference image as {model}_ref.{ext} for easy comparison.
+    #[test]
+    fn test_verification_run_all_2d_models() {
+        use crate::markov_junior::Model;
+
+        let out_dir = verification_dir();
+        let ref_dir = reference_images_dir();
+
+        // Create output directory
+        std::fs::create_dir_all(&out_dir).expect("Failed to create verification directory");
+
+        let models = verification_models();
+        let mut results: Vec<(String, usize, usize, bool)> = Vec::new();
+
+        println!("\n========================================");
+        println!("MARKOV JUNIOR VERIFICATION TEST");
+        println!("Running {} 2D models to completion", models.len());
+        println!("Output: {}", out_dir.display());
+        println!("========================================\n");
+
+        for config in &models {
+            if config.is_3d {
+                continue; // Skip 3D for now
+            }
+
+            let xml_path = models_path().join(format!("{}.xml", config.name));
+
+            print!("Running {}... ", config.name);
+
+            // Load model with correct size
+            let model_result = Model::load_with_size(&xml_path, config.size, config.size, 1);
+
+            let mut model = match model_result {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("FAILED TO LOAD: {}", e);
+                    results.push((config.name.to_string(), 0, 0, false));
+                    continue;
+                }
+            };
+
+            // Run with seed 0, limit steps for slow models
+            let max_steps = config.size * config.size * 4; // Reasonable limit
+            let steps = model.run(0, max_steps);
+            let grid = model.grid();
+            let nonzero = grid.count_nonzero();
+
+            // Save our output
+            let our_path = out_dir.join(format!("{}_ours.png", config.name));
+            let colors = colors_for_grid(grid);
+            let img = render_2d(grid, &colors, 2); // pixel_size=2 for reasonable file size
+            if let Err(e) = save_png(&img, &our_path) {
+                println!("FAILED TO SAVE: {}", e);
+                results.push((config.name.to_string(), steps, nonzero, false));
+                continue;
+            }
+
+            // Copy reference image
+            let ref_extensions = ["gif", "png"];
+            let mut ref_copied = false;
+            for ext in &ref_extensions {
+                let ref_src = ref_dir.join(format!("{}.{}", config.name, ext));
+                if ref_src.exists() {
+                    let ref_dst = out_dir.join(format!("{}_ref.{}", config.name, ext));
+                    if std::fs::copy(&ref_src, &ref_dst).is_ok() {
+                        ref_copied = true;
+                        break;
+                    }
+                }
+            }
+
+            println!(
+                "OK - {} steps, {} cells{}",
+                steps,
+                nonzero,
+                if ref_copied { "" } else { " (no ref)" }
+            );
+
+            results.push((config.name.to_string(), steps, nonzero, true));
+        }
+
+        // Print summary
+        println!("\n========================================");
+        println!("VERIFICATION SUMMARY");
+        println!("========================================");
+        println!(
+            "{:<20} {:>8} {:>8} {:>8}",
+            "Model", "Steps", "Cells", "Status"
+        );
+        println!("{:-<48}", "");
+
+        let mut passed = 0;
+        let mut failed = 0;
+        for (name, steps, cells, ok) in &results {
+            let status = if *ok { "OK" } else { "FAIL" };
+            println!("{:<20} {:>8} {:>8} {:>8}", name, steps, cells, status);
+            if *ok {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+        }
+
+        println!("{:-<48}", "");
+        println!("PASSED: {}, FAILED: {}", passed, failed);
+        println!("\nOutput directory: {}", out_dir.display());
+        println!("Compare *_ours.png with *_ref.gif/png");
+        println!("========================================\n");
+
+        // Test passes if at least some models ran
+        assert!(passed > 0, "At least some models should run successfully");
+    }
 }
