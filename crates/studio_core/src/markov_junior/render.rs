@@ -1058,11 +1058,11 @@ mod tests {
         println!("Output: {}", out_dir.display());
         println!("========================================\n");
 
-        // Run with seed 0, save screenshot ~once per second at 60fps = every 60 steps
+        // Run with seed 0, save screenshot every 1000 steps
         model.reset(0);
 
-        let screenshot_interval = 1000; // Save every 1000 steps (~16 seconds at 60fps)
-        let max_steps = 10000;
+        let screenshot_interval = 1000; // Save every 1000 steps
+        let max_steps = 50000; // River needs many steps to complete
         let mut step = 0;
         let mut screenshot_count = 0;
 
