@@ -1729,4 +1729,208 @@ mod tests {
             u_count
         );
     }
+
+    /// Parse models.xml to get model configurations
+    fn parse_models_xml() -> Vec<(String, usize, usize, usize, usize)> {
+        // Returns: (name, mx, my, mz, max_steps)
+        let models_xml_path = models_path().parent().unwrap().join("models.xml");
+        let content = std::fs::read_to_string(&models_xml_path).unwrap_or_default();
+
+        let mut models = Vec::new();
+
+        for line in content.lines() {
+            if !line.contains("<model") {
+                continue;
+            }
+
+            // Extract name
+            let name = if let Some(start) = line.find("name=\"") {
+                let rest = &line[start + 6..];
+                if let Some(end) = rest.find('"') {
+                    rest[..end].to_string()
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+
+            // Extract size or length/width/height
+            let (mx, my, mz) = if let Some(start) = line.find("size=\"") {
+                let rest = &line[start + 6..];
+                if let Some(end) = rest.find('"') {
+                    let size: usize = rest[..end].parse().unwrap_or(16);
+                    let is_3d = line.contains("d=\"3\"");
+                    if is_3d {
+                        (size, size, size)
+                    } else {
+                        (size, size, 1)
+                    }
+                } else {
+                    (16, 16, 1)
+                }
+            } else if line.contains("length=\"") {
+                let length = extract_attr_usize(line, "length").unwrap_or(16);
+                let width = extract_attr_usize(line, "width").unwrap_or(16);
+                let height = extract_attr_usize(line, "height").unwrap_or(1);
+                (length, width, height)
+            } else {
+                (16, 16, 1)
+            };
+
+            // Extract steps limit
+            let max_steps = if let Some(start) = line.find("steps=\"") {
+                let rest = &line[start + 7..];
+                if let Some(end) = rest.find('"') {
+                    let s: i64 = rest[..end].parse().unwrap_or(-1);
+                    if s < 0 {
+                        0
+                    } else {
+                        s as usize
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            models.push((name, mx, my, mz, max_steps));
+        }
+
+        models
+    }
+
+    fn extract_attr_usize(line: &str, attr: &str) -> Option<usize> {
+        let pattern = format!("{}=\"", attr);
+        if let Some(start) = line.find(&pattern) {
+            let rest = &line[start + pattern.len()..];
+            if let Some(end) = rest.find('"') {
+                return rest[..end].parse().ok();
+            }
+        }
+        None
+    }
+
+    /// RUN ALL 157 MODELS TEST
+    /// Scans MarkovJunior/models/*.xml and runs every single one.
+    #[test]
+    fn test_run_all_markov_models() {
+        use crate::markov_junior::Model;
+
+        let out_dir = verification_dir().join("all_models");
+        std::fs::create_dir_all(&out_dir).expect("Failed to create output directory");
+
+        // Get all XML files
+        let models_dir = models_path();
+        let mut xml_files: Vec<_> = std::fs::read_dir(&models_dir)
+            .expect("Failed to read models directory")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|x| x == "xml").unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        xml_files.sort();
+
+        // Parse models.xml for configurations
+        let configs = parse_models_xml();
+
+        println!("\n========================================");
+        println!("MARKOV JUNIOR - RUN ALL {} MODELS", xml_files.len());
+        println!("Output: {}", out_dir.display());
+        println!("========================================\n");
+
+        let mut passed = 0;
+        let mut failed = 0;
+        let mut errors: Vec<(String, String)> = Vec::new();
+
+        for xml_path in &xml_files {
+            let name = xml_path.file_stem().unwrap().to_string_lossy().to_string();
+
+            // Find config for this model (first match)
+            let (mx, my, mz, cfg_steps) = configs
+                .iter()
+                .find(|(n, _, _, _, _)| n == &name)
+                .map(|(_, mx, my, mz, steps)| (*mx, *my, *mz, *steps))
+                .unwrap_or((16, 16, 1, 0));
+
+            // Cap at reasonable limits for test speed
+            let mx = mx.min(80);
+            let my = my.min(80);
+            let mz = mz.min(40);
+            let max_steps = if cfg_steps > 0 {
+                cfg_steps.min(50000)
+            } else {
+                (mx * my * mz).max(1000).min(50000)
+            };
+
+            print!("{:<30} {:>3}x{:<3}x{:<2} ", name, mx, my, mz);
+
+            let model_result = Model::load_with_size(xml_path, mx, my, mz);
+
+            let mut model = match model_result {
+                Ok(m) => m,
+                Err(e) => {
+                    let err_str = format!("{}", e);
+                    let short_err = if err_str.len() > 50 {
+                        format!("{}...", &err_str[..50])
+                    } else {
+                        err_str.clone()
+                    };
+                    println!("LOAD FAIL: {}", short_err);
+                    errors.push((name.clone(), err_str));
+                    failed += 1;
+                    continue;
+                }
+            };
+
+            let steps = model.run(0, max_steps);
+            let grid = model.grid();
+            let nonzero = grid.count_nonzero();
+
+            // Save screenshot
+            let colors = colors_for_grid(grid);
+            let save_result = if mz > 1 {
+                let img = render_3d_isometric(grid, &colors, 4);
+                save_png(&img, &out_dir.join(format!("{}.png", name)))
+            } else {
+                let img = render_2d(grid, &colors, 2);
+                save_png(&img, &out_dir.join(format!("{}.png", name)))
+            };
+
+            if let Err(e) = save_result {
+                println!("SAVE FAIL: {}", e);
+                errors.push((name.clone(), format!("Save: {}", e)));
+                failed += 1;
+                continue;
+            }
+
+            println!("OK {:>6} steps {:>6} cells", steps, nonzero);
+            passed += 1;
+        }
+
+        println!("\n========================================");
+        println!(
+            "SUMMARY: {} passed, {} failed of {} total",
+            passed,
+            failed,
+            xml_files.len()
+        );
+        println!("========================================");
+
+        if !errors.is_empty() && errors.len() <= 30 {
+            println!("\nFailed models:");
+            for (name, err) in &errors {
+                println!("  {}: {}", name, err);
+            }
+        } else if !errors.is_empty() {
+            println!("\n{} models failed (too many to list)", errors.len());
+        }
+
+        println!("\nOutput: {}", out_dir.display());
+        assert!(
+            passed > 50,
+            "Should pass at least 50 models, got {}",
+            passed
+        );
+    }
 }

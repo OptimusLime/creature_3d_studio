@@ -130,27 +130,12 @@ impl Node for SequenceNode {
     /// C# Reference: Branch.Go() lines 79-90
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
         while self.n < self.nodes.len() {
-            let result = self.nodes[self.n].go(ctx);
-            // Debug: always print sequence transitions
-            #[cfg(debug_assertions)]
-            if !result {
-                eprintln!(
-                    "[SequenceNode] child {} of {} returned false, advancing...",
-                    self.n,
-                    self.nodes.len()
-                );
-            }
-            if result {
+            if self.nodes[self.n].go(ctx) {
                 return true;
             }
             self.n += 1;
         }
         // All children done, reset for next use
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "[SequenceNode] all {} children done, returning false",
-            self.nodes.len()
-        );
         self.reset();
         false
     }
