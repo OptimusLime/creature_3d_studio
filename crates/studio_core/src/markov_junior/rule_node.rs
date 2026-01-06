@@ -208,43 +208,72 @@ impl RuleNodeData {
     /// C# Reference: RuleNode.Go() lines 176-197 (the else branch)
     ///
     /// The C# code uses a stride optimization where it samples grid cells at
-    /// intervals of rule.IMX/IMY/IMZ, then uses ishifts to find candidate rule
-    /// positions. This works because ishifts maps each color to all positions
-    /// in the input pattern that could match that color.
+    /// Scan for all matches using C#'s strided scan with ishifts.
     ///
-    /// For simplicity and correctness, we use a straightforward scan that checks
-    /// every valid position. This is O(grid_size * rule_count) instead of the
-    /// optimized O(grid_size / rule_size * rule_count), but is clearer and
-    /// guaranteed to find all matches.
+    /// C# scans the grid at intervals of rule.IMX/IMY/IMZ, then uses ishifts
+    /// to find candidate rule positions. This ensures matches are found in
+    /// the same ORDER as C# for shuffle compatibility.
+    ///
+    /// C# Reference: RuleNode.Go() lines 173-199 (the else branch)
     pub fn scan_all_matches(&mut self, ctx: &ExecutionContext) {
         self.match_count = 0;
-        let mx = ctx.grid.mx as i32;
-        let my = ctx.grid.my as i32;
-        let mz = ctx.grid.mz as i32;
+        let mx = ctx.grid.mx;
+        let my = ctx.grid.my;
+        let mz = ctx.grid.mz;
 
         for (r, rule) in self.rules.iter().enumerate() {
             let mask = &mut self.match_mask[r];
 
-            // Check every valid position where rule could match
-            for z in 0..=(mz - rule.imz as i32) {
-                for y in 0..=(my - rule.imy as i32) {
-                    for x in 0..=(mx - rule.imx as i32) {
-                        let si = x as usize
-                            + y as usize * ctx.grid.mx
-                            + z as usize * ctx.grid.mx * ctx.grid.my;
+            // C# uses strided scan starting at (IMX-1, IMY-1, IMZ-1)
+            // stepping by (IMX, IMY, IMZ)
+            let mut z = (rule.imz - 1) as i32;
+            while z < mz as i32 {
+                let mut y = (rule.imy - 1) as i32;
+                while y < my as i32 {
+                    let mut x = (rule.imx - 1) as i32;
+                    while x < mx as i32 {
+                        // Get grid value at (x, y, z)
+                        let grid_idx = x as usize + y as usize * mx + z as usize * mx * my;
+                        let value = ctx.grid.state[grid_idx] as usize;
 
-                        if !mask[si] && ctx.grid.matches(rule, x, y, z) {
-                            mask[si] = true;
-                            let m = (r, x, y, z);
-                            if self.match_count < self.matches.len() {
-                                self.matches[self.match_count] = m;
-                            } else {
-                                self.matches.push(m);
+                        // Use ishifts to find candidate match positions
+                        if value < rule.ishifts.len() {
+                            for &(shiftx, shifty, shiftz) in &rule.ishifts[value] {
+                                let sx = x - shiftx;
+                                let sy = y - shifty;
+                                let sz = z - shiftz;
+
+                                // Bounds check
+                                if sx < 0
+                                    || sy < 0
+                                    || sz < 0
+                                    || sx + rule.imx as i32 > mx as i32
+                                    || sy + rule.imy as i32 > my as i32
+                                    || sz + rule.imz as i32 > mz as i32
+                                {
+                                    continue;
+                                }
+
+                                let si = sx as usize + sy as usize * mx + sz as usize * mx * my;
+
+                                if !mask[si] && ctx.grid.matches(rule, sx, sy, sz) {
+                                    mask[si] = true;
+                                    let m = (r, sx, sy, sz);
+                                    if self.match_count < self.matches.len() {
+                                        self.matches[self.match_count] = m;
+                                    } else {
+                                        self.matches.push(m);
+                                    }
+                                    self.match_count += 1;
+                                }
                             }
-                            self.match_count += 1;
                         }
+
+                        x += rule.imx as i32;
                     }
+                    y += rule.imy as i32;
                 }
+                z += rule.imz as i32;
             }
         }
     }

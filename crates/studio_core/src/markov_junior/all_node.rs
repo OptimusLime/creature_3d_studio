@@ -12,7 +12,7 @@
 
 use super::field::delta_pointwise;
 use super::node::{ExecutionContext, Node};
-use super::rng::shuffle_with_rng;
+use super::rng::shuffle_indices;
 use super::rule_node::RuleNodeData;
 use super::MjRule;
 
@@ -182,10 +182,8 @@ impl Node for AllNode {
         let ordered = if self.data.potentials.is_some() {
             self.compute_heuristic_order(ctx)
         } else {
-            // Shuffle randomly
-            let mut indices: Vec<usize> = (0..self.data.match_count).collect();
-            shuffle_with_rng(&mut indices, ctx.random);
-            indices
+            // Shuffle randomly using C#'s exact algorithm
+            shuffle_indices(self.data.match_count, ctx.random)
         };
 
         // Apply matches in order, skipping overlaps

@@ -49,6 +49,7 @@ pub mod rule;
 pub mod rule_node;
 pub mod search;
 pub mod symmetry;
+pub mod verification;
 pub mod voxel_bridge;
 pub mod wfc;
 

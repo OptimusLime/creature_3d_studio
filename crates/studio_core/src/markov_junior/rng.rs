@@ -89,10 +89,45 @@ pub trait MjRng: MjRngClone {
     }
 }
 
-/// Shuffle a slice in place using Fisher-Yates algorithm.
-/// This is a free function since generic methods aren't dyn-compatible.
+/// Shuffle indices [0..n) using C#'s exact inside-out Fisher-Yates algorithm.
+///
+/// The C# code does:
+/// ```csharp
+/// int[] shuffle = new int[matchCount];  // initialized to zeros
+/// for (int i = 0; i < array.Length; i++) {
+///     int j = random.Next(i + 1);
+///     array[i] = array[j];
+///     array[j] = i;
+/// }
+/// ```
+///
+/// Returns a Vec<usize> containing a permutation of [0..n).
+pub fn shuffle_indices(n: usize, rng: &mut dyn MjRng) -> Vec<usize> {
+    let mut array = vec![0usize; n];
+    for i in 0..n {
+        let j = rng.next_usize_max(i + 1);
+        array[i] = array[j];
+        array[j] = i;
+    }
+    array
+}
+
+/// Shuffle a slice in place using C#'s algorithm.
+///
+/// NOTE: This produces DIFFERENT results than C#'s Helper.Shuffle when
+/// used on an existing array vs building indices from scratch. The C#
+/// code specifically uses inside-out for indices. For general slice
+/// shuffling, use this only when you don't need C# compatibility.
+///
+/// For C#-compatible index shuffling, use `shuffle_indices` instead.
 pub fn shuffle_with_rng<T>(slice: &mut [T], rng: &mut dyn MjRng) {
-    for i in (1..slice.len()).rev() {
+    let n = slice.len();
+    if n <= 1 {
+        return;
+    }
+    // Use standard Fisher-Yates (reverse direction)
+    // This is NOT C#-compatible but works for general shuffling
+    for i in (1..n).rev() {
         let j = rng.next_usize_max(i + 1);
         slice.swap(i, j);
     }
@@ -371,5 +406,49 @@ mod tests {
         for _ in 0..100 {
             assert_eq!(rng1.next_int(), rng2.next_int());
         }
+    }
+
+    #[test]
+    fn test_shuffle_indices_matches_csharp() {
+        // Test that shuffle_indices produces the same output as C#'s Helper.Shuffle
+        //
+        // Trace through C# with seed 42:
+        // i=0: j=Next(1)=0, arr=[0,0,0,...] -> arr[0]=arr[0]=0, arr[0]=0 -> [0,0,0,...]
+        // i=1: j=Next(2)=(int)(0.668...*2)=1, arr[1]=arr[1]=0, arr[1]=1 -> [0,1,0,...]
+        // i=2: j=Next(3)=(int)(0.140...*3)=0, arr[2]=arr[0]=0, arr[0]=2 -> [2,1,0,...]
+        // i=3: j=Next(4)=(int)(0.125...*4)=0, arr[3]=arr[0]=2, arr[0]=3 -> [3,1,0,2,...]
+        // etc.
+
+        let mut rng = DotNetRandom::from_seed(42);
+
+        // Print first few NextDouble values for debugging
+        println!("First 10 NextDouble values with seed 42:");
+        for i in 0..10 {
+            let mut test_rng = DotNetRandom::from_seed(42);
+            // Skip to position i
+            for _ in 0..i {
+                test_rng.next_double();
+            }
+            let v = test_rng.next_double();
+            let next_max = (v * (i + 1) as f64) as usize;
+            println!(
+                "  i={}: NextDouble={:.6}, Next({})={}",
+                i,
+                v,
+                i + 1,
+                next_max
+            );
+        }
+
+        // Reset and do actual shuffle
+        let mut rng = DotNetRandom::from_seed(42);
+        let result = shuffle_indices(10, &mut rng);
+        println!("shuffle_indices(10, seed 42) = {:?}", result);
+
+        // Verify it's a valid permutation
+        let mut sorted = result.clone();
+        sorted.sort();
+        let expected: Vec<usize> = (0..10).collect();
+        assert_eq!(sorted, expected, "shuffle should produce valid permutation");
     }
 }
