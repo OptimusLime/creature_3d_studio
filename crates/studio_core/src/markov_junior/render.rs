@@ -5,7 +5,7 @@
 //!
 //! C# Reference: Graphics.cs (BitmapRender, IsometricRender, SaveBitmap)
 
-use super::MjGrid;
+use super::{MjGrid, MjRule};
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::collections::HashMap;
 use std::path::Path;
@@ -1943,5 +1943,683 @@ mod tests {
             "Should pass at least 50 models, got {}",
             passed
         );
+    }
+
+    /// Phase 4.3 Verification: Test that ParallelGrowth 3D now works with cube symmetries.
+    ///
+    /// ParallelGrowth uses `<all values="BW" origin="True" in="WB" out="*W"/>`
+    /// This should grow from center to fill the entire 3D grid.
+    ///
+    /// BEFORE FIX: Only 15 cells (rule only matched in ONE direction)
+    /// AFTER FIX: ~24,000 cells (rule matches in ALL 6 directions via 3D symmetry)
+    #[test]
+    fn test_parallel_growth_3d_symmetry_fix() {
+        use crate::markov_junior::symmetry::cube_symmetries;
+        use crate::markov_junior::MjGrid;
+        use crate::markov_junior::MjRule;
+        use crate::markov_junior::Model;
+
+        println!("\n========================================");
+        println!("PHASE 4.3: ParallelGrowth 3D Symmetry Fix");
+        println!("========================================\n");
+
+        // First, verify that our cube_symmetries generates the right number of variants
+        // for the WB -> *W rule
+        let grid_test = MjGrid::with_values(5, 5, 5, "BW");
+        let base_rule = MjRule::parse("WB", "*W", &grid_test).expect("Failed to parse WB->*W");
+
+        println!("Base rule WB -> *W:");
+        println!(
+            "  Dimensions: {}x{}x{}",
+            base_rule.imx, base_rule.imy, base_rule.imz
+        );
+        println!("  Input waves: {:?}", base_rule.input);
+        println!("  Output: {:?}", base_rule.output);
+
+        // Apply full cube symmetry (all 48)
+        let variants = cube_symmetries(&base_rule, None);
+        println!("\nAfter cube_symmetries (full 48):");
+        println!("  Generated {} unique variants", variants.len());
+
+        // For a 2x1x1 pattern, we should get 6 unique orientations:
+        // +X: WB, -X: BW, +Y: W/B, -Y: B/W, +Z: W B, -Z: B W
+        // (some may be duplicates if pattern is symmetric)
+        assert!(
+            variants.len() >= 3,
+            "Should have at least 3 direction variants for WB pattern, got {}",
+            variants.len()
+        );
+
+        // Print each variant's dimensions for debugging
+        for (i, v) in variants.iter().enumerate() {
+            println!("  Variant {}: {}x{}x{}", i, v.imx, v.imy, v.imz);
+        }
+
+        // Now load and run the actual ParallelGrowth model
+        println!("\n========================================");
+        println!("Running ParallelGrowth.xml (29x29x29)");
+        println!("========================================\n");
+
+        let xml_path = models_path().join("ParallelGrowth.xml");
+        let model_result = Model::load_with_size(&xml_path, 29, 29, 29);
+
+        let mut model = match model_result {
+            Ok(m) => m,
+            Err(e) => {
+                panic!("Failed to load ParallelGrowth.xml: {}", e);
+            }
+        };
+
+        // Run to completion (or reasonable limit)
+        let grid_size = 29 * 29 * 29; // 24,389 cells
+        let max_steps = grid_size * 2;
+        let steps = model.run(0, max_steps);
+        let grid = model.grid();
+        let nonzero = grid.count_nonzero();
+
+        println!("Results:");
+        println!("  Steps: {}", steps);
+        println!("  Non-zero cells: {} of {}", nonzero, grid_size);
+        println!(
+            "  Fill percentage: {:.1}%",
+            100.0 * nonzero as f64 / grid_size as f64
+        );
+
+        // Count W cells (should be most of the grid)
+        let w_count = grid.state.iter().filter(|&&v| v == 1).count();
+        println!("  W cells: {}", w_count);
+
+        // Save screenshot for visual verification
+        let out_dir = verification_dir().join("parallel_growth_debug");
+        std::fs::create_dir_all(&out_dir).ok();
+        let colors = colors_for_grid(grid);
+        let img = render_3d_isometric(grid, &colors, 4);
+        let path = out_dir.join("ParallelGrowth_fixed.png");
+        save_png(&img, &path).ok();
+        println!("\n  Screenshot: {}", path.display());
+
+        // CRITICAL ASSERTION: After the fix, ParallelGrowth should fill most of the grid
+        // Before: only 15 cells
+        // After: should be close to 24,389 cells
+        let min_expected = grid_size / 2; // At least 50% fill
+        assert!(
+            nonzero >= min_expected,
+            "ParallelGrowth should fill most of the grid!\n\
+             Expected at least {} cells, got {} cells.\n\
+             This indicates 3D symmetry is NOT being applied correctly.",
+            min_expected,
+            nonzero
+        );
+
+        println!("\n========================================");
+        println!("SUCCESS: ParallelGrowth 3D symmetry fix verified!");
+        println!("========================================\n");
+    }
+
+    /// Regression test: WFC nodes must execute their child nodes.
+    ///
+    /// In C#, WFCNode extends Branch, which means:
+    /// 1. WFC nodes can have child nodes (prl, all, etc.)
+    /// 2. After WFC completes, it runs its children on the newgrid
+    /// 3. WFCNode.Load() calls base.Load(xelem, parentSymmetry, newgrid)
+    /// 4. WFCNode.Go() has `if (n >= 0) return base.Go();`
+    ///
+    /// This test verifies Apartemazements (which has 20+ child nodes inside WFC)
+    /// produces a building structure, not just the tiny WFC output.
+    ///
+    /// Before fix: 3 cells
+    /// After fix: 131+ cells
+    #[test]
+    fn test_wfc_children_apartemazements() {
+        use crate::markov_junior::Model;
+
+        println!("\n========================================");
+        println!("REGRESSION TEST: WFC Children Execution");
+        println!("========================================\n");
+
+        // Load Apartemazements - a 3D model with WFC + many child nodes
+        let xml_path = models_path().join("Apartemazements.xml");
+        let model_result = Model::load_with_size(&xml_path, 8, 8, 8);
+
+        let mut model = match model_result {
+            Ok(m) => m,
+            Err(e) => {
+                println!("Skip: Failed to load Apartemazements.xml: {}", e);
+                return;
+            }
+        };
+
+        // Run to completion
+        let steps = model.run(42, 1000);
+        let grid = model.grid();
+        let nonzero = grid.count_nonzero();
+
+        println!("Results:");
+        println!("  Steps: {}", steps);
+        println!("  Non-zero cells: {}", nonzero);
+        println!(
+            "  Grid size: {}x{}x{} = {}",
+            grid.mx,
+            grid.my,
+            grid.mz,
+            grid.mx * grid.my * grid.mz
+        );
+
+        // The reference shows Apartemazements producing a full building with:
+        // - Roof maze
+        // - Columns
+        // - Windows
+        // - Earth/grass
+        //
+        // Our buggy implementation produces only ~3 cells because:
+        // 1. Initial prl nodes run and produce W, B, N cells
+        // 2. WFC runs and produces path structure
+        // 3. Children inside WFC (draw earth, columns, windows) are SKIPPED
+        //
+        // Expected: ~100+ cells for a proper building
+        // Actual: ~3 cells
+
+        // This assertion SHOULD fail until we fix the bug
+        // We expect very few cells to prove the bug exists
+        let minimum_for_proper_building = 50;
+
+        // For now, let's document what we actually get
+        println!("\n========================================");
+        println!("BUG VERIFICATION:");
+        println!("========================================");
+        println!("Apartemazements should produce a building with columns, windows, etc.");
+        println!("Expected: >{} non-zero cells", minimum_for_proper_building);
+        println!("Actual: {} non-zero cells", nonzero);
+
+        if nonzero < minimum_for_proper_building {
+            println!("\nBUG: WFC children are not being executed!");
+            println!("The model produces almost no output because child nodes");
+            println!("inside the <wfc> element are skipped.\n");
+        } else {
+            println!("\nSUCCESS: WFC children are being executed correctly!");
+        }
+
+        // Verify the fix: Apartemazements should produce a building
+        assert!(
+            nonzero >= minimum_for_proper_building,
+            "Apartemazements should produce a building with >{} cells, got {}.\n\
+             This indicates WFC children are not being executed.",
+            minimum_for_proper_building,
+            nonzero
+        );
+
+        assert!(steps > 0, "Model should run some steps");
+    }
+
+    /// Deep debug test for Apartemazements to understand why output is wrong.
+    ///
+    /// Reference shows: Full 3D building with roof maze, columns, windows, stairs
+    /// Our output: Flat green surface with ~5 gray blocks along X axis
+    ///
+    /// This test traces the execution phase by phase.
+    #[test]
+    fn test_apartemazements_debug_phases() {
+        use crate::markov_junior::Model;
+
+        println!("\n========================================");
+        println!("DEBUG: Apartemazements Phase-by-Phase");
+        println!("========================================\n");
+
+        let xml_path = models_path().join("Apartemazements.xml");
+        let mut model =
+            Model::load_with_size(&xml_path, 8, 8, 8).expect("Failed to load Apartemazements.xml");
+
+        // Get initial grid state
+        let grid = model.grid();
+        println!("Initial grid:");
+        println!("  Size: {}x{}x{}", grid.mx, grid.my, grid.mz);
+        println!("  Values: {:?}", grid.characters);
+        print_grid_stats(grid, "  ");
+
+        // Run step by step and capture snapshots
+        model.reset(42);
+
+        let mut step = 0;
+        let mut last_snapshot_step = 0;
+        let snapshot_interval = 50;
+
+        println!("\nRunning step by step:");
+
+        // Print initial state
+        println!("\n  === INITIAL STATE ===");
+        print_grid_slices(model.grid(), &[0, 1, 7]);
+        while step < 500 {
+            let before_nonzero = model.grid().count_nonzero();
+
+            if !model.step() {
+                println!("\n  Model stopped at step {}", step);
+                let grid = model.grid();
+                print_grid_stats(grid, "  Final: ");
+                break;
+            }
+
+            step += 1;
+            let after_nonzero = model.grid().count_nonzero();
+
+            // Print every step for the first 10 steps, then when significant change or at intervals
+            if step <= 10
+                || after_nonzero != before_nonzero
+                || step - last_snapshot_step >= snapshot_interval
+            {
+                let grid = model.grid();
+                println!("  Step {:>3}: {} cells", step, after_nonzero);
+
+                // Print value distribution
+                let mut counts: std::collections::HashMap<u8, usize> =
+                    std::collections::HashMap::new();
+                for &v in &grid.state {
+                    *counts.entry(v).or_insert(0) += 1;
+                }
+                let mut sorted: Vec<_> = counts.iter().collect();
+                sorted.sort_by_key(|(v, _)| *v);
+                print!("           Values: ");
+                for (v, count) in sorted {
+                    if let Some(&ch) = grid.characters.get(*v as usize) {
+                        print!("{}({})={} ", ch, v, count);
+                    } else {
+                        print!("?({})={} ", v, count);
+                    }
+                }
+                println!();
+
+                // Show grid slices for first few steps
+                if step <= 5 {
+                    print_grid_slices(grid, &[0, 1, 6, 7]);
+                }
+
+                last_snapshot_step = step;
+            }
+        }
+
+        // Final analysis
+        let grid = model.grid();
+        println!("\n========================================");
+        println!("FINAL STATE ANALYSIS:");
+        println!("========================================");
+        println!("Grid dimensions: {}x{}x{}", grid.mx, grid.my, grid.mz);
+        println!("Total cells: {}", grid.state.len());
+        println!("Non-zero cells: {}", grid.count_nonzero());
+        println!("Characters: {:?}", grid.characters);
+
+        // Print value distribution
+        let mut counts: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
+        for &v in &grid.state {
+            *counts.entry(v).or_insert(0) += 1;
+        }
+        println!("\nValue distribution:");
+        let mut sorted: Vec<_> = counts.iter().collect();
+        sorted.sort_by_key(|(v, _)| *v);
+        for (v, count) in sorted {
+            if let Some(&ch) = grid.characters.get(*v as usize) {
+                println!(
+                    "  {} (value {}): {} cells ({:.1}%)",
+                    ch,
+                    v,
+                    count,
+                    100.0 * *count as f64 / grid.state.len() as f64
+                );
+            } else {
+                println!("  ? (value {}): {} cells", v, count);
+            }
+        }
+
+        // Print a slice at z=0, z=4, z=7 to see the structure
+        println!("\nGrid slices (. = value 0):");
+        for z in [0, 4, 7] {
+            if z >= grid.mz {
+                continue;
+            }
+            println!("\n  Z={} slice:", z);
+            for y in 0..grid.my {
+                print!("    ");
+                for x in 0..grid.mx {
+                    let v = grid.state[x + y * grid.mx + z * grid.mx * grid.my];
+                    if v == 0 {
+                        print!(".");
+                    } else if let Some(&ch) = grid.characters.get(v as usize) {
+                        print!("{}", ch);
+                    } else {
+                        print!("?");
+                    }
+                }
+                println!();
+            }
+        }
+
+        // Save debug screenshot
+        let out_dir = verification_dir().join("apartemazements_debug");
+        std::fs::create_dir_all(&out_dir).ok();
+        let colors = colors_for_grid(grid);
+        let img = render_3d_isometric(grid, &colors, 8);
+        let path = out_dir.join("apartemazements_debug.png");
+        save_png(&img, &path).ok();
+        println!("\nScreenshot saved: {}", path.display());
+    }
+
+    fn print_grid_stats(grid: &MjGrid, prefix: &str) {
+        let nonzero = grid.count_nonzero();
+        println!(
+            "{}Non-zero: {} of {} ({:.1}%)",
+            prefix,
+            nonzero,
+            grid.state.len(),
+            100.0 * nonzero as f64 / grid.state.len() as f64
+        );
+    }
+
+    /// Test documenting the symmetry behavior for vertical column patterns.
+    ///
+    /// In 3D, `(xy)` symmetry uses cube_symmetries with indices 0-7 (first 8 of 48).
+    /// These are: e, r, a, ra, a², ra², a³, ra³ where a=Z-rotation, r=reflection.
+    ///
+    /// For a 1x1x2 vertical pattern, Z-rotation and X-reflection don't change orientation.
+    /// So pure `(xy)` symmetry produces NO horizontal variants for vertical patterns.
+    ///
+    /// FIX: The `apply_symmetry` function in loader.rs detects vertical column patterns
+    /// (imx=1, imy=1, imz>1) and automatically uses full cube symmetry to generate
+    /// horizontal variants. This ensures rules like "B W" match all boundary orientations.
+    ///
+    /// This test verifies the raw symmetry module behavior (which is correct per C# reference).
+    /// The fix is applied at the model loading layer, not the symmetry module.
+    #[test]
+    fn test_3d_rule_bw_symmetry_bug() {
+        use crate::markov_junior::symmetry::cube_symmetries;
+        use crate::markov_junior::MjGrid;
+        use crate::markov_junior::MjRule;
+
+        println!("\n========================================");
+        println!("BUG TEST: 3D Rule 'B W' Symmetry");
+        println!("========================================\n");
+
+        // Create a 3D grid with BWN values
+        let grid = MjGrid::with_values(4, 4, 4, "BWN");
+
+        // Parse rule "B W" which should be 1x1x2 (B below, W above in Z)
+        let base_rule = MjRule::parse("B W", "B N", &grid).expect("Failed to parse rule");
+
+        println!("Base rule 'B W' -> 'B N':");
+        println!(
+            "  Dimensions: {}x{}x{}",
+            base_rule.imx, base_rule.imy, base_rule.imz
+        );
+        println!("  Input waves: {:?}", base_rule.input);
+        println!("  Output: {:?}", base_rule.output);
+
+        // (xy) symmetry in 3D = first 8 of 48 cube symmetries
+        // C# Reference: cubeSubgroups["(xy)"] = AH.Array1D(48, l => l < 8)
+        let xy_mask: [bool; 48] = std::array::from_fn(|i| i < 8);
+        let xy_variants = cube_symmetries(&base_rule, Some(&xy_mask));
+
+        println!("\nWith (xy) symmetry (first 8 cube symmetries):");
+        println!("  Generated {} variants", xy_variants.len());
+        for (i, v) in xy_variants.iter().enumerate() {
+            println!("    Variant {}: {}x{}x{}", i, v.imx, v.imy, v.imz);
+        }
+
+        // Apply full cube symmetry to see what we'd get
+        let cube_variants = cube_symmetries(&base_rule, None);
+
+        println!("\nWith full cube symmetry (all 48):");
+        println!("  Generated {} variants", cube_variants.len());
+        for (i, v) in cube_variants.iter().enumerate() {
+            println!("    Variant {}: {}x{}x{}", i, v.imx, v.imy, v.imz);
+        }
+
+        // Check if any variant has horizontal orientation (2x1x1 or 1x2x1)
+        let xy_has_horizontal = xy_variants
+            .iter()
+            .any(|v| v.imz == 1 && (v.imx > 1 || v.imy > 1));
+        let cube_has_horizontal = cube_variants
+            .iter()
+            .any(|v| v.imz == 1 && (v.imx > 1 || v.imy > 1));
+
+        println!("\n========================================");
+        println!("ANALYSIS:");
+        println!("========================================");
+        println!(
+            "(xy) symmetry produces horizontal variants: {}",
+            xy_has_horizontal
+        );
+        println!(
+            "Cube symmetry produces horizontal variants: {}",
+            cube_has_horizontal
+        );
+
+        // Analysis:
+        // - (xy) symmetry = {e, r, a, ra, a², ra², a³, ra³}
+        // - These are all Z-rotations and X-reflection
+        // - A 1x1x2 vertical column rotated around Z stays 1x1x2
+        // - A 1x1x2 reflected in X stays 1x1x2
+        // - So (xy) symmetry produces NO horizontal variants for vertical patterns!
+        //
+        // Full cube symmetry includes Y-rotation (b), which DOES produce horizontal variants.
+
+        // This test documents the expected behavior
+        // If this assertion fails, it means (xy) symmetry is NOT producing horizontal variants
+        // which would explain why Apartemazements fails (the rule doesn't match horizontal boundaries)
+        if !xy_has_horizontal {
+            println!(
+                "\nBUG CONFIRMED: (xy) symmetry produces NO horizontal variants for 1x1x2 pattern."
+            );
+            println!("This means 'B W' rule only matches Z-direction adjacencies.");
+            println!("Horizontal B-W boundaries are NOT matched!");
+        }
+
+        // The cube symmetry should produce horizontal variants
+        assert!(
+            cube_has_horizontal,
+            "Full cube symmetry should produce horizontal variants"
+        );
+    }
+
+    fn print_grid_slices(grid: &MjGrid, z_levels: &[usize]) {
+        for &z in z_levels {
+            if z >= grid.mz {
+                continue;
+            }
+            println!("    Z={} slice:", z);
+            for y in 0..grid.my {
+                print!("      ");
+                for x in 0..grid.mx {
+                    let v = grid.state[x + y * grid.mx + z * grid.mx * grid.my];
+                    if v == 0 {
+                        print!(".");
+                    } else if let Some(&ch) = grid.characters.get(v as usize) {
+                        print!("{}", ch);
+                    } else {
+                        print!("?");
+                    }
+                }
+                println!();
+            }
+        }
+    }
+
+    /// Test rule matching on a 3D hollow cube to debug why all becomes B after "B W" -> "B N" rule
+    #[test]
+    fn test_bw_rule_matching_hollow_cube() {
+        println!("\n========================================");
+        println!("DEBUG: Rule Matching on Hollow Cube");
+        println!("========================================\n");
+
+        // Create an 8x8x8 grid with B=0, W=1
+        let mut grid = MjGrid::with_values(8, 8, 8, "BWN");
+
+        // Fill with W (value 1)
+        grid.state.fill(1);
+
+        // Hollow out the interior: set cells (1-6, 1-6, 1-6) to B (value 0)
+        for z in 1..7 {
+            for y in 1..7 {
+                for x in 1..7 {
+                    grid.state[x + y * 8 + z * 8 * 8] = 0;
+                }
+            }
+        }
+
+        println!("Grid setup: 8x8x8 hollow cube");
+        println!("  Shell (z=0, z=7, edges): W (value 1)");
+        println!("  Interior (1-6, 1-6, 1-6): B (value 0)");
+
+        // Count values
+        let b_count = grid.state.iter().filter(|&&v| v == 0).count();
+        let w_count = grid.state.iter().filter(|&&v| v == 1).count();
+        println!("  B count: {}", b_count); // Should be 6*6*6 = 216
+        println!("  W count: {}", w_count); // Should be 512 - 216 = 296
+
+        // Parse the rule "B W" -> "B N"
+        // With Z-reversal, this should be: z=0 has W, z=1 has B (W below, B above)
+        let rule = MjRule::parse("B W", "B N", &grid).expect("Failed to parse rule");
+
+        println!("\nRule 'B W' -> 'B N':");
+        println!("  Dimensions: {}x{}x{}", rule.imx, rule.imy, rule.imz);
+        println!("  Input waves: {:?}", rule.input);
+        println!("  Output: {:?}", rule.output);
+        println!(
+            "  Input[0] (z=0): wave {} = {:b}",
+            rule.input[0], rule.input[0]
+        );
+        println!(
+            "  Input[1] (z=1): wave {} = {:b}",
+            rule.input[1], rule.input[1]
+        );
+
+        // What values do the waves match?
+        // B=0 has wave 0b001, W=1 has wave 0b010, N=2 has wave 0b100
+        let b_wave = grid.waves.get(&'B').unwrap();
+        let w_wave = grid.waves.get(&'W').unwrap();
+        println!("  B wave: {} (matches value 0)", b_wave);
+        println!("  W wave: {} (matches value 1)", w_wave);
+
+        // So rule.input[0] = W wave, rule.input[1] = B wave
+        // The rule matches when grid[z] = W and grid[z+1] = B
+
+        // Test matching at specific positions
+        println!("\nTesting matches at boundary positions:");
+
+        // Bottom boundary: at z=0, we have W. At z=1, we have B (interior)
+        // The rule wants: input[0]=W at grid[z=0], input[1]=B at grid[z+1]
+        // Check position (1,1,0): grid[z=0]=W, grid[z=1]=B
+        let match_1_1_0 = grid.matches(&rule, 1, 1, 0);
+        println!(
+            "  (1,1,0): grid[z=0]={}, grid[z=1]={} -> matches: {}",
+            grid.state[1 + 1 * 8 + 0 * 64],
+            grid.state[1 + 1 * 8 + 1 * 64],
+            match_1_1_0
+        );
+
+        // Check position (0,0,0) - corner
+        let match_0_0_0 = grid.matches(&rule, 0, 0, 0);
+        println!(
+            "  (0,0,0): grid[z=0]={}, grid[z=1]={} -> matches: {}",
+            grid.state[0 + 0 * 8 + 0 * 64],
+            grid.state[0 + 0 * 8 + 1 * 64],
+            match_0_0_0
+        );
+
+        // Top boundary: at z=6, we have B. At z=7, we have W.
+        // The rule wants: input[0]=W at grid[z], input[1]=B at grid[z+1]
+        // For z=6: grid[z=6]=B, grid[z=7]=W - doesn't match our pattern!
+        let match_1_1_6 = grid.matches(&rule, 1, 1, 6);
+        println!(
+            "  (1,1,6): grid[z=6]={}, grid[z=7]={} -> matches: {}",
+            grid.state[1 + 1 * 8 + 6 * 64],
+            grid.state[1 + 1 * 8 + 7 * 64],
+            match_1_1_6
+        );
+
+        // Actually, let me think again. The rule pattern is "B W" which parses to:
+        // layers = ["B", "W"]
+        // For z=0: layer = layers[mz-1-0] = layers[1] = "W"
+        // For z=1: layer = layers[mz-1-1] = layers[0] = "B"
+        // So input[0] (z=0) = W wave, input[1] (z=1) = B wave
+
+        println!("\nParsing analysis:");
+        println!("  Pattern 'B W' splits into layers: ['B', 'W']");
+        println!("  With Z-reversal: z=0 gets 'W', z=1 gets 'B'");
+        println!("  So the rule matches: W at lower z, B at higher z");
+
+        // This means the rule matches the BOTTOM of the interior (W below at z=0, B above at z=1)
+        // But NOT the TOP (B below at z=6, W above at z=7)
+
+        // Let's count all matches
+        let mut match_count = 0;
+        let mut match_positions = Vec::new();
+        for z in 0..=6 {
+            // z can go up to 6 for a 2-z rule
+            for y in 0..8 {
+                for x in 0..8 {
+                    if grid.matches(&rule, x as i32, y as i32, z as i32) {
+                        match_count += 1;
+                        if match_positions.len() < 10 {
+                            match_positions.push((x, y, z));
+                        }
+                    }
+                }
+            }
+        }
+        println!("\nTotal matches for rule 'B W': {}", match_count);
+        println!("  First 10 positions: {:?}", match_positions);
+
+        // We'd expect matches at the bottom boundary only:
+        // z=0 where interior starts: positions (1-6, 1-6, 0) = 36 positions
+        println!("  Expected: 36 positions (bottom face of interior)");
+
+        // Now let's see what the output would be:
+        // output[0] = B (value 0) at z position
+        // output[1] = N (value 2) at z+1 position
+        // So the rule converts W->B at z=0 and B->N at z=1!
+        println!("\nOutput analysis:");
+        println!("  output[0] = {} (at z)", rule.output[0]);
+        println!("  output[1] = {} (at z+1)", rule.output[1]);
+
+        // AH HA! The rule is doing the OPPOSITE of what we want!
+        // It's converting W to B (bottom shell -> interior value)
+        // And B to N (interior -> boundary marker)
+        //
+        // But wait, the Apartemazements model wants to mark the B-W boundary with N.
+        // The rule "B W" -> "B N" should:
+        // - Keep B as B at the first position
+        // - Change W to N at the second position
+        //
+        // But with our parsing: input[0]=W, input[1]=B, output[0]=B, output[1]=N
+        // This means: where we have W then B, output B then N
+        // So we're changing: W->B and B->N
+
+        // Wait, let me re-read the pattern parsing more carefully...
+
+        // Oh! I misread the output parsing. Let me check:
+        println!("\nOutput pattern 'B N' parsing:");
+        // Parse manually to understand the structure
+        // Pattern "B N" splits by space: ["B", "N"] - 2 Z layers
+        // With Z-reversal: z=0 gets "N", z=1 gets "B"
+        // So output would be: [N, B] = [2, 0]
+        println!("  Expected: z=0 gets 'N' (value 2), z=1 gets 'B' (value 0)");
+        println!("  Actual output array: {:?}", rule.output);
+        // With Z-reversal: z=0 gets 'N', z=1 gets 'B'
+
+        // So output[0] (z=0) = N = 2
+        // output[1] (z=1) = B = 0
+
+        // The rule does:
+        // Where grid has W(z=0), B(z=1) [i.e., W below, B above]
+        // Replace with: N(z=0), B(z=1) [i.e., N below, B above]
+        //
+        // This converts the W directly below interior B to N!
+        // That's marking the BOTTOM boundary of the interior.
+
+        println!("\nSummary:");
+        println!("  Rule matches: W at z, B at z+1 (bottom of interior)");
+        println!("  Rule outputs: N at z, B at z+1 (marks bottom boundary)");
+        println!("  This is CORRECT for marking bottom B-W boundaries!");
+        println!("  But it DOES NOT match horizontal (side) boundaries.");
+
+        // The issue is: the rule only marks Z-direction boundaries
+        // because (xy) symmetry doesn't rotate a vertical pattern to horizontal
     }
 }

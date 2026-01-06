@@ -27,10 +27,7 @@ fn main() {
         // Fog color - objects fade into the fog
         .with_clear_color(Color::srgb(0.102, 0.039, 0.180))
         // Position camera to see all 4 voxels at different depths
-        .with_camera_position(
-            Vec3::new(-8.0, 3.0, -5.0),
-            Vec3::new(0.0, 0.0, 20.0),
-        )
+        .with_camera_position(Vec3::new(-8.0, 3.0, -5.0), Vec3::new(0.0, 0.0, 20.0))
         .with_screenshot_timed("screenshots/p7_fog.png", 5, 15)
         .run();
 }

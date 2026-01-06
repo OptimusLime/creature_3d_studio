@@ -20,12 +20,21 @@ pub use super::wfc_node::WfcState as OverlapWfcState;
 ///
 /// Extracts NxN patterns from a sample image and uses them to generate
 /// output that locally resembles the sample.
+///
+/// Like C# WFCNode, OverlapNode extends Branch and can have child nodes
+/// that execute after WFC completes on the newgrid.
 pub struct OverlapNode {
     /// Base WFC node with shared algorithms
     pub wfc: WfcNode,
 
     /// Extracted patterns: patterns[pattern_index] = NxN array of color indices
     pub patterns: Vec<Vec<u8>>,
+
+    /// Child nodes to execute after WFC completes (like C# Branch.nodes)
+    pub children: Vec<Box<dyn Node>>,
+
+    /// Current child index for sequential execution
+    child_n: usize,
 }
 
 impl OverlapNode {
@@ -152,7 +161,20 @@ impl OverlapNode {
             mz,
         );
 
-        Ok(Self { wfc, patterns })
+        Ok(Self {
+            wfc,
+            patterns,
+            children: Vec::new(),
+            child_n: 0,
+        })
+    }
+
+    /// Add children to execute after WFC completes.
+    ///
+    /// C# Reference: WFCNode extends Branch, which parses children in Load()
+    pub fn with_children(mut self, children: Vec<Box<dyn Node>>) -> Self {
+        self.children = children;
+        self
     }
 
     /// Update the output grid state from the wave.
@@ -222,38 +244,59 @@ impl OverlapNode {
 impl Node for OverlapNode {
     fn reset(&mut self) {
         self.wfc.reset();
+        self.child_n = 0;
+        for child in &mut self.children {
+            child.reset();
+        }
     }
 
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
-        // Handle child node execution (Branch behavior)
+        // Phase 2: Execute children after WFC completes
+        // C# Reference: WFCNode.Go() line 71: `if (n >= 0) return base.Go();`
         if self.wfc.child_index >= 0 {
-            self.wfc.reset();
+            // Execute children sequentially (like Branch.Go())
+            while self.child_n < self.children.len() {
+                let child = &mut self.children[self.child_n];
+                if child.go(ctx) {
+                    return true;
+                }
+                // Child completed, move to next
+                self.child_n += 1;
+                if self.child_n < self.children.len() {
+                    self.children[self.child_n].reset();
+                }
+            }
+            // All children done
+            self.reset();
             return false;
         }
 
+        // Phase 1: WFC initialization
         if self.wfc.first_go {
-            // First call - initialize
             if !self.wfc.initialize(ctx.grid, ctx.random) {
                 return false;
             }
-            // Swap grids
             std::mem::swap(&mut self.wfc.newgrid, ctx.grid);
             return true;
         }
 
-        // Continue stepping
+        // Phase 1: WFC stepping
         if self.wfc.step() {
-            // Still running - optionally update state for animation
             if ctx.gif {
                 self.update_state(ctx.grid);
             }
             true
         } else {
-            // Completed or failed
-            // ctx.grid is already the newgrid (swapped on first_go)
-            // Don't swap back - let parent sequence continue with newgrid
+            // WFC completed or failed
             if self.wfc.state == WfcState::Completed {
                 self.update_state(ctx.grid);
+                // Mark that we should execute children now
+                self.wfc.child_index = 0;
+                // Reset first child for execution
+                if !self.children.is_empty() {
+                    self.children[0].reset();
+                    return true; // Continue to execute children
+                }
             }
             false
         }

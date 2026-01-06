@@ -56,7 +56,11 @@ fn generate_ground_pillar() {
     }
 
     save_world(&world, "assets/worlds/ground_pillar.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 fn generate_island() {
@@ -124,7 +128,11 @@ fn generate_island() {
     world.set_voxel(-2, 4, 3, Voxel::emissive(255, 100, 200));
 
     save_world(&world, "assets/worlds/island.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 fn generate_multi_chunk_terrain() {
@@ -179,7 +187,11 @@ fn generate_multi_chunk_terrain() {
     }
 
     save_world(&world, "assets/worlds/multi_chunk_terrain.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 fn generate_shadow_test() {
@@ -215,7 +227,11 @@ fn generate_shadow_test() {
     }
 
     save_world(&world, "assets/worlds/shadow_test.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 fn generate_mesh_test() {
@@ -233,7 +249,11 @@ fn generate_mesh_test() {
     }
 
     save_world(&world, "assets/worlds/mesh_test.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 
     // Also save in JSON for debugging
     save_world(&world, "assets/worlds/mesh_test.json").expect("Failed to save JSON");
@@ -248,10 +268,10 @@ fn generate_fog_test() {
     // Positions: spread out in X so they don't overlap visually
     // FOG_MAX_DISTANCE in shader is 50.0
     let positions = [
-        (-3, 0, 2),   // Near
-        (-1, 0, 10),  // Mid-near
-        (1, 0, 25),   // Mid-far
-        (3, 0, 45),   // Far (very foggy)
+        (-3, 0, 2),  // Near
+        (-1, 0, 10), // Mid-near
+        (1, 0, 25),  // Mid-far
+        (3, 0, 45),  // Far (very foggy)
     ];
 
     for (x, y, z) in positions {
@@ -260,7 +280,11 @@ fn generate_fog_test() {
     }
 
     save_world(&world, "assets/worlds/fog_test.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 fn generate_cross_chunk_test() {
@@ -297,11 +321,15 @@ fn generate_cross_chunk_test() {
     }
 
     save_world(&world, "assets/worlds/cross_chunk_test.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
 }
 
 /// Generate GTAO test scene with specific geometries for AO verification.
-/// 
+///
 /// Test geometries:
 /// 1. Flat ground plane - should have NO false occlusion (AO ~1.0)
 /// 2. 90-degree corner - should have proper corner darkening (AO ~0.3-0.5)
@@ -312,7 +340,7 @@ fn generate_gtao_test() {
     println!("Generating: gtao_test.voxworld");
     let mut world = VoxelWorld::new();
 
-    let white = Voxel::solid(220, 220, 220);  // Near-white for clear AO visibility
+    let white = Voxel::solid(220, 220, 220); // Near-white for clear AO visibility
     let gray = Voxel::solid(180, 180, 180);
 
     // =========================================================================
@@ -337,7 +365,7 @@ fn generate_gtao_test() {
             world.set_voxel(x, y, 0, gray);
         }
     }
-    // Side wall (along Z axis)  
+    // Side wall (along Z axis)
     for z in 1..8 {
         for y in 1..6 {
             world.set_voxel(0, y, z, gray);
@@ -386,7 +414,11 @@ fn generate_gtao_test() {
     world.set_voxel(8, 10, 8, Voxel::emissive(255, 250, 240)); // Warm white light
 
     save_world(&world, "assets/worlds/gtao_test.voxworld").expect("Failed to save");
-    println!("  -> {} chunks, {} voxels", world.chunk_count(), world.total_voxel_count());
+    println!(
+        "  -> {} chunks, {} voxels",
+        world.chunk_count(),
+        world.total_voxel_count()
+    );
     println!("  Test geometries:");
     println!("    1. Flat ground (0-15, 0, 0-15) - expect AO ~1.0");
     println!("    2. Corner (0,0 walls) - expect AO ~0.3-0.5 in crease");

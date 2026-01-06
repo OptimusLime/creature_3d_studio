@@ -81,6 +81,32 @@ When something doesn't work, we do NOT abandon it. We do NOT substitute simpler 
 - **Never skip verification steps** to move faster
 - **Never assume something works** without testing
 - **Never work on tangential issues** when the core task is incomplete
+- **Never leave stub implementations with "not implemented yet" comments** - either implement it fully, return an explicit error, or create a tracking issue. Silent failures (returning false/empty) masquerading as working code are unacceptable.
+
+### No Silent Stub Implementations
+
+When porting code or building features:
+
+1. **If a feature is not implemented**: Return an explicit error or panic with a clear message like `unimplemented!("WFC children execution")` - NEVER silently return false or skip functionality
+2. **If intentionally unsupported**: Document it in code AND return an error (e.g., "3D overlap model not yet supported")
+3. **Before marking any phase complete**: Search the code for "not implemented", "for now", "stub", "placeholder", "skip", "TODO" markers to ensure nothing was left incomplete
+4. **Test the full path**: If the reference implementation has feature X, your port must either implement X or explicitly error when X is requested
+
+**Example of BAD code (silent failure):**
+```rust
+if self.child_index >= 0 {
+    // For now, just return false (no children implemented yet)  
+    return false;  // WRONG: Silently skips critical functionality
+}
+```
+
+**Example of GOOD code (explicit failure):**
+```rust
+if self.child_index >= 0 {
+    unimplemented!("WFC children execution not yet implemented");
+    // Or: return Err("WFC children not implemented".into());
+}
+```
 
 ### Debugging Graphics/Shaders
 

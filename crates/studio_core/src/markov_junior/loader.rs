@@ -708,6 +708,10 @@ fn load_overlap_node(
     // Parse <rule> elements for input->output mappings
     let rules = load_wfc_rules_from_xml(xml, grid, &newgrid)?;
 
+    // Load child nodes that execute after WFC completes
+    // C# Reference: WFCNode extends Branch, which parses children
+    let children = load_children_from_xml(xml, &newgrid, symmetry, ctx)?;
+
     // Create OverlapNode
     let node = OverlapNode::from_sample(
         &sample_path,
@@ -717,11 +721,12 @@ fn load_overlap_node(
         shannon,
         tries,
         symmetry,
-        newgrid,
+        newgrid.clone(),
         grid,
         &rules,
     )
-    .map_err(|e| LoadError::ResourceError(e))?;
+    .map_err(|e| LoadError::ResourceError(e))?
+    .with_children(children);
 
     Ok(Box::new(node))
 }
@@ -734,7 +739,7 @@ fn load_tile_node(
     attrs: &HashMap<String, String>,
     tileset_name: &str,
     grid: &MjGrid,
-    _symmetry: &[bool],
+    parent_symmetry: &[bool],
     ctx: &LoadContext,
 ) -> Result<Box<dyn Node>, LoadError> {
     // Get tileset XML path
@@ -803,6 +808,10 @@ fn load_tile_node(
     // Rules map input grid values to allowed tile names
     let rules = load_tile_rules_from_xml(xml, grid)?;
 
+    // Load child nodes that execute after WFC completes
+    // C# Reference: WFCNode extends Branch, which parses children
+    let children = load_children_from_xml(xml, &newgrid, parent_symmetry, ctx)?;
+
     // Create TileNode
     let node = TileNode::from_tileset(
         &tileset_xml_path,
@@ -812,12 +821,13 @@ fn load_tile_node(
         tries,
         overlap,
         overlapz,
-        newgrid,
+        newgrid.clone(),
         grid,
         &rules,
         full_symmetry,
     )
-    .map_err(|e| LoadError::ResourceError(e))?;
+    .map_err(|e| LoadError::ResourceError(e))?
+    .with_children(children);
 
     Ok(Box::new(node))
 }

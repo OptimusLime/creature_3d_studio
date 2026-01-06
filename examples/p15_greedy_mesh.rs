@@ -35,7 +35,10 @@ fn main() {
 fn print_greedy_mesh_stats() {
     println!("Greedy Meshing Statistics");
     println!("-------------------------\n");
-    println!("{:<20} {:>12} {:>12} {:>12} {:>10}", "Shape", "Culled", "Greedy", "Reduction", "Factor");
+    println!(
+        "{:<20} {:>12} {:>12} {:>12} {:>10}",
+        "Shape", "Culled", "Greedy", "Reduction", "Factor"
+    );
     println!("{:-<70}", "");
 
     // Test 1: Single voxel
@@ -46,8 +49,10 @@ fn print_greedy_mesh_stats() {
         let greedy = build_chunk_mesh_greedy(&chunk).count_vertices();
         let reduction = (1.0 - greedy as f64 / culled as f64) * 100.0;
         let factor = culled as f64 / greedy as f64;
-        println!("{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
-            "Single voxel", culled, greedy, reduction, factor);
+        println!(
+            "{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
+            "Single voxel", culled, greedy, reduction, factor
+        );
     }
 
     // Test 2: 8x8x8 uniform
@@ -64,8 +69,10 @@ fn print_greedy_mesh_stats() {
         let greedy = build_chunk_mesh_greedy(&chunk).count_vertices();
         let reduction = (1.0 - greedy as f64 / culled as f64) * 100.0;
         let factor = culled as f64 / greedy as f64;
-        println!("{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
-            "8x8x8 uniform", culled, greedy, reduction, factor);
+        println!(
+            "{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
+            "8x8x8 uniform", culled, greedy, reduction, factor
+        );
     }
 
     // Test 3: 16x16 flat layer
@@ -80,8 +87,10 @@ fn print_greedy_mesh_stats() {
         let greedy = build_chunk_mesh_greedy(&chunk).count_vertices();
         let reduction = (1.0 - greedy as f64 / culled as f64) * 100.0;
         let factor = culled as f64 / greedy as f64;
-        println!("{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
-            "16x16 flat layer", culled, greedy, reduction, factor);
+        println!(
+            "{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
+            "16x16 flat layer", culled, greedy, reduction, factor
+        );
     }
 
     // Test 4: Checkerboard (no improvement)
@@ -99,8 +108,10 @@ fn print_greedy_mesh_stats() {
         let greedy = build_chunk_mesh_greedy(&chunk).count_vertices();
         let reduction = (1.0 - greedy as f64 / culled as f64) * 100.0;
         let factor = culled as f64 / greedy as f64;
-        println!("{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
-            "4x4x4 checkerboard", culled, greedy, reduction, factor);
+        println!(
+            "{:<20} {:>12} {:>12} {:>11.1}% {:>9.1}x",
+            "4x4x4 checkerboard", culled, greedy, reduction, factor
+        );
     }
 
     println!("{:-<70}", "");

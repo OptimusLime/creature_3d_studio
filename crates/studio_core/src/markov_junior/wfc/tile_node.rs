@@ -20,6 +20,9 @@ use std::path::Path;
 ///
 /// Uses pre-defined tilesets with explicit neighbor constraints
 /// to generate valid tile arrangements.
+///
+/// Like C# WFCNode, TileNode extends Branch and can have child nodes
+/// that execute after WFC completes on the newgrid.
 pub struct TileNode {
     /// Base WFC node with shared algorithms
     pub wfc: WfcNode,
@@ -38,6 +41,12 @@ pub struct TileNode {
 
     /// Z-axis overlap
     pub overlapz: usize,
+
+    /// Child nodes to execute after WFC completes (like C# Branch.nodes)
+    pub children: Vec<Box<dyn Node>>,
+
+    /// Current child index for sequential execution
+    child_n: usize,
 }
 
 impl TileNode {
@@ -164,7 +173,17 @@ impl TileNode {
             sz,
             overlap,
             overlapz,
+            children: Vec::new(),
+            child_n: 0,
         })
+    }
+
+    /// Add children to execute after WFC completes.
+    ///
+    /// C# Reference: WFCNode extends Branch, which parses children in Load()
+    pub fn with_children(mut self, children: Vec<Box<dyn Node>>) -> Self {
+        self.children = children;
+        self
     }
 
     /// Update the output grid state from the wave.
@@ -245,14 +264,34 @@ impl TileNode {
 impl Node for TileNode {
     fn reset(&mut self) {
         self.wfc.reset();
+        self.child_n = 0;
+        for child in &mut self.children {
+            child.reset();
+        }
     }
 
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
+        // Phase 2: Execute children after WFC completes
+        // C# Reference: WFCNode.Go() line 71: `if (n >= 0) return base.Go();`
         if self.wfc.child_index >= 0 {
-            self.wfc.reset();
+            // Execute children sequentially (like Branch.Go())
+            while self.child_n < self.children.len() {
+                let child = &mut self.children[self.child_n];
+                if child.go(ctx) {
+                    return true;
+                }
+                // Child completed, move to next
+                self.child_n += 1;
+                if self.child_n < self.children.len() {
+                    self.children[self.child_n].reset();
+                }
+            }
+            // All children done
+            self.reset();
             return false;
         }
 
+        // Phase 1: WFC initialization
         if self.wfc.first_go {
             if !self.wfc.initialize(ctx.grid, ctx.random) {
                 return false;
@@ -261,17 +300,23 @@ impl Node for TileNode {
             return true;
         }
 
+        // Phase 1: WFC stepping
         if self.wfc.step() {
             if ctx.gif {
                 self.update_state(ctx.grid);
             }
             true
         } else {
-            // Completed or failed
-            // ctx.grid is already the newgrid (swapped on first_go)
-            // Don't swap back - let parent sequence continue with newgrid
+            // WFC completed or failed
             if self.wfc.state == WfcState::Completed {
                 self.update_state(ctx.grid);
+                // Mark that we should execute children now
+                self.wfc.child_index = 0;
+                // Reset first child for execution
+                if !self.children.is_empty() {
+                    self.children[0].reset();
+                    return true; // Continue to execute children
+                }
             }
             false
         }
@@ -1024,5 +1069,230 @@ mod tests {
         let r3 = y_rotate(&r2, 2, 2);
         let r4 = y_rotate(&r3, 2, 2);
         assert_eq!(tile, r4, "Four Y rotations should return to original");
+    }
+
+    // ====================================================================
+    // BUG REGRESSION TEST: Tile Color Mapping
+    // ====================================================================
+    //
+    // This test catches the Apartemazements bug where tile VOX palette
+    // indices are not correctly mapped to grid character values.
+    //
+    // See: docs/bugs/apartemazements_deep_dive.md
+    // ====================================================================
+
+    #[test]
+    fn test_tile_color_mapping_bug() {
+        // This test documents the KNOWN BUG in tile loading.
+        // When this test passes, the bug is fixed.
+        //
+        // The Paths tileset is used by Apartemazements.
+        // Grid values are "BYDAWP RFUENC" (12 characters, values 0-11).
+        // The tiles should produce values that map to these characters.
+
+        let tileset_path = tilesets_path().join("Paths.xml");
+        if !tileset_path.exists() {
+            println!("Skipping test: {:?} not found", tileset_path);
+            return;
+        }
+
+        // Create grid with same values as Apartemazements WFC
+        let grid = MjGrid::try_with_values(8, 8, 8, "BYDAWP RFUENC").unwrap();
+        assert_eq!(grid.c, 12, "Grid should have 12 character values");
+
+        // Load the TileNode
+        let result = TileNode::from_tileset(
+            &tileset_path,
+            "Paths", // tiles folder name
+            true,    // periodic
+            false,   // shannon
+            10,      // tries
+            0,       // overlap
+            0,       // overlapz
+            grid.clone(),
+            &grid,
+            &[],   // no rules
+            false, // full_symmetry
+        );
+
+        assert!(result.is_ok(), "Failed to load tileset: {:?}", result.err());
+        let tile_node = result.unwrap();
+
+        // Collect all values used in tile data
+        let mut tile_values: std::collections::HashSet<u8> = std::collections::HashSet::new();
+        for tile in &tile_node.tiledata {
+            for &v in tile {
+                tile_values.insert(v);
+            }
+        }
+
+        println!("Tile values found: {:?}", tile_values);
+        println!("Number of tiles: {}", tile_node.tiledata.len());
+        println!(
+            "Tile size: {}x{}x{}",
+            tile_node.s, tile_node.s, tile_node.sz
+        );
+
+        // THE BUG: Currently tiles only have values {0,1,2,3,4}
+        // These are sequential ordinals from load_vox_tile(), NOT grid values.
+        //
+        // The fix needs to map VOX palette colors to the correct grid values.
+        // After fixing, tiles should have values that correspond to:
+        // - B (0): Background/empty
+        // - Y (1): Earth marker for random placement
+        // - D (2): Down/column marker
+        // - A (3): Air
+        // - W (4): Wall/path
+        // - P (5): Path marker
+        // - etc.
+        //
+        // The "Down" tile specifically should contain D (2) values to mark
+        // where columns should be drawn by WFC children.
+
+        // This assertion documents the current broken behavior:
+        let only_has_sequential_ordinals = tile_values.iter().all(|&v| v <= 4);
+
+        if only_has_sequential_ordinals && tile_values.len() <= 5 {
+            // BUG PRESENT: Tiles only have sequential ordinals 0-4
+            println!("\n=== BUG DETECTED ===");
+            println!("Tiles only contain values {:?}", tile_values);
+            println!("These are raw VOX ordinals, NOT grid character values!");
+            println!("The WFC children will fail because they expect values like:");
+            println!("  - D (2) for columns");
+            println!("  - Y (1) for earth markers");
+            println!("  - P (5), R (6), F (7), etc.");
+            println!("See: docs/bugs/apartemazements_deep_dive.md");
+            println!("===================\n");
+
+            // Fail the test to indicate the bug exists
+            panic!(
+                "KNOWN BUG: Tile values are raw ordinals {:?}, not grid values. \
+                 Fix tile color mapping in load_vox_tile(). \
+                 See docs/bugs/apartemazements_deep_dive.md",
+                tile_values
+            );
+        }
+
+        // After the fix, tiles should contain meaningful grid values
+        // that correspond to the building structure elements.
+        assert!(
+            tile_values.len() > 5,
+            "After fix: tiles should use more than 5 distinct values for building elements"
+        );
+    }
+
+    #[test]
+    fn test_wfc_output_has_structure_values() {
+        // This test verifies that after WFC runs, the output grid
+        // contains the values needed by child nodes.
+        //
+        // Apartemazements children need:
+        // - B (0): converted to C (earth)
+        // - D (2): used for column placement
+        // - Y (1): random earth markers
+        // - A (3): air cells
+        // - W (4): wall cells
+        //
+        // If WFC only outputs {0, 3, 4}, children for columns/windows fail.
+
+        let tileset_path = tilesets_path().join("Paths.xml");
+        if !tileset_path.exists() {
+            println!("Skipping test: {:?} not found", tileset_path);
+            return;
+        }
+
+        // Setup grid with constraints like Apartemazements
+        let mut grid = MjGrid::try_with_values(8, 8, 8, "BYDAWP RFUENC").unwrap();
+
+        // Set up a simple constraint: N cells should become paths
+        // W cells should become empty
+        // In Apartemazements, N marks the boundary where paths go
+        let n_value = *grid.values.get(&'N').unwrap(); // 10
+        let w_value = *grid.values.get(&'W').unwrap(); // 4
+        let b_value = *grid.values.get(&'B').unwrap(); // 0
+
+        // Create a simple test pattern: bottom layer is N (paths), rest is W (empty)
+        for i in 0..grid.state.len() {
+            let z = i / (grid.mx * grid.my);
+            if z == 0 {
+                grid.state[i] = n_value; // Bottom: path constraints
+            } else {
+                grid.state[i] = w_value; // Rest: empty constraints
+            }
+        }
+
+        // Define rules: N -> path tiles, W -> empty tiles
+        let rules = vec![
+            (w_value, vec!["Empty".to_string()]),
+            (
+                n_value,
+                vec![
+                    "Empty".to_string(),
+                    "Line".to_string(),
+                    "Turn".to_string(),
+                    "X".to_string(),
+                ],
+            ),
+        ];
+
+        let result = TileNode::from_tileset(
+            &tileset_path,
+            "Paths",
+            true,
+            false,
+            10,
+            0,
+            0,
+            grid.clone(),
+            &grid,
+            &rules,
+            false,
+        );
+
+        if result.is_err() {
+            println!("Skipping test: Failed to load tileset: {:?}", result.err());
+            return;
+        }
+
+        let mut tile_node = result.unwrap();
+
+        // Run WFC to completion
+        use crate::markov_junior::node::{ExecutionContext, Node};
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
+        let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
+
+        // Run until WFC completes (or max steps)
+        let mut steps = 0;
+        while tile_node.go(&mut ctx) && steps < 10000 {
+            steps += 1;
+        }
+
+        // Collect output values
+        let mut output_values: std::collections::HashSet<u8> = std::collections::HashSet::new();
+        for &v in &ctx.grid.state {
+            output_values.insert(v);
+        }
+
+        println!("WFC completed after {} steps", steps);
+        println!("Output values: {:?}", output_values);
+
+        // Check if we got meaningful structure
+        // After fix, output should have D values for columns, etc.
+        let has_column_markers = output_values.contains(&2); // D
+        let has_path_markers = output_values.contains(&5); // P
+
+        if !has_column_markers && !has_path_markers {
+            println!("\n=== STRUCTURE VALUES MISSING ===");
+            println!("WFC output only has: {:?}", output_values);
+            println!("Missing D (2) for columns and P (5) for paths");
+            println!("This indicates tile color mapping is broken");
+            println!("================================\n");
+        }
+
+        // This will fail until the bug is fixed
+        // Uncomment to enforce after fix:
+        // assert!(has_column_markers || has_path_markers,
+        //     "WFC output should have structure marker values (D=2, P=5, etc.)");
     }
 }

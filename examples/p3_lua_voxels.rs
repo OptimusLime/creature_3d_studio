@@ -105,13 +105,7 @@ fn setup(
 
         println!(
             "  Spawned voxel at ({}, {}, {}) -> world {:?} color=({}, {}, {})",
-            x,
-            y,
-            z,
-            world_pos,
-            voxel.color[0],
-            voxel.color[1],
-            voxel.color[2]
+            x, y, z, world_pos, voxel.color[0], voxel.color[1], voxel.color[2]
         );
     }
 
