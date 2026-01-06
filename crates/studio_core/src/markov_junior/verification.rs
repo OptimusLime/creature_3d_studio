@@ -517,4 +517,80 @@ mod tests {
         assert_eq!(result.matching_cells, 7);
         assert!((result.accuracy() - 77.78).abs() < 0.1);
     }
+
+    /// Generate Rust verification output for a model.
+    /// This test is meant to be run manually to generate outputs for comparison.
+    ///
+    /// Run with: cargo test -p studio_core verification::tests::generate_model_output -- --nocapture MODEL_NAME
+    #[test]
+    #[ignore] // Run manually
+    fn generate_model_output() {
+        // Get model name from env var or use default
+        let model_name = std::env::var("MJ_MODEL").unwrap_or_else(|_| "Basic".to_string());
+        let seed: i32 = std::env::var("MJ_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+
+        let _ = std::fs::create_dir_all("../../verification/rust");
+
+        match capture_model_state(&model_name, seed, 0) {
+            Ok(state) => {
+                let json = serde_json::to_string_pretty(&state).unwrap();
+                let path = format!("../../verification/rust/{}_seed{}.json", model_name, seed);
+                std::fs::write(&path, &json).expect("Failed to write output");
+                println!("Generated: {}", path);
+                println!("  Dimensions: {:?}", state.dimensions);
+                println!("  Cells: {}", state.state.len());
+            }
+            Err(e) => {
+                println!("ERROR: {}: {}", model_name, e);
+            }
+        }
+    }
+
+    /// Batch generate outputs for all models in a list.
+    /// Models are passed via MJ_MODELS env var (comma-separated).
+    #[test]
+    #[ignore]
+    fn batch_generate_outputs() {
+        let models_str = std::env::var("MJ_MODELS")
+            .unwrap_or_else(|_| "Basic,River,Growth,Flowers,MazeGrowth,Maze".to_string());
+        let seed: i32 = std::env::var("MJ_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(42);
+
+        let _ = std::fs::create_dir_all("../../verification/rust");
+
+        let mut success = 0;
+        let mut failed = 0;
+
+        for model_name in models_str.split(',') {
+            let model_name = model_name.trim();
+            if model_name.is_empty() {
+                continue;
+            }
+
+            match capture_model_state(model_name, seed, 0) {
+                Ok(state) => {
+                    let json = serde_json::to_string_pretty(&state).unwrap();
+                    let path = format!("../../verification/rust/{}_seed{}.json", model_name, seed);
+                    if let Err(e) = std::fs::write(&path, &json) {
+                        println!("WRITE ERROR: {}: {}", model_name, e);
+                        failed += 1;
+                    } else {
+                        println!("OK: {} ({} cells)", model_name, state.state.len());
+                        success += 1;
+                    }
+                }
+                Err(e) => {
+                    println!("ERROR: {}: {}", model_name, e);
+                    failed += 1;
+                }
+            }
+        }
+
+        println!("\nGenerated: {}, Failed: {}", success, failed);
+    }
 }

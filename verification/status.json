@@ -1,0 +1,54 @@
+{
+  "failed": {
+    "BiasedGrowth": {
+      "accuracy": 94.47222222222223,
+      "reason": "94.47% (796 differ)",
+      "seed": 42
+    },
+    "ChainMaze": {
+      "accuracy": 62.916666666666664,
+      "reason": "62.92% (1335 differ)",
+      "seed": 42
+    },
+    "DungeonGrowth": {
+      "accuracy": 99.55135394968755,
+      "reason": "99.55% (28 differ)",
+      "seed": 42
+    }
+  },
+  "skipped": {},
+  "verified": {
+    "Backtracker": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Basic": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Cave": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Flowers": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Growth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeBacktracker": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "River": {
+      "accuracy": 100.0,
+      "seed": 42
+    }
+  }
+}
