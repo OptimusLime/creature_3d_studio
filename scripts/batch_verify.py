@@ -214,8 +214,10 @@ def main():
     parser.add_argument("models", nargs="*", help="Model names to verify")
     parser.add_argument("--all", action="store_true", help="Verify all models")
     parser.add_argument("--all-2d", action="store_true", help="Verify all 2D models")
+    parser.add_argument("--all-3d", action="store_true", help="Verify all 3D models")
     parser.add_argument("--list-2d", action="store_true", help="List 2D models")
     parser.add_argument("--list-3d", action="store_true", help="List 3D models")
+    parser.add_argument("--summary", action="store_true", help="Show summary by accuracy bucket")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--regenerate", action="store_true", help="Regenerate outputs")
     parser.add_argument("-j", "--jobs", type=int, default=1, help="Parallel jobs")
@@ -238,11 +240,88 @@ def main():
             print(f"  {m['name']}")
         return
     
+    if args.summary:
+        # Show summary by accuracy bucket
+        if not STATUS_FILE.exists():
+            print("No status file found. Run verification first.")
+            return
+        
+        with open(STATUS_FILE) as f:
+            status = json.load(f)
+        
+        verified = status.get("verified", {})
+        failed = status.get("failed", {})
+        skipped = status.get("skipped", {})
+        
+        # Categorize failed by accuracy
+        close = []      # >95%
+        partial = []    # 50-95%
+        broken = []     # <50%
+        
+        for name, info in failed.items():
+            acc = info.get("accuracy", 0)
+            if acc >= 95:
+                close.append((name, acc))
+            elif acc >= 50:
+                partial.append((name, acc))
+            else:
+                broken.append((name, acc))
+        
+        # Sort by accuracy descending
+        close.sort(key=lambda x: -x[1])
+        partial.sort(key=lambda x: -x[1])
+        broken.sort(key=lambda x: -x[1])
+        
+        total_models = len([m for m in all_models if m["name"] not in SKIP_MODELS])
+        tested = len(verified) + len(failed)
+        pending = total_models - tested - len(skipped)
+        
+        print(f"\n{'='*60}")
+        print(f"MarkovJunior Verification Summary")
+        print(f"{'='*60}")
+        print(f"Total models: {total_models}")
+        print(f"  VERIFIED (100%): {len(verified)}")
+        print(f"  CLOSE (>95%):    {len(close)}")
+        print(f"  PARTIAL (50-95%): {len(partial)}")
+        print(f"  BROKEN (<50%):   {len(broken)}")
+        print(f"  SKIPPED:         {len(skipped)}")
+        print(f"  PENDING:         {pending}")
+        print(f"{'='*60}")
+        
+        if verified:
+            print(f"\nVERIFIED ({len(verified)}):")
+            for name in sorted(verified.keys()):
+                print(f"  {name}")
+        
+        if close:
+            print(f"\nCLOSE - Priority fixes ({len(close)}):")
+            for name, acc in close:
+                print(f"  {name}: {acc:.2f}%")
+        
+        if partial:
+            print(f"\nPARTIAL ({len(partial)}):")
+            for name, acc in partial:
+                print(f"  {name}: {acc:.2f}%")
+        
+        if broken:
+            print(f"\nBROKEN ({len(broken)}):")
+            for name, acc in broken:
+                print(f"  {name}: {acc:.2f}%")
+        
+        if skipped:
+            print(f"\nSKIPPED ({len(skipped)}):")
+            for name in sorted(skipped.keys()):
+                print(f"  {name}: {skipped[name].get('reason', 'unknown')}")
+        
+        return
+    
     # Determine which models to verify
     if args.all:
         to_verify = [m["name"] for m in all_models if m["name"] not in SKIP_MODELS]
     elif args.all_2d:
         to_verify = [m["name"] for m in models_2d]
+    elif getattr(args, 'all_3d', False):
+        to_verify = [m["name"] for m in models_3d]
     elif args.models:
         to_verify = args.models
     else:
