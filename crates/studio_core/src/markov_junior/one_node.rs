@@ -126,7 +126,9 @@ impl OneNode {
 
             // Check if match still valid
             if !ctx.grid.matches(&self.data.rules[r], x, y, z) {
-                // Remove invalid match
+                // Remove invalid match (swap with last, decrement count)
+                // C# Reference: lines 96-100: k-- after swap so loop re-checks swapped element
+                // Our while loop with continue achieves the same - k stays same, re-checks swapped element
                 self.data.match_mask[r][i] = false;
                 self.data.matches[k] = self.data.matches[self.data.match_count - 1];
                 self.data.match_count -= 1;
@@ -170,6 +172,7 @@ impl OneNode {
                 }
             }
 
+            // Only increment k when we processed this match (didn't remove it)
             k += 1;
         }
 

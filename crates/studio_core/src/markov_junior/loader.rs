@@ -392,7 +392,7 @@ fn load_node_from_xml(
 
             // Add observations if present
             if let Some(obs) = observations {
-                data.set_observations(obs, grid_size);
+                data.set_observations(obs, grid_size, grid.c as usize);
             }
 
             // Configure search

@@ -73,6 +73,9 @@ pub struct RuleNodeData {
     pub trajectory: Option<Vec<Vec<u8>>>,
     /// Current position in trajectory during replay.
     pub trajectory_index: usize,
+    /// Whether future constraints have been computed from observations.
+    /// C# Reference: RuleNode.cs line 22 (futureComputed)
+    pub future_computed: bool,
 }
 
 impl RuleNodeData {
@@ -98,6 +101,7 @@ impl RuleNodeData {
             depth_coefficient: 0.0,
             trajectory: None,
             trajectory_index: 0,
+            future_computed: false,
         }
     }
 
@@ -136,6 +140,7 @@ impl RuleNodeData {
             depth_coefficient: 0.0,
             trajectory: None,
             trajectory_index: 0,
+            future_computed: false,
         }
     }
 
@@ -150,9 +155,24 @@ impl RuleNodeData {
     }
 
     /// Set observations for this node.
-    pub fn set_observations(&mut self, observations: Vec<Option<Observation>>, grid_size: usize) {
+    ///
+    /// When observations are set (without search mode), potentials are also
+    /// initialized for backward potential computation.
+    /// C# Reference: RuleNode.Load() lines 81-89
+    pub fn set_observations(
+        &mut self,
+        observations: Vec<Option<Observation>>,
+        grid_size: usize,
+        num_colors: usize,
+    ) {
         self.observations = Some(observations);
         self.future = Some(vec![0; grid_size]);
+
+        // In non-search mode, initialize potentials for backward computation
+        // C# Reference: "else potentials = AH.Array2D(grid.C, grid.state.Length, 0);"
+        if !self.search && self.potentials.is_none() {
+            self.potentials = Some(vec![vec![0i32; grid_size]; num_colors]);
+        }
     }
 
     /// Configure search parameters.
@@ -170,6 +190,7 @@ impl RuleNodeData {
         self.counter = 0;
         self.trajectory = None;
         self.trajectory_index = 0;
+        self.future_computed = false;
 
         for r in 0..self.last.len() {
             self.last[r] = false;
@@ -343,7 +364,7 @@ impl RuleNodeData {
     /// After calling, matches are populated and ready for node-specific logic.
     ///
     /// C# Reference: RuleNode.Go() lines 124-217
-    pub fn compute_matches(&mut self, ctx: &ExecutionContext) -> bool {
+    pub fn compute_matches(&mut self, ctx: &mut ExecutionContext) -> bool {
         // Clear last flags
         for r in 0..self.last.len() {
             self.last[r] = false;
@@ -352,6 +373,40 @@ impl RuleNodeData {
         // Check step limit
         if self.steps > 0 && self.counter >= self.steps {
             return false;
+        }
+
+        // Handle observation initialization (one-time at start)
+        // C# Reference: RuleNode.Go() lines 123-142
+        if self.observations.is_some() && !self.future_computed {
+            let (future, observations) = match (self.future.as_mut(), self.observations.as_ref()) {
+                (Some(f), Some(o)) => (f, o),
+                _ => return false,
+            };
+
+            // Compute future constraints and modify state
+            if !Observation::compute_future_set_present(future, &mut ctx.grid.state, observations) {
+                return false;
+            }
+
+            self.future_computed = true;
+
+            // In non-search mode with observations, compute backward potentials
+            // These guide heuristic selection toward the goal state
+            if !self.search {
+                if let Some(ref mut potentials) = self.potentials {
+                    let mx = ctx.grid.mx;
+                    let my = ctx.grid.my;
+                    let mz = ctx.grid.mz;
+                    Observation::compute_backward_potentials(
+                        potentials,
+                        future,
+                        mx,
+                        my,
+                        mz,
+                        &self.rules,
+                    );
+                }
+            }
         }
 
         // Scan for matches (incremental or full)

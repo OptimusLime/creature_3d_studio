@@ -7,7 +7,6 @@
 
 use super::node::{ExecutionContext, Node};
 use super::rng::{DotNetRandom, MjRng};
-use rand::Rng;
 use std::collections::VecDeque;
 
 /// A node that finds and draws paths between cells.
@@ -131,20 +130,25 @@ impl Node for PathNode {
         }
 
         // Create local RNG for this path
-        // C# Reference: Path.cs line 73: Random localRandom = new(ip.random.Next());
+        // C# Reference: Path.cs line 71: Random localRandom = new(ip.random.Next());
         let seed = ctx.random.next_int();
         let mut local_random = DotNetRandom::from_seed(seed);
 
         // Find min/max generation start position
         // C# Reference: Path.cs lines 72-93
+        // IMPORTANT: Must iterate in the SAME ORDER as start_positions (not reachable)
+        // to match C# iteration order, but skip unreachable ones (g == -1)
         let mut min_gen = (mx * my * mz) as f64;
         let mut max_gen = -2.0f64;
         let mut argmin = (-1i32, -1i32, -1i32);
         let mut argmax = (-1i32, -1i32, -1i32);
 
-        for &(px, py, pz) in &reachable {
+        for &(px, py, pz) in &start_positions {
             let i = px as usize + py as usize * mx + pz as usize * mx * my;
             let g = generations[i];
+            if g == -1 {
+                continue;
+            }
             let dg = g as f64;
             let noise = 0.1 * local_random.next_double();
 
@@ -390,7 +394,7 @@ fn find_direction(
     inertia: bool,
     edges: bool,
     vertices: bool,
-    random: &mut impl Rng,
+    random: &mut DotNetRandom,
 ) -> (i32, i32, i32) {
     let mx_i = mx as i32;
     let my_i = my as i32;
@@ -447,11 +451,13 @@ fn find_direction(
             add_candidate(&mut candidates, 0, 0, 1);
         }
 
-        // Pick random candidate
+        // Pick random candidate using C#-compatible Random.Next(count)
+        // C# Reference: candidates.Random(random) calls random.Next(candidates.Count)
         if candidates.is_empty() {
             return (0, 0, 0);
         }
-        candidates[random.gen_range(0..candidates.len())]
+        let idx = random.next_int_max(candidates.len() as i32) as usize;
+        candidates[idx]
     } else {
         // With edges/vertices: collect all valid moves
         for (ddx, ddy, ddz) in directions(x, y, z, mx, my, mz, edges, vertices) {
@@ -468,7 +474,8 @@ fn find_direction(
             let mut result = candidates[0];
 
             for &(cdx, cdy, cdz) in &candidates {
-                let noise = 0.1 * random.gen::<f64>();
+                // C# uses random.NextDouble() for noise
+                let noise = 0.1 * random.next_double();
                 let dot = (cdx * dx + cdy * dy + cdz * dz) as f64;
                 let len_c = ((cdx * cdx + cdy * cdy + cdz * cdz) as f64).sqrt();
                 let len_d = ((dx * dx + dy * dy + dz * dz) as f64).sqrt();
@@ -481,7 +488,9 @@ fn find_direction(
             }
             result
         } else {
-            candidates[random.gen_range(0..candidates.len())]
+            // C# Reference: candidates.Random(random) calls random.Next(candidates.Count)
+            let idx = random.next_int_max(candidates.len() as i32) as usize;
+            candidates[idx]
         }
     }
 }
