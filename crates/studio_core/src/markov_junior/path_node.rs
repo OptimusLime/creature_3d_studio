@@ -6,8 +6,8 @@
 //! C# Reference: Path.cs
 
 use super::node::{ExecutionContext, Node};
+use super::rng::{DotNetRandom, MjRng};
 use rand::Rng;
-use rand::SeedableRng;
 use std::collections::VecDeque;
 
 /// A node that finds and draws paths between cells.
@@ -131,8 +131,9 @@ impl Node for PathNode {
         }
 
         // Create local RNG for this path
-        let seed = ctx.random.next_u64();
-        let mut local_random = rand::rngs::StdRng::seed_from_u64(seed);
+        // C# Reference: Path.cs line 73: Random localRandom = new(ip.random.Next());
+        let seed = ctx.random.next_int();
+        let mut local_random = DotNetRandom::from_seed(seed);
 
         // Find min/max generation start position
         // C# Reference: Path.cs lines 72-93
@@ -145,7 +146,7 @@ impl Node for PathNode {
             let i = px as usize + py as usize * mx + pz as usize * mx * my;
             let g = generations[i];
             let dg = g as f64;
-            let noise = 0.1 * local_random.gen::<f64>();
+            let noise = 0.1 * local_random.next_double();
 
             if dg + noise < min_gen {
                 min_gen = dg + noise;

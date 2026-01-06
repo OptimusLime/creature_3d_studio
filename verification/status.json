@@ -16,8 +16,8 @@
       "seed": 42
     },
     "BernoulliPercolation": {
-      "accuracy": 99.80912624824451,
-      "reason": "99.81% (246 differ)",
+      "accuracy": 99.77808986584523,
+      "reason": "99.78% (286 differ)",
       "seed": 42
     },
     "BiasedGrowth": {
@@ -91,8 +91,8 @@
       "seed": 42
     },
     "ConnectedCaves": {
-      "accuracy": 99.83333333333333,
-      "reason": "99.83% (6 differ)",
+      "accuracy": 99.19444444444444,
+      "reason": "99.19% (29 differ)",
       "seed": 42
     },
     "ConstrainedCaves": {
@@ -123,11 +123,6 @@
     "DijkstraDungeon": {
       "accuracy": 65.75,
       "reason": "65.75% (548 differ)",
-      "seed": 42
-    },
-    "DungeonGrowth": {
-      "accuracy": 99.55135394968755,
-      "reason": "99.55% (28 differ)",
       "seed": 42
     },
     "Escher": {
@@ -216,8 +211,8 @@
       "seed": 42
     },
     "Percolation": {
-      "accuracy": 99.5354938271605,
-      "reason": "99.54% (602 differ)",
+      "accuracy": 99.39506172839506,
+      "reason": "99.40% (784 differ)",
       "seed": 42
     },
     "PeriodicEscher": {
@@ -355,6 +350,10 @@
       "seed": 42
     },
     "DualRetraction": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DungeonGrowth": {
       "accuracy": 100.0,
       "seed": 42
     },

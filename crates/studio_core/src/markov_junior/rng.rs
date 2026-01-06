@@ -300,6 +300,30 @@ impl MjRng for DotNetRandom {
     }
 }
 
+// Implement rand::RngCore for DotNetRandom so it can be used with rand traits
+impl rand::RngCore for DotNetRandom {
+    fn next_u32(&mut self) -> u32 {
+        // Use next_int which returns 0..i32::MAX, cast to u32
+        MjRng::next_int(self) as u32
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        // Combine two i32 values
+        let low = MjRng::next_int(self) as u64;
+        let high = MjRng::next_int(self) as u64;
+        (high << 31) | low
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        MjRng::next_bytes(self, dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
