@@ -98,6 +98,13 @@ pub trait Node {
 
     /// Reset this node to its initial state.
     fn reset(&mut self);
+
+    /// Returns true if this node is a "branch" type (SequenceNode, MarkovNode).
+    /// Branch nodes have special handling in parent branches for ip.current tracking.
+    /// Default is false for non-branch nodes like OneNode, ParallelNode, etc.
+    fn is_branch(&self) -> bool {
+        false
+    }
 }
 
 /// A sequence of nodes executed in order.
@@ -115,12 +122,22 @@ pub struct SequenceNode {
     pub nodes: Vec<Box<dyn Node>>,
     /// Current child index
     n: usize,
+    /// Whether a branch child is currently "active" (was called and succeeded).
+    /// In C#, when a branch child succeeds, ip.current is set to that branch,
+    /// and subsequent main loop iterations call it directly. When it finally
+    /// fails, ip.current is restored to the parent, and the parent re-tries
+    /// that child. We simulate this by tracking whether a branch child is active.
+    branch_child_active: bool,
 }
 
 impl SequenceNode {
     /// Create a new sequence node with the given children.
     pub fn new(nodes: Vec<Box<dyn Node>>) -> Self {
-        Self { nodes, n: 0 }
+        Self {
+            nodes,
+            n: 0,
+            branch_child_active: false,
+        }
     }
 }
 
@@ -129,11 +146,48 @@ impl Node for SequenceNode {
     /// Returns false when all children are exhausted.
     ///
     /// C# Reference: Branch.Go() lines 79-90
+    ///
+    /// IMPORTANT: In C#, when a branch child succeeds, ip.current is set to that
+    /// branch, causing subsequent main loop iterations to call the branch directly.
+    /// When the branch finally fails, ip.current is restored to the parent, and
+    /// the parent's NEXT call re-tries that same child (because n wasn't advanced).
+    ///
+    /// In Rust, we simulate this by tracking branch_child_active. When a branch
+    /// child fails while active, we give it one more retry (calling it again
+    /// immediately) before advancing n.
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
         while self.n < self.nodes.len() {
-            if self.nodes[self.n].go(ctx) {
+            let result = self.nodes[self.n].go(ctx);
+
+            if result {
+                // Child succeeded - check if it's a branch type
+                // In C#, branch children get ip.current set to them
+                if self.nodes[self.n].is_branch() {
+                    self.branch_child_active = true;
+                }
                 return true;
             }
+
+            // Child failed
+            if self.branch_child_active {
+                // This was an active branch child that just failed.
+                // In C#, this would set ip.current = parent, and the NEXT
+                // main loop iteration would call us again with n unchanged.
+                // We simulate the retry by calling the child again immediately.
+                self.branch_child_active = false;
+
+                // Retry the child once
+                let retry_result = self.nodes[self.n].go(ctx);
+
+                if retry_result {
+                    // Retry succeeded, continue as normal
+                    self.branch_child_active = self.nodes[self.n].is_branch();
+                    return true;
+                }
+                // Retry also failed, fall through to advance n
+            }
+
+            // Non-branch child failed, or branch child failed on retry - advance
             self.n += 1;
         }
         // All children done, reset for next use
@@ -146,6 +200,11 @@ impl Node for SequenceNode {
             node.reset();
         }
         self.n = 0;
+        self.branch_child_active = false;
+    }
+
+    fn is_branch(&self) -> bool {
+        true
     }
 }
 
@@ -203,6 +262,10 @@ impl Node for MarkovNode {
             node.reset();
         }
         self.n = 0;
+    }
+
+    fn is_branch(&self) -> bool {
+        true
     }
 }
 

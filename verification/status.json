@@ -5,59 +5,14 @@
       "reason": "84.73% (9774 differ)",
       "seed": 42
     },
-    "BasicDijkstraDungeon": {
-      "accuracy": 53.611111111111114,
-      "reason": "53.61% (1670 differ)",
-      "seed": 42
-    },
-    "BasicDijkstraFill": {
-      "accuracy": 94.38888888888889,
-      "reason": "94.39% (202 differ)",
-      "seed": 42
-    },
-    "BernoulliPercolation": {
-      "accuracy": 99.77808986584523,
-      "reason": "99.78% (286 differ)",
-      "seed": 42
-    },
-    "BiasedGrowth": {
-      "accuracy": 94.47222222222223,
-      "reason": "94.47% (796 differ)",
-      "seed": 42
-    },
-    "BiasedGrowthContraction": {
-      "accuracy": 95.91666666666667,
-      "reason": "95.92% (588 differ)",
-      "seed": 42
-    },
-    "BiasedMazeGrowth": {
-      "accuracy": 94.63803053546643,
-      "reason": "94.64% (734 differ)",
-      "seed": 42
-    },
-    "BiasedVoronoi": {
-      "accuracy": 80.390625,
-      "reason": "80.39% (1255 differ)",
-      "seed": 42
-    },
-    "BishopParity": {
-      "accuracy": 96.94444444444444,
-      "reason": "96.94% (110 differ)",
-      "seed": 42
-    },
-    "CentralSAW": {
-      "accuracy": 79.51738006320024,
-      "reason": "79.52% (713 differ)",
-      "seed": 42
-    },
     "ChainDungeon": {
-      "accuracy": 45.22222222222222,
-      "reason": "45.22% (1972 differ)",
+      "accuracy": 62.19444444444444,
+      "reason": "62.19% (1361 differ)",
       "seed": 42
     },
     "ChainDungeonMaze": {
-      "accuracy": 63.861111111111114,
-      "reason": "63.86% (1301 differ)",
+      "accuracy": 73.22222222222223,
+      "reason": "73.22% (964 differ)",
       "seed": 42
     },
     "ChainMaze": {
@@ -66,8 +21,8 @@
       "seed": 42
     },
     "Circuit": {
-      "accuracy": 64.09077851192185,
-      "reason": "64.09% (1250 differ)",
+      "accuracy": 94.45561620224073,
+      "reason": "94.46% (193 differ)",
       "seed": 42
     },
     "ClosedSurface": {
@@ -81,48 +36,18 @@
       "seed": 42
     },
     "CompleteSAW": {
-      "accuracy": 55.40166204986149,
-      "reason": "55.40% (161 differ)",
+      "accuracy": 57.06371191135734,
+      "reason": "57.06% (155 differ)",
       "seed": 42
     },
     "CompleteSAWSmart": {
-      "accuracy": 54.44234404536862,
-      "reason": "54.44% (241 differ)",
-      "seed": 42
-    },
-    "ConnectedCaves": {
-      "accuracy": 99.19444444444444,
-      "reason": "99.19% (29 differ)",
-      "seed": 42
-    },
-    "ConstrainedCaves": {
-      "accuracy": 67.97222222222223,
-      "reason": "67.97% (1153 differ)",
+      "accuracy": 57.46691871455577,
+      "reason": "57.47% (225 differ)",
       "seed": 42
     },
     "CrawlersChase": {
       "accuracy": 98.61111111111111,
       "reason": "98.61% (50 differ)",
-      "seed": 42
-    },
-    "CrossCountry": {
-      "accuracy": 97.59375,
-      "reason": "97.59% (154 differ)",
-      "seed": 42
-    },
-    "DenseSAW": {
-      "accuracy": 87.90577420281528,
-      "reason": "87.91% (421 differ)",
-      "seed": 42
-    },
-    "DiagonalPath": {
-      "accuracy": 98.53125,
-      "reason": "98.53% (94 differ)",
-      "seed": 42
-    },
-    "DijkstraDungeon": {
-      "accuracy": 65.75,
-      "reason": "65.75% (548 differ)",
       "seed": 42
     },
     "Escher": {
@@ -135,11 +60,6 @@
       "reason": "93.52% (4150 differ)",
       "seed": 42
     },
-    "EuclideanPath": {
-      "accuracy": 97.453125,
-      "reason": "97.45% (163 differ)",
-      "seed": 42
-    },
     "FindLongCycle": {
       "accuracy": 58.29903978052126,
       "reason": "58.30% (304 differ)",
@@ -150,11 +70,6 @@
       "reason": "63.40% (32943 differ)",
       "seed": 42
     },
-    "GrowTo": {
-      "accuracy": 91.22222222222223,
-      "reason": "91.22% (1264 differ)",
-      "seed": 42
-    },
     "HamiltonianPath": {
       "accuracy": 68.83629191321499,
       "reason": "68.84% (474 differ)",
@@ -163,16 +78,6 @@
     "Island": {
       "accuracy": 0.14671875,
       "reason": "0.15% (639061 differ)",
-      "seed": 42
-    },
-    "Keys": {
-      "accuracy": 78.78787878787878,
-      "reason": "78.79% (231 differ)",
-      "seed": 42
-    },
-    "KnightPatrol": {
-      "accuracy": 89.69444444444444,
-      "reason": "89.69% (371 differ)",
       "seed": 42
     },
     "Knots2D": {
@@ -210,11 +115,6 @@
       "reason": "91.40% (843 differ)",
       "seed": 42
     },
-    "Percolation": {
-      "accuracy": 99.39506172839506,
-      "reason": "99.40% (784 differ)",
-      "seed": 42
-    },
     "PeriodicEscher": {
       "accuracy": 80.69375,
       "reason": "80.69% (12356 differ)",
@@ -223,11 +123,6 @@
     "PillarsOfEternity": {
       "accuracy": 0.0,
       "reason": "Dim mismatch: [45, 45, 45] vs [9, 9, 9]",
-      "seed": 42
-    },
-    "RegularPath": {
-      "accuracy": 88.76782566896331,
-      "reason": "88.77% (701 differ)",
       "seed": 42
     },
     "SelectLargeCaves": {
@@ -241,33 +136,13 @@
       "seed": 42
     },
     "Sewers": {
-      "accuracy": 32.375,
-      "reason": "32.38% (1082 differ)",
+      "accuracy": 32.25,
+      "reason": "32.25% (1084 differ)",
       "seed": 42
     },
     "SmartSAW": {
       "accuracy": 45.42936288088643,
       "reason": "45.43% (197 differ)",
-      "seed": 42
-    },
-    "SmarterDigger": {
-      "accuracy": 64.4375,
-      "reason": "64.44% (569 differ)",
-      "seed": 42
-    },
-    "SnellLaw": {
-      "accuracy": 90.34375,
-      "reason": "90.34% (618 differ)",
-      "seed": 42
-    },
-    "SoftPath": {
-      "accuracy": 98.88271604938272,
-      "reason": "98.88% (362 differ)",
-      "seed": 42
-    },
-    "StormySnellLaw": {
-      "accuracy": 90.56944444444444,
-      "reason": "90.57% (1358 differ)",
       "seed": 42
     },
     "SubmergedKnots": {
@@ -309,11 +184,43 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "BasicDijkstraDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicDijkstraFill": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "BasicDungeonGrowth": {
       "accuracy": 100.0,
       "seed": 42
     },
     "BasicPartitioning": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BernoulliPercolation": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedGrowthContraction": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedMazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedVoronoi": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BishopParity": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -333,6 +240,18 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "CentralSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ConnectedCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ConstrainedCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Counting": {
       "accuracy": 100.0,
       "seed": 42
@@ -341,11 +260,27 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "CrossCountry": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Cycles": {
       "accuracy": 100.0,
       "seed": 42
     },
+    "DenseSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DiagonalPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Digger": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DijkstraDungeon": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -358,6 +293,10 @@
       "seed": 42
     },
     "Dwarves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "EuclideanPath": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -378,6 +317,10 @@
       "seed": 42
     },
     "GameOfLife": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GrowTo": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -410,6 +353,14 @@
       "seed": 42
     },
     "IrregularSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Keys": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "KnightPatrol": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -493,6 +444,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "Percolation": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Push": {
       "accuracy": 100.0,
       "seed": 42
@@ -506,6 +461,10 @@
       "seed": 42
     },
     "RainbowGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "RegularPath": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -529,11 +488,27 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "SmarterDigger": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "SmoothTrail": {
       "accuracy": 100.0,
       "seed": 42
     },
+    "SnellLaw": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SoftPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "StochasticVoronoi": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StormySnellLaw": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -546,6 +521,22 @@
       "seed": 42
     },
     "StrangeNoise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL4": {
       "accuracy": 100.0,
       "seed": 42
     },

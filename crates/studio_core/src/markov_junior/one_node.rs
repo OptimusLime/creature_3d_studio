@@ -189,15 +189,10 @@ impl OneNode {
         }
 
         // Return the best match
+        // C# Reference: In heuristic path, the winning match is NOT removed from the list
+        // or match_mask. Only invalid matches are removed (in the loop above).
         if let Some(idx) = argmax {
             let (r, x, y, z) = self.data.matches[idx];
-
-            // Remove from tracking
-            let i = x as usize + y as usize * mx + z as usize * mx * my;
-            self.data.match_mask[r][i] = false;
-            self.data.matches[idx] = self.data.matches[self.data.match_count - 1];
-            self.data.match_count -= 1;
-
             Some((r, x, y, z))
         } else {
             None
