@@ -1788,7 +1788,10 @@ fn load_observations_from_xml(
 
 /// Parse a single <observe> element.
 ///
-/// C# Reference: Observation constructor
+/// C# Reference: RuleNode.cs line 88-89
+/// `observations[value] = new Observation(x.Get("from", grid.characters[value]), x.Get<string>("to"), grid);`
+///
+/// The `from` attribute is optional and defaults to the same character as `value`.
 fn parse_observe_element(
     e: &BytesStart,
     grid: &MjGrid,
@@ -1814,14 +1817,13 @@ fn parse_observe_element(
                 context: "observe value".to_string(),
             })?;
 
-    // Required: from (what value gets placed initially)
+    // Optional: from (what value gets placed initially)
+    // Defaults to value_char if not specified
+    // C# Reference: x.Get("from", grid.characters[value])
     let from_char = attrs
         .get("from")
         .and_then(|s| s.chars().next())
-        .ok_or_else(|| LoadError::MissingAttribute {
-            element: "observe".to_string(),
-            attribute: "from".to_string(),
-        })?;
+        .unwrap_or(value_char);
 
     // Required: to (what values are allowed in the goal)
     let to_str = attrs.get("to").ok_or_else(|| LoadError::MissingAttribute {
