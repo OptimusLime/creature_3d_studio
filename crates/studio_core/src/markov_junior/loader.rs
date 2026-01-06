@@ -14,7 +14,7 @@ use super::node::Node;
 use super::observation::Observation;
 use super::path_node::PathNode;
 use super::rule_node::RuleNodeData;
-use super::symmetry::{square_symmetries, SquareSubgroup};
+use super::symmetry::{cube_symmetries, square_symmetries, SquareSubgroup};
 use super::wfc::{OverlapNode, TileNode};
 use super::{AllNode, MarkovNode, MjGrid, MjRule, OneNode, ParallelNode, SequenceNode};
 use quick_xml::events::{BytesStart, Event};
@@ -2279,13 +2279,37 @@ fn parse_rule_element(
 }
 
 /// Apply symmetry transformations to a rule.
+///
+/// For 2D, uses square symmetries (8 transformations).
+/// For 3D, uses cube symmetries (48 transformations).
+///
+/// C# Reference: SymmetryHelper.cs, Rule.cs uses symmetry in Load()
 fn apply_symmetry(rule: MjRule, symmetry: &[bool], is_2d: bool) -> Vec<MjRule> {
     if is_2d {
         let subgroup = bool_slice_to_subgroup(symmetry);
         square_symmetries(&rule, Some(subgroup))
     } else {
-        // 3D symmetry not yet implemented, just return the rule
-        vec![rule]
+        // 3D symmetry uses cube symmetries (48 transformations)
+        // Convert bool slice to [bool; 48] array for cube_symmetries
+        if symmetry.len() >= 48 {
+            let mut subgroup = [false; 48];
+            for (i, &b) in symmetry.iter().take(48).enumerate() {
+                subgroup[i] = b;
+            }
+            cube_symmetries(&rule, Some(&subgroup))
+        } else if symmetry.iter().all(|&b| b) || symmetry.is_empty() {
+            // All symmetries enabled or empty (default to all)
+            cube_symmetries(&rule, None)
+        } else {
+            // Partial symmetry specified but not full 48 - use as-is with padding
+            let mut subgroup = [false; 48];
+            for (i, &b) in symmetry.iter().enumerate() {
+                if i < 48 {
+                    subgroup[i] = b;
+                }
+            }
+            cube_symmetries(&rule, Some(&subgroup))
+        }
     }
 }
 
