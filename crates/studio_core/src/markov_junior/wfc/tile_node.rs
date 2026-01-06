@@ -494,7 +494,17 @@ fn load_vox_tile(path: &Path, uniques: &mut Vec<i32>) -> Result<(Vec<u8>, usize)
     let sz = mz;
     let total = s * s * sz;
 
-    // Map voxel palette indices to global ordinals
+    // Map voxel palette indices to global ordinals.
+    // C# Reference: Helper.cs Ords() lines 8-24
+    //
+    // CRITICAL: The C# Ords() function treats ALL values equally, including -1 (empty).
+    // When -1 is first encountered, it gets added to the uniques list and assigned an ordinal.
+    // This means empty voxels are NOT hardcoded to 0 - they get whatever ordinal corresponds
+    // to when -1 was first seen in the encounter order.
+    //
+    // This is important because it affects the mapping between VOX colors and grid values.
+    // If we hardcode empty to 0 but don't add -1 to uniques, the ordinals of actual colors
+    // get shifted, breaking the color mapping.
     let mut result = vec![0u8; total];
 
     for z in 0..sz {
@@ -504,20 +514,16 @@ fn load_vox_tile(path: &Path, uniques: &mut Vec<i32>) -> Result<(Vec<u8>, usize)
                 let dst_idx = x + y * s + z * s * s;
 
                 let v = voxels[src_idx];
-                if v < 0 {
-                    // Empty voxel - map to first ordinal (typically empty/background)
-                    result[dst_idx] = 0;
+                // Treat ALL values (including -1 for empty) the same way:
+                // find or add to uniques list
+                let ord = if let Some(pos) = uniques.iter().position(|&u| u == v) {
+                    pos
                 } else {
-                    // Find or add to uniques
-                    let ord = if let Some(pos) = uniques.iter().position(|&u| u == v) {
-                        pos
-                    } else {
-                        let pos = uniques.len();
-                        uniques.push(v);
-                        pos
-                    };
-                    result[dst_idx] = ord as u8;
-                }
+                    let pos = uniques.len();
+                    uniques.push(v);
+                    pos
+                };
+                result[dst_idx] = ord as u8;
             }
         }
     }

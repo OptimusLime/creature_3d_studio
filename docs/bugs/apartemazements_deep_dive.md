@@ -189,5 +189,13 @@ fn test_tile_values_match_grid() {
 
 - [x] WFC children loading implemented
 - [x] WFC children execution implemented  
-- [ ] **Tile color mapping - THIS IS THE BUG**
-- [ ] Test to catch tile color mapping issue
+- [x] **Tile color mapping - FIXED**
+- [x] Test to catch tile color mapping issue
+
+## Fix Applied
+
+The fix was in `load_vox_tile()` at `tile_node.rs:497-529`. The bug was that empty voxels (value -1) were hardcoded to ordinal 0, but -1 was NOT added to the `uniques` list. This caused all non-empty VOX colors to get ordinals shifted by 1 from what C# produces.
+
+The fix treats ALL voxel values (including -1) the same way: find or add to the `uniques` list. This matches the C# `Ords()` behavior where -1 is added to `uniques` when first encountered, becoming ordinal 0, and all other colors get subsequent ordinals.
+
+After the fix, tiles have values {0, 1, 2, 3, 4, 5} instead of {0, 1, 2, 3, 4}, which correctly maps to grid values BYDAWP.
