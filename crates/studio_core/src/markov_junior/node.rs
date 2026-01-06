@@ -7,8 +7,8 @@
 //!
 //! C# Reference: Node.cs (lines 7-111)
 
+use super::rng::MjRng;
 use super::MjGrid;
-use rand::rngs::StdRng;
 
 /// Shared execution context passed to all nodes during execution.
 ///
@@ -16,8 +16,9 @@ use rand::rngs::StdRng;
 pub struct ExecutionContext<'a> {
     /// The grid being modified
     pub grid: &'a mut MjGrid,
-    /// Random number generator (deterministic with seed)
-    pub random: &'a mut StdRng,
+    /// Random number generator (deterministic with seed).
+    /// Uses MjRng trait to support both StdRandom and DotNetRandom.
+    pub random: &'a mut dyn MjRng,
     /// List of (x, y, z) positions that changed
     pub changes: Vec<(i32, i32, i32)>,
     /// Index into changes where each turn's changes start
@@ -31,7 +32,7 @@ pub struct ExecutionContext<'a> {
 
 impl<'a> ExecutionContext<'a> {
     /// Create a new execution context.
-    pub fn new(grid: &'a mut MjGrid, random: &'a mut StdRng) -> Self {
+    pub fn new(grid: &'a mut MjGrid, random: &'a mut dyn MjRng) -> Self {
         Self {
             grid,
             random,
@@ -43,7 +44,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     /// Create a new execution context with gif mode enabled.
-    pub fn with_gif(grid: &'a mut MjGrid, random: &'a mut StdRng, gif: bool) -> Self {
+    pub fn with_gif(grid: &'a mut MjGrid, random: &'a mut dyn MjRng, gif: bool) -> Self {
         Self {
             grid,
             random,
@@ -208,7 +209,7 @@ impl Node for MarkovNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
+    use crate::markov_junior::rng::StdRandom;
 
     /// A simple test node that counts down and returns true until reaching 0.
     struct CountdownNode {
@@ -243,7 +244,7 @@ mod tests {
     #[test]
     fn test_sequence_node_runs_in_order() {
         let mut grid = MjGrid::with_values(1, 1, 1, "BW");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         let mut seq = SequenceNode::new(vec![
@@ -265,7 +266,7 @@ mod tests {
     #[test]
     fn test_markov_node_restarts_from_zero() {
         let mut grid = MjGrid::with_values(1, 1, 1, "BW");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Create a node that succeeds once then fails
@@ -281,7 +282,7 @@ mod tests {
     #[test]
     fn test_execution_context_change_tracking() {
         let mut grid = MjGrid::with_values(5, 5, 1, "BW");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Turn 0

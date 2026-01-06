@@ -44,6 +44,7 @@ pub mod one_node;
 pub mod parallel_node;
 pub mod path_node;
 pub mod render;
+pub mod rng;
 pub mod rule;
 pub mod rule_node;
 pub mod search;
@@ -70,6 +71,9 @@ pub use search::{run_search, Board};
 pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
 pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
+
+// RNG abstraction (for C# compatibility testing)
+pub use rng::{DotNetRandom, MjRng, StdRandom};
 
 // PNG rendering (no GPU needed)
 pub use render::{

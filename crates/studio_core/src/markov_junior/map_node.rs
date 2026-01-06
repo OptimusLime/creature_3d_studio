@@ -276,7 +276,7 @@ impl Node for MapNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::StdRng;
+    use crate::markov_junior::rng::StdRandom;
     use rand::SeedableRng;
 
     #[test]
@@ -319,7 +319,7 @@ mod tests {
         let mut grid = src_grid.clone();
         grid.set(0, 0, 0, 0); // B
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
         let result = node.go(&mut ctx);
 

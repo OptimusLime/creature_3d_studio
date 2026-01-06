@@ -9,7 +9,6 @@
 use super::node::{ExecutionContext, Node};
 use super::rule_node::RuleNodeData;
 use super::MjRule;
-use rand::Rng;
 
 /// A node that applies all matches simultaneously (double-buffered).
 ///
@@ -65,7 +64,7 @@ impl ParallelNode {
         let rule = &self.data.rules[r];
 
         // Check probability
-        if ctx.random.gen::<f64>() > rule.p {
+        if ctx.random.next_double() > rule.p {
             return false;
         }
 
@@ -200,8 +199,8 @@ impl Node for ParallelNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     #[test]
@@ -212,7 +211,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = ParallelNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         assert!(node.go(&mut ctx));
@@ -240,7 +239,7 @@ mod tests {
         let rule = MjRule::parse("BW", "WB", &grid).unwrap();
         let mut node = ParallelNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Before: B W B (indices 0,1,2)
@@ -262,7 +261,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = ParallelNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         assert!(!node.go(&mut ctx));

@@ -8,8 +8,6 @@
 use super::helper::load_bitmap;
 use super::node::{ExecutionContext, Node};
 use super::symmetry::SquareSubgroup;
-use super::MjGrid;
-use rand::Rng;
 use std::path::Path;
 
 /// ConvChain node for MCMC texture synthesis.
@@ -179,7 +177,7 @@ impl Node for ConvChainNode {
             for i in 0..self.substrate.len() {
                 if state[i] == self.substrate_color {
                     // Randomly initialize to c0 or c1
-                    state[i] = if ctx.random.gen::<bool>() {
+                    state[i] = if ctx.random.next_bool() {
                         self.c0
                     } else {
                         self.c1
@@ -197,7 +195,7 @@ impl Node for ConvChainNode {
 
         for _ in 0..state.len() {
             // Pick a random substrate cell
-            let r = ctx.random.gen_range(0..state.len());
+            let r = ctx.random.next_usize_max(state.len());
             if !self.substrate[r] {
                 continue;
             }
@@ -265,7 +263,7 @@ impl Node for ConvChainNode {
                 if self.temperature != 1.0 {
                     q = q.powf(1.0 / self.temperature);
                 }
-                if q > ctx.random.gen::<f64>() {
+                if q > ctx.random.next_double() {
                     self.toggle(state, r);
                 }
             }
@@ -457,10 +455,10 @@ fn bool_slice_to_subgroup(symmetry: &[bool]) -> SquareSubgroup {
 mod tests {
     use super::*;
     use crate::markov_junior::node::ExecutionContext;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
+    use crate::markov_junior::rng::StdRandom;
+    use crate::markov_junior::MjGrid;
 
-    fn create_test_ctx<'a>(grid: &'a mut MjGrid, rng: &'a mut StdRng) -> ExecutionContext<'a> {
+    fn create_test_ctx<'a>(grid: &'a mut MjGrid, rng: &'a mut StdRandom) -> ExecutionContext<'a> {
         ExecutionContext::new(grid, rng)
     }
 
@@ -571,7 +569,7 @@ mod tests {
             grid.state.len(),
         );
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // First step should initialize substrate
@@ -620,7 +618,7 @@ mod tests {
         }
         node.counter = 1;
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run MCMC step
@@ -639,7 +637,7 @@ mod tests {
         let weights = vec![0.5; 16];
         let mut node = ConvChainNode::new(2, 1.0, weights, 0, 2, 1, grid.state.len()).with_steps(2);
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // First step (initialization)
@@ -662,7 +660,7 @@ mod tests {
         let weights = vec![0.5; 16];
         let mut node = ConvChainNode::new(2, 1.0, weights, 0, 2, 1, grid.state.len()).with_steps(3);
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run some steps
@@ -812,7 +810,7 @@ mod tests {
         )
         .with_steps(50);
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run until completion
@@ -866,7 +864,7 @@ mod tests {
         )
         .with_steps(200); // Many steps for convergence
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run to completion
@@ -1075,7 +1073,7 @@ mod tests {
             grid.state[i] = 2; // substrate
         }
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         while node.go(&mut ctx) {}

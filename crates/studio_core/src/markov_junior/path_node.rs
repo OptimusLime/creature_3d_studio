@@ -131,7 +131,7 @@ impl Node for PathNode {
         }
 
         // Create local RNG for this path
-        let seed = ctx.random.gen::<u64>();
+        let seed = ctx.random.next_u64();
         let mut local_random = rand::rngs::StdRng::seed_from_u64(seed);
 
         // Find min/max generation start position
@@ -488,8 +488,8 @@ fn find_direction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     #[test]
@@ -506,7 +506,7 @@ mod tests {
         // PathNode: start=S(bit 1), finish=F(bit 2), substrate=B(bit 0), write=P(3)
         let mut node = PathNode::new(0b0010, 0b0100, 0b0001, 3);
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run pathfinding
@@ -541,7 +541,7 @@ mod tests {
         // substrate=B (not W), so wall blocks path
         let mut node = PathNode::new(0b0010, 0b0100, 0b0001, 0);
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Should fail - no path
@@ -559,7 +559,7 @@ mod tests {
         let mut node = PathNode::new(0b0010, 0b0100, 0b0001, 3);
         node.inertia = true;
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         assert!(node.go(&mut ctx), "Should find a path");

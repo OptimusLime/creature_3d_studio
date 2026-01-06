@@ -14,7 +14,6 @@ use super::field::delta_pointwise;
 use super::node::{ExecutionContext, Node};
 use super::rule_node::RuleNodeData;
 use super::MjRule;
-use rand::Rng;
 
 /// A node that applies one random rule match per step.
 ///
@@ -77,7 +76,7 @@ impl OneNode {
 
         while self.data.match_count > 0 {
             // Pick random match
-            let match_index = ctx.random.gen_range(0..self.data.match_count);
+            let match_index = ctx.random.next_usize_max(self.data.match_count);
             let (r, x, y, z) = self.data.matches[match_index];
 
             // Remove from tracking (swap with last)
@@ -153,7 +152,7 @@ impl OneNode {
                     first_heuristic_computed = true;
                 }
 
-                let u: f64 = ctx.random.gen();
+                let u: f64 = ctx.random.next_double();
                 let h = h as f64;
 
                 // C# Reference: lines 112-113
@@ -238,9 +237,9 @@ impl Node for OneNode {
 mod tests {
     use super::*;
     use crate::markov_junior::field::Field;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::rule_node::RuleNodeData;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     #[test]
@@ -251,7 +250,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = OneNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // One step
@@ -272,7 +271,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = OneNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run until no more matches
@@ -298,7 +297,7 @@ mod tests {
         let rule = MjRule::parse("BB", "WW", &grid).unwrap();
         let mut node = OneNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // One step
@@ -328,7 +327,7 @@ mod tests {
             data: RuleNodeData::with_fields(vec![rule], grid.state.len(), fields, 0.0),
         };
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run one step
@@ -363,7 +362,7 @@ mod tests {
             data: RuleNodeData::with_fields(vec![rule], grid.state.len(), fields, 100.0),
         };
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run one step

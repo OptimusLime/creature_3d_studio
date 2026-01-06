@@ -7,7 +7,7 @@
 
 use super::wfc_node::{WfcNode, WfcState};
 
-use crate::markov_junior::helper::{load_vox, load_vox_ords};
+use crate::markov_junior::helper::load_vox;
 use crate::markov_junior::node::{ExecutionContext, Node};
 use crate::markov_junior::MjGrid;
 use quick_xml::events::Event;
@@ -1278,8 +1278,8 @@ mod tests {
 
         // Run WFC to completion
         use crate::markov_junior::node::{ExecutionContext, Node};
-        use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
+        use crate::markov_junior::rng::StdRandom;
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run until WFC completes (or max steps)

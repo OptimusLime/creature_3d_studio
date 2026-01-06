@@ -5,10 +5,10 @@
 
 #[cfg(test)]
 mod phase_1_2_verification {
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::{
         AllNode, ExecutionContext, MarkovNode, MjGrid, MjRule, Node, OneNode, SequenceNode,
     };
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     /// Phase 1.2 Test 1: OneNode applies exactly one match per step.
@@ -23,7 +23,7 @@ mod phase_1_2_verification {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = OneNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Execute one step
@@ -50,7 +50,7 @@ mod phase_1_2_verification {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Execute one step
@@ -76,7 +76,7 @@ mod phase_1_2_verification {
         let rule = MjRule::parse("BB", "WW", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Execute one step
@@ -113,7 +113,7 @@ mod phase_1_2_verification {
         let one_node = OneNode::new(vec![rule], grid.state.len());
         let mut markov_node = MarkovNode::new(vec![Box::new(one_node)]);
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // MarkovNode should loop until all B's are converted to W's
@@ -161,7 +161,7 @@ mod phase_1_2_verification {
         // Wrap in SequenceNode
         let mut seq_node = SequenceNode::new(vec![Box::new(node1), Box::new(node2)]);
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // First go(): node1 (B→R) should run

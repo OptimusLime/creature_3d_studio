@@ -6,7 +6,7 @@
 //! C# Reference: Convolution.cs (~191 lines)
 
 use super::node::{ExecutionContext, Node};
-use rand::Rng;
+use super::rng::MjRng;
 
 /// Pre-defined 2D kernels for neighbor counting.
 ///
@@ -368,9 +368,9 @@ impl ConvolutionNode {
     }
 
     /// Check if a rule matches at a given cell.
-    fn rule_matches(&self, rule: &ConvolutionRule, cell_idx: usize, rng: &mut impl Rng) -> bool {
+    fn rule_matches(&self, rule: &ConvolutionRule, cell_idx: usize, rng: &mut dyn MjRng) -> bool {
         // Check probability
-        if rule.p < 1.0 && rng.gen::<f64>() >= rule.p {
+        if rule.p < 1.0 && rng.next_double() >= rule.p {
             return false;
         }
 
@@ -407,15 +407,11 @@ impl Node for ConvolutionNode {
         // Compute neighbor sums for all cells
         self.compute_sumfield(ctx);
 
-        // Clone RNG to avoid borrow issues
-        let mut rng = ctx.random.clone();
-
         // Apply rules
         let mut change = false;
-        let state = &mut ctx.grid.state;
 
         for i in 0..self.sumfield.len() {
-            let input = state[i];
+            let input = ctx.grid.state[i];
 
             for rule in &self.rules {
                 // Check if input matches
@@ -424,21 +420,18 @@ impl Node for ConvolutionNode {
                 }
 
                 // Check if output would be different
-                if rule.output == state[i] {
+                if rule.output == ctx.grid.state[i] {
                     continue;
                 }
 
                 // Check rule constraints
-                if self.rule_matches(rule, i, &mut rng) {
-                    state[i] = rule.output;
+                if self.rule_matches(rule, i, ctx.random) {
+                    ctx.grid.state[i] = rule.output;
                     change = true;
                     break; // Only first matching rule applies
                 }
             }
         }
-
-        // Update RNG state
-        *ctx.random = rng;
 
         self.counter += 1;
         change
@@ -457,11 +450,10 @@ impl Node for ConvolutionNode {
 mod tests {
     use super::*;
     use crate::markov_junior::node::ExecutionContext;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
-    use rand::SeedableRng;
 
-    fn create_test_ctx<'a>(grid: &'a mut MjGrid, rng: &'a mut StdRng) -> ExecutionContext<'a> {
+    fn create_test_ctx<'a>(grid: &'a mut MjGrid, rng: &'a mut StdRandom) -> ExecutionContext<'a> {
         ExecutionContext::new(grid, rng)
     }
 
@@ -512,7 +504,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run one step
@@ -543,7 +535,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         let changed = node.go(&mut ctx);
@@ -572,7 +564,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Center should NOT change (sum constraint not met)
@@ -602,7 +594,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         let changed = node.go(&mut ctx);
@@ -637,7 +629,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         let changed = node.go(&mut ctx);
@@ -671,7 +663,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         let changed = node.go(&mut ctx);
@@ -695,7 +687,7 @@ mod tests {
         .unwrap()
         .with_steps(1);
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // First step should work
@@ -755,7 +747,7 @@ mod tests {
         .unwrap()
         .with_steps(2);
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run two steps
@@ -798,7 +790,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         let changed = node.go(&mut ctx);
@@ -838,7 +830,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Run
@@ -877,7 +869,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         node.go(&mut ctx);
@@ -900,9 +892,9 @@ mod tests {
         let mut grid = MjGrid::with_values(8, 8, 1, "DA");
 
         // Initialize with random pattern
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         for i in 0..grid.state.len() {
-            grid.state[i] = if rng.gen::<bool>() { 0 } else { 1 };
+            grid.state[i] = if rng.next_bool() { 0 } else { 1 };
         }
 
         // Cave rules
@@ -970,7 +962,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
         let mut ctx = create_test_ctx(&mut grid, &mut rng);
 
         // Compute sumfield

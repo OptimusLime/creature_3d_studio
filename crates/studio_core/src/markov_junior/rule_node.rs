@@ -365,8 +365,8 @@ impl RuleNodeData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     #[test]
@@ -376,7 +376,7 @@ mod tests {
         let mut data = RuleNodeData::new(vec![rule], grid.state.len());
 
         let mut grid = grid;
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         data.scan_all_matches(&ctx);

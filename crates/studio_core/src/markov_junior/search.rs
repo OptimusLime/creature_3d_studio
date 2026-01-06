@@ -6,8 +6,8 @@
 //! C# Reference: Search.cs (~295 lines)
 
 use super::observation::Observation;
+use super::rng::StdRandom;
 use super::MjRule;
-use rand::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
 
 /// A search state node in the A* search tree.
@@ -47,14 +47,14 @@ impl Board {
     ///
     /// Lower rank = higher priority.
     /// Adds small random factor for tie-breaking.
-    pub fn rank(&self, random: &mut impl Rng, depth_coefficient: f64) -> f64 {
+    pub fn rank(&self, random: &mut dyn super::rng::MjRng, depth_coefficient: f64) -> f64 {
         let result = if depth_coefficient < 0.0 {
             1000.0 - self.depth as f64
         } else {
             (self.forward_estimate + self.backward_estimate) as f64
                 + 2.0 * depth_coefficient * self.depth as f64
         };
-        result + 0.0001 * random.gen::<f64>()
+        result + 0.0001 * random.next_double()
     }
 
     /// Extract trajectory from goal back to root.
@@ -182,7 +182,7 @@ pub fn run_search(
     visited.insert(state_hash(present), 0);
 
     let mut frontier: BinaryHeap<PriorityEntry> = BinaryHeap::new();
-    let mut random = StdRng::seed_from_u64(seed);
+    let mut random = StdRandom::from_u64_seed(seed);
 
     frontier.push(PriorityEntry {
         index: 0,
@@ -546,7 +546,7 @@ mod tests {
     #[test]
     fn test_board_rank() {
         let board = Board::new(vec![0, 0, 0], -1, 5, 10, 3);
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         // With positive depth_coefficient
         let rank1 = board.rank(&mut rng, 1.0);
@@ -554,7 +554,7 @@ mod tests {
         assert!(rank1 > 23.0 && rank1 < 24.0);
 
         // With negative depth_coefficient (prefer deeper)
-        let mut rng2 = StdRng::seed_from_u64(42);
+        let mut rng2 = StdRandom::from_u64_seed(42);
         let rank2 = board.rank(&mut rng2, -1.0);
         // 1000 - depth = 1000 - 5 = 995 + small random
         assert!(rank2 > 994.0 && rank2 < 996.0);

@@ -5,7 +5,7 @@
 //!
 //! C# Reference: Graphics.cs (BitmapRender, IsometricRender, SaveBitmap)
 
-use super::{MjGrid, MjRule};
+use super::MjGrid;
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::collections::HashMap;
 use std::path::Path;
@@ -433,6 +433,7 @@ pub fn render_to_png_with_colors(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markov_junior::MjRule;
     use std::path::PathBuf;
 
     fn test_output_dir() -> PathBuf {
@@ -1456,12 +1457,11 @@ mod tests {
     #[test]
     fn test_debug_allnode_rw_matching() {
         use crate::markov_junior::node::{ExecutionContext, Node};
+        use crate::markov_junior::rng::StdRandom;
         use crate::markov_junior::symmetry::{square_symmetries, SquareSubgroup};
         use crate::markov_junior::AllNode;
         use crate::markov_junior::MjGrid;
         use crate::markov_junior::MjRule;
-        use rand::rngs::StdRng;
-        use rand::SeedableRng;
 
         println!("\n========================================");
         println!("DEBUG: AllNode RW matching test");
@@ -1534,7 +1534,7 @@ mod tests {
         let mut all_node = AllNode::new(rules, grid.state.len());
 
         // Run one step
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         println!("\nBefore AllNode.go():");

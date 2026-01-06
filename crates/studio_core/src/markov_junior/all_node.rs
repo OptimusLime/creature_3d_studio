@@ -12,10 +12,9 @@
 
 use super::field::delta_pointwise;
 use super::node::{ExecutionContext, Node};
+use super::rng::shuffle_with_rng;
 use super::rule_node::RuleNodeData;
 use super::MjRule;
-use rand::seq::SliceRandom;
-use rand::Rng;
 
 /// A node that applies all non-overlapping rule matches per step.
 ///
@@ -77,7 +76,7 @@ impl AllNode {
                     first_heuristic_computed = true;
                 }
 
-                let u: f64 = ctx.random.gen();
+                let u: f64 = ctx.random.next_double();
 
                 // Same formula as OneNode
                 let key = if temperature > 0.0 {
@@ -185,7 +184,7 @@ impl Node for AllNode {
         } else {
             // Shuffle randomly
             let mut indices: Vec<usize> = (0..self.data.match_count).collect();
-            indices.shuffle(ctx.random);
+            shuffle_with_rng(&mut indices, ctx.random);
             indices
         };
 
@@ -228,9 +227,9 @@ impl Node for AllNode {
 mod tests {
     use super::*;
     use crate::markov_junior::field::Field;
+    use crate::markov_junior::rng::StdRandom;
     use crate::markov_junior::rule_node::RuleNodeData;
     use crate::markov_junior::MjGrid;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     #[test]
@@ -241,7 +240,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // One step
@@ -266,7 +265,7 @@ mod tests {
         let rule = MjRule::parse("BB", "WW", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // One step
@@ -298,7 +297,7 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Should return false immediately (no matches)
@@ -320,7 +319,7 @@ mod tests {
         let rule = MjRule::parse("BB/BB", "WW/WW", &grid).unwrap();
         let mut node = AllNode::new(vec![rule], grid.state.len());
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // One step
@@ -363,7 +362,7 @@ mod tests {
             data: RuleNodeData::with_fields(vec![rule], grid.state.len(), fields, 0.0),
         };
 
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
         let mut ctx = ExecutionContext::new(&mut grid, &mut rng);
 
         // Run one step - should convert all B to W

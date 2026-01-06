@@ -9,9 +9,8 @@
 //! C# Reference: Interpreter.cs (87 lines)
 
 use super::node::{ExecutionContext, Node};
+use super::rng::{MjRng, StdRandom};
 use super::MjGrid;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
 
 /// Main interpreter for running MarkovJunior models.
 ///
@@ -52,8 +51,9 @@ pub struct Interpreter {
     root: Box<dyn Node>,
     /// The grid being modified
     grid: MjGrid,
-    /// Random number generator (deterministic with seed)
-    random: StdRng,
+    /// Random number generator (deterministic with seed).
+    /// Uses boxed MjRng trait to support both StdRandom and DotNetRandom.
+    random: Box<dyn MjRng>,
     /// Whether to set origin (center cell = 1) on reset
     origin: bool,
     /// List of (x, y, z) positions that changed
@@ -75,7 +75,7 @@ impl Interpreter {
         Self {
             root,
             grid,
-            random: StdRng::seed_from_u64(0),
+            random: Box::new(StdRandom::from_u64_seed(0)),
             origin: false,
             changes: Vec::new(),
             first: vec![0],
@@ -97,7 +97,7 @@ impl Interpreter {
         Self {
             root,
             grid,
-            random: StdRng::seed_from_u64(0),
+            random: Box::new(StdRandom::from_u64_seed(0)),
             origin: true,
             changes: Vec::new(),
             first: vec![0],
@@ -114,7 +114,45 @@ impl Interpreter {
     /// C# Reference: Interpreter.cs lines 54-64
     pub fn reset(&mut self, seed: u64) {
         // Reset RNG with new seed
-        self.random = StdRng::seed_from_u64(seed);
+        self.random = Box::new(StdRandom::from_u64_seed(seed));
+
+        // Clear grid state
+        self.grid.clear();
+
+        // Set origin if enabled
+        if self.origin {
+            let center = self.grid.mx / 2
+                + (self.grid.my / 2) * self.grid.mx
+                + (self.grid.mz / 2) * self.grid.mx * self.grid.my;
+            self.grid.state[center] = 1;
+        }
+
+        // Clear change tracking
+        self.changes.clear();
+        self.first.clear();
+        self.first.push(0);
+
+        // Reset the root node
+        self.root.reset();
+
+        // Reset counter and mark as running
+        self.counter = 0;
+        self.running = true;
+    }
+
+    /// Reset the interpreter with a custom RNG.
+    ///
+    /// This allows using DotNetRandom for C# compatibility verification.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use studio_core::markov_junior::{Interpreter, DotNetRandom};
+    ///
+    /// let mut interp = Interpreter::new(node, grid);
+    /// interp.reset_with_rng(Box::new(DotNetRandom::from_seed(42)));
+    /// ```
+    pub fn reset_with_rng(&mut self, rng: Box<dyn MjRng>) {
+        self.random = rng;
 
         // Clear grid state
         self.grid.clear();
@@ -165,7 +203,7 @@ impl Interpreter {
         // We need to temporarily take ownership of grid and random
         let mut ctx = ExecutionContext {
             grid: &mut self.grid,
-            random: &mut self.random,
+            random: self.random.as_mut(),
             changes: std::mem::take(&mut self.changes),
             first: std::mem::take(&mut self.first),
             counter: self.counter,

@@ -11,8 +11,8 @@
 
 use super::wave::Wave;
 use crate::markov_junior::node::{ExecutionContext, Node};
+use crate::markov_junior::rng::{MjRng, StdRandom};
 use crate::markov_junior::MjGrid;
-use rand::prelude::*;
 
 /// Direction offsets for 2D/3D propagation.
 /// Order: +X, +Y, -X, -Y, +Z, -Z
@@ -100,7 +100,7 @@ pub struct WfcNode {
     pub first_go: bool,
 
     /// Random generator for this WFC run
-    rng: Option<StdRng>,
+    rng: Option<StdRandom>,
 
     /// Grid dimensions (cached from input grid)
     pub mx: usize,
@@ -193,7 +193,7 @@ impl WfcNode {
     /// Initialize the wave and apply initial constraints from the input grid.
     ///
     /// C# Reference: WFCNode.Go() first-go branch (lines 73-104)
-    pub fn initialize(&mut self, grid: &MjGrid, ctx_rng: &mut StdRng) -> bool {
+    pub fn initialize(&mut self, grid: &MjGrid, ctx_rng: &mut dyn MjRng) -> bool {
         // Initialize wave state
         self.wave.init(
             &self.propagator,
@@ -232,7 +232,7 @@ impl WfcNode {
 
         // Find a good seed
         if let Some(seed) = self.good_seed(ctx_rng) {
-            self.rng = Some(StdRng::seed_from_u64(seed));
+            self.rng = Some(StdRandom::from_u64_seed(seed));
             self.stack.clear();
             self.wave.copy_from(&self.start_wave);
             self.newgrid.clear();
@@ -248,10 +248,10 @@ impl WfcNode {
     /// Try multiple seeds to find one that doesn't lead to contradiction.
     ///
     /// C# Reference: WFCNode.GoodSeed() (lines 121-155)
-    fn good_seed(&mut self, ctx_rng: &mut StdRng) -> Option<u64> {
+    fn good_seed(&mut self, ctx_rng: &mut dyn MjRng) -> Option<u64> {
         for _k in 0..self.tries {
-            let seed = ctx_rng.gen::<u64>();
-            let mut local_rng = StdRng::seed_from_u64(seed);
+            let seed = ctx_rng.next_u64();
+            let mut local_rng = StdRandom::from_u64_seed(seed);
 
             self.stack.clear();
             self.wave.copy_from(&self.start_wave);
@@ -313,7 +313,7 @@ impl WfcNode {
     /// Returns -1 if all cells are collapsed.
     ///
     /// C# Reference: WFCNode.NextUnobservedNode() (lines 157-178)
-    fn next_unobserved_node(&self, rng: &mut StdRng) -> i32 {
+    fn next_unobserved_node(&self, rng: &mut dyn MjRng) -> i32 {
         let mut min_entropy = 1e4;
         let mut argmin: i32 = -1;
 
@@ -334,7 +334,7 @@ impl WfcNode {
                         let entropy = self.wave.entropy(i);
                         if entropy <= min_entropy {
                             // Add small noise for tie-breaking
-                            let noise = 1e-6 * rng.gen::<f64>();
+                            let noise = 1e-6 * rng.next_double();
                             if entropy + noise < min_entropy {
                                 min_entropy = entropy + noise;
                                 argmin = i as i32;
@@ -353,7 +353,7 @@ impl WfcNode {
     /// Uses weighted random selection based on pattern weights.
     ///
     /// C# Reference: WFCNode.Observe() (lines 181-186)
-    fn observe(&mut self, cell: usize, rng: &mut StdRng) {
+    fn observe(&mut self, cell: usize, rng: &mut dyn MjRng) {
         // Build distribution of possible patterns
         for t in 0..self.wave.p {
             self.distribution[t] = if self.wave.get_data(cell, t) {
@@ -375,13 +375,13 @@ impl WfcNode {
     }
 
     /// Select a random index based on weights.
-    fn weighted_random(&self, weights: &[f64], rng: &mut StdRng) -> usize {
+    fn weighted_random(&self, weights: &[f64], rng: &mut dyn MjRng) -> usize {
         let sum: f64 = weights.iter().sum();
         if sum <= 0.0 {
             return 0;
         }
 
-        let threshold = rng.gen::<f64>() * sum;
+        let threshold = rng.next_double() * sum;
         let mut partial_sum = 0.0;
 
         for (i, &w) in weights.iter().enumerate() {
@@ -572,6 +572,7 @@ impl Node for WfcNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markov_junior::rng::StdRandom;
 
     fn create_simple_wfc() -> WfcNode {
         // 2 patterns, 4 directions, 2x2 grid
@@ -616,7 +617,7 @@ mod tests {
     fn test_wfc_node_initialize() {
         let mut wfc = create_simple_wfc();
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         let success = wfc.initialize(&grid, &mut rng);
         assert!(success);
@@ -627,7 +628,7 @@ mod tests {
     fn test_wfc_ban() {
         let mut wfc = create_simple_wfc();
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         wfc.initialize(&grid, &mut rng);
 
@@ -663,7 +664,7 @@ mod tests {
         );
 
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         wfc.initialize(&grid, &mut rng);
 
@@ -707,7 +708,7 @@ mod tests {
         );
 
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         // In a 2x2 toroidal grid with "opposite patterns only" constraint,
         // it's impossible because each cell would need to be different from all 4 neighbors,
@@ -734,7 +735,7 @@ mod tests {
     #[test]
     fn test_wfc_weighted_random() {
         let wfc = create_simple_wfc();
-        let mut rng = StdRng::seed_from_u64(12345);
+        let mut rng = StdRandom::from_u64_seed(12345);
 
         // Test with unequal weights
         let weights = vec![1.0, 9.0]; // 10% / 90%
@@ -756,7 +757,7 @@ mod tests {
     fn test_wfc_complete_simple() {
         let mut wfc = create_simple_wfc();
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         wfc.initialize(&grid, &mut rng);
 
@@ -784,7 +785,7 @@ mod tests {
     fn test_wfc_reset() {
         let mut wfc = create_simple_wfc();
         let grid = MjGrid::with_values(2, 2, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         wfc.initialize(&grid, &mut rng);
         assert_eq!(wfc.state, WfcState::Running);
@@ -833,7 +834,7 @@ mod tests {
         );
 
         let grid = MjGrid::with_values(4, 4, 1, "AB");
-        let mut rng = StdRng::seed_from_u64(42);
+        let mut rng = StdRandom::from_u64_seed(42);
 
         // Initialize and run to completion
         assert!(wfc.initialize(&grid, &mut rng));
@@ -942,7 +943,7 @@ mod tests {
         );
 
         let grid = MjGrid::with_values(8, 8, 1, "ABCD");
-        let mut rng = StdRng::seed_from_u64(123);
+        let mut rng = StdRandom::from_u64_seed(123);
 
         assert!(wfc.initialize(&grid, &mut rng));
 
