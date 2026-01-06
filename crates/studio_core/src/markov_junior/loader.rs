@@ -168,10 +168,13 @@ impl LoadContext {
         Some(resources.join("samples").join(name).with_extension("png"))
     }
 
-    /// Get the path to a tileset directory.
-    fn tileset_path(&self, name: &str) -> Option<PathBuf> {
+    /// Get the path to a tileset XML file.
+    ///
+    /// C# Reference: TileModel.cs line 24
+    /// `string filepath = $"resources/tilesets/{name}.xml";`
+    fn tileset_xml_path(&self, name: &str) -> Option<PathBuf> {
         let resources = self.resources_path.as_ref()?;
-        Some(resources.join("tilesets").join(name))
+        Some(resources.join("tilesets").join(format!("{}.xml", name)))
     }
 }
 
@@ -734,8 +737,9 @@ fn load_tile_node(
     _symmetry: &[bool],
     ctx: &LoadContext,
 ) -> Result<Box<dyn Node>, LoadError> {
-    // Get tileset path
-    let tileset_path = ctx.tileset_path(tileset_name).ok_or_else(|| {
+    // Get tileset XML path
+    // C# Reference: TileModel.cs line 24: `string filepath = $"resources/tilesets/{name}.xml";`
+    let tileset_xml_path = ctx.tileset_xml_path(tileset_name).ok_or_else(|| {
         LoadError::ResourceError(format!(
             "no resources path configured to load tileset '{}'",
             tileset_name
@@ -794,9 +798,6 @@ fn load_tile_node(
         g.waves = grid.waves.clone();
         g
     };
-
-    // Load tileset XML
-    let tileset_xml_path = tileset_path.join("data.xml");
 
     // Parse rules for tile model
     // Rules map input grid values to allowed tile names
@@ -2311,9 +2312,10 @@ fn get_default_symmetry(is_2d: bool) -> Vec<bool> {
 
 /// Get symmetry from string name.
 ///
-/// C# Reference: SymmetryHelper.GetSymmetry()
+/// C# Reference: SymmetryHelper.cs lines 9-16 (squareSubgroups) and 37-46 (cubeSubgroups)
 fn get_symmetry(is_2d: bool, name: &str) -> Result<Vec<bool>, LoadError> {
     if is_2d {
+        // C# Reference: SymmetryHelper.cs lines 9-16 (squareSubgroups)
         match name {
             "()" => Ok(vec![true, false, false, false, false, false, false, false]),
             "(x)" => Ok(vec![true, true, false, false, false, false, false, false]),
@@ -2324,13 +2326,47 @@ fn get_symmetry(is_2d: bool, name: &str) -> Result<Vec<bool>, LoadError> {
             _ => Err(LoadError::UnknownSymmetry(name.to_string())),
         }
     } else {
-        // 3D symmetries - just use all for now
+        // C# Reference: SymmetryHelper.cs lines 37-46 (cubeSubgroups)
         match name {
-            "()" => Ok({
+            // ["()"] = AH.Array1D(48, l => l == 0)
+            "()" => {
                 let mut v = vec![false; 48];
                 v[0] = true;
-                v
-            }),
+                Ok(v)
+            }
+            // ["(x)"] = AH.Array1D(48, l => l == 0 || l == 1)
+            "(x)" => {
+                let mut v = vec![false; 48];
+                v[0] = true;
+                v[1] = true;
+                Ok(v)
+            }
+            // ["(z)"] = AH.Array1D(48, l => l == 0 || l == 17)
+            "(z)" => {
+                let mut v = vec![false; 48];
+                v[0] = true;
+                v[17] = true;
+                Ok(v)
+            }
+            // ["(xy)"] = AH.Array1D(48, l => l < 8)
+            "(xy)" => {
+                let mut v = vec![false; 48];
+                for i in 0..8 {
+                    v[i] = true;
+                }
+                Ok(v)
+            }
+            // ["(xyz+)"] = AH.Array1D(48, l => l % 2 == 0)
+            "(xyz+)" => {
+                let mut v = vec![false; 48];
+                for i in 0..48 {
+                    if i % 2 == 0 {
+                        v[i] = true;
+                    }
+                }
+                Ok(v)
+            }
+            // ["(xyz)"] = AH.Array1D(48, true)
             "(xyz)" => Ok(vec![true; 48]),
             _ => Err(LoadError::UnknownSymmetry(name.to_string())),
         }
@@ -2455,6 +2491,150 @@ mod tests {
         assert_eq!(sym_x[0], true);
         assert_eq!(sym_x[1], true);
         assert!(sym_x[2..].iter().all(|&b| !b));
+    }
+
+    /// Test that 3D symmetry `(xy)` is supported.
+    ///
+    /// C# Reference: SymmetryHelper.cs line 42
+    /// `["(xy)"] = AH.Array1D(48, l => l < 8)`
+    ///
+    /// `(xy)` symmetry in 3D means "square symmetries in XY plane" -
+    /// the first 8 of 48 cube symmetries (rotations around Z axis + X reflection).
+    ///
+    /// This is required for models like Apartemazements.xml which use:
+    /// `<sequence values="BWN" symmetry="(xy)">`
+    #[test]
+    fn test_3d_symmetry_xy_is_supported() {
+        // 3D symmetry (xy) should return first 8 indices as true
+        let result = get_symmetry(false, "(xy)");
+        assert!(
+            result.is_ok(),
+            "3D symmetry (xy) should be supported but got: {:?}",
+            result
+        );
+
+        let sym = result.unwrap();
+        assert_eq!(sym.len(), 48, "3D symmetry should have 48 elements");
+
+        // First 8 should be true (C#: l < 8)
+        for i in 0..8 {
+            assert!(sym[i], "3D (xy) symmetry index {} should be true", i);
+        }
+
+        // Rest should be false
+        for i in 8..48 {
+            assert!(!sym[i], "3D (xy) symmetry index {} should be false", i);
+        }
+    }
+
+    /// Test that 3D symmetry `(x)` is supported.
+    ///
+    /// C# Reference: SymmetryHelper.cs line 40
+    /// `["(x)"] = AH.Array1D(48, l => l == 0 || l == 1)`
+    #[test]
+    fn test_3d_symmetry_x_is_supported() {
+        let result = get_symmetry(false, "(x)");
+        assert!(
+            result.is_ok(),
+            "3D symmetry (x) should be supported but got: {:?}",
+            result
+        );
+
+        let sym = result.unwrap();
+        assert_eq!(sym.len(), 48);
+
+        // Only indices 0 and 1 should be true
+        assert!(sym[0], "Index 0 should be true");
+        assert!(sym[1], "Index 1 should be true");
+        for i in 2..48 {
+            assert!(!sym[i], "Index {} should be false", i);
+        }
+    }
+
+    /// Test that 3D symmetry `(z)` is supported.
+    ///
+    /// C# Reference: SymmetryHelper.cs line 41
+    /// `["(z)"] = AH.Array1D(48, l => l == 0 || l == 17)`
+    #[test]
+    fn test_3d_symmetry_z_is_supported() {
+        let result = get_symmetry(false, "(z)");
+        assert!(
+            result.is_ok(),
+            "3D symmetry (z) should be supported but got: {:?}",
+            result
+        );
+
+        let sym = result.unwrap();
+        assert_eq!(sym.len(), 48);
+
+        // Only indices 0 and 17 should be true
+        assert!(sym[0], "Index 0 should be true");
+        assert!(sym[17], "Index 17 should be true");
+        for i in 1..48 {
+            if i != 17 {
+                assert!(!sym[i], "Index {} should be false", i);
+            }
+        }
+    }
+
+    /// Test that 3D symmetry `(xyz+)` is supported.
+    ///
+    /// C# Reference: SymmetryHelper.cs line 43
+    /// `["(xyz+)"] = AH.Array1D(48, l => l % 2 == 0)`
+    ///
+    /// This is all 24 rotations (even indices only, no reflections).
+    #[test]
+    fn test_3d_symmetry_xyz_plus_is_supported() {
+        let result = get_symmetry(false, "(xyz+)");
+        assert!(
+            result.is_ok(),
+            "3D symmetry (xyz+) should be supported but got: {:?}",
+            result
+        );
+
+        let sym = result.unwrap();
+        assert_eq!(sym.len(), 48);
+
+        // Even indices should be true, odd should be false
+        for i in 0..48 {
+            if i % 2 == 0 {
+                assert!(sym[i], "Even index {} should be true", i);
+            } else {
+                assert!(!sym[i], "Odd index {} should be false", i);
+            }
+        }
+    }
+
+    /// Test that Apartemazements.xml can be loaded in 3D mode.
+    ///
+    /// This model requires:
+    /// 1. 3D `(xy)` symmetry support (C# SymmetryHelper.cs line 42)
+    /// 2. Correct tileset path resolution (C# TileModel.cs line 24)
+    #[test]
+    fn test_load_apartemazements_xml_3d() {
+        let path = models_path().join("Apartemazements.xml");
+        let content = std::fs::read_to_string(&path).expect("Failed to read Apartemazements.xml");
+
+        // Determine resources path
+        let resources_path = path
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("resources"))
+            .expect("Could not find resources path");
+
+        // Load with 3D dimensions (8x8x8 as used in reference)
+        let result = load_model_str_with_resources(&content, 8, 8, 8, resources_path);
+
+        // Should load successfully
+        assert!(
+            result.is_ok(),
+            "Failed to load Apartemazements.xml: {:?}",
+            result
+        );
+
+        let model = result.unwrap();
+        assert_eq!(model.grid.c, 3, "Should have 3 values (B, W, N)");
+        assert_eq!(model.grid.mz, 8, "Should be 3D with mz=8");
     }
 
     #[test]

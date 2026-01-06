@@ -182,6 +182,7 @@ impl TileNode {
 
         let output_mx = grid.mx;
         let output_my = grid.my;
+        let output_mz = grid.mz;
 
         let mut rng = rand::thread_rng();
 
@@ -227,7 +228,7 @@ impl TileNode {
                                 let sy = y * (s - overlap) + dy;
                                 let sz_coord = z * (sz - overlapz) + dz;
 
-                                if sx < output_mx && sy < output_my {
+                                if sx < output_mx && sy < output_my && sz_coord < output_mz {
                                     grid.state
                                         [sx + sy * output_mx + sz_coord * output_mx * output_my] =
                                         argmax;

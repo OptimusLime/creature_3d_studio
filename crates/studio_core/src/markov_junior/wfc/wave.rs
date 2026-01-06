@@ -201,7 +201,9 @@ impl Wave {
     /// Set the compatible count for a pattern in a direction at a cell.
     #[inline]
     pub fn set_compatible(&mut self, cell: usize, pattern: usize, direction: usize, value: i32) {
-        self.compatible[cell * self.p * self.d + pattern * self.d + direction] = value;
+        if cell < self.length && pattern < self.p && direction < self.d {
+            self.compatible[cell * self.p * self.d + pattern * self.d + direction] = value;
+        }
     }
 
     /// Decrement the compatible count and return the new value.
