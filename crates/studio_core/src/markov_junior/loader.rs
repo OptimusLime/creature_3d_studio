@@ -8,7 +8,7 @@
 use super::convchain_node::ConvChainNode;
 use super::convolution_node::{ConvolutionNode, ConvolutionRule};
 use super::field::Field;
-use super::helper::{load_resource, split_rule_image, ResourceError};
+use super::helper::{load_resource, load_vox, split_rule_image, ResourceError};
 use super::map_node::{MapNode, ScaleFactor};
 use super::node::Node;
 use super::observation::Observation;
@@ -789,14 +789,44 @@ fn load_tile_node(
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    // Create the output grid for WFC
+    // Get tile dimensions by loading first tile
+    // C# Reference: TileModel.cs line 38 - loads first tile to determine S, SY, SZ
+    let first_tile_path = tileset_xml_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(tiles_name)
+        .join(format!("{}.vox", get_first_tile_name(&tileset_xml_path)?));
+
+    let (_, tile_mx, tile_my, tile_mz) =
+        load_vox(&first_tile_path).map_err(|e| LoadError::ResourceError(e.to_string()))?;
+
+    if tile_mx != tile_my {
+        return Err(LoadError::InvalidAttribute {
+            element: "wfc".to_string(),
+            attribute: "tileset".to_string(),
+            value: tileset_name.to_string(),
+            reason: format!("tiles must be square in XY, got {}x{}", tile_mx, tile_my),
+        });
+    }
+
+    let tile_s = tile_mx;
+    let tile_sz = tile_mz;
+
+    // Calculate output grid dimensions
+    // C# Reference: TileModel.cs line 55:
+    // newgrid = Grid.Load(xelem, (S - overlap) * grid.MX + overlap, ...)
+    let output_mx = (tile_s - overlap) * grid.mx + overlap;
+    let output_my = (tile_s - overlap) * grid.my + overlap;
+    let output_mz = (tile_sz - overlapz) * grid.mz + overlapz;
+
+    // Create the output grid for WFC with correct dimensions
     // Use values attribute if present, otherwise inherit from parent grid
     let newgrid = if let Some(values_str) = attrs.get("values") {
-        MjGrid::try_with_values(grid.mx, grid.my, grid.mz, values_str)
+        MjGrid::try_with_values(output_mx, output_my, output_mz, values_str)
             .map_err(|e| LoadError::GridError(format!("{}", e)))?
     } else {
-        // Clone structure from parent grid
-        let mut g = MjGrid::new(grid.mx, grid.my, grid.mz);
+        // Clone structure from parent grid but with new dimensions
+        let mut g = MjGrid::new(output_mx, output_my, output_mz);
         g.c = grid.c;
         g.characters = grid.characters.clone();
         g.values = grid.values.clone();
@@ -810,6 +840,7 @@ fn load_tile_node(
 
     // Load child nodes that execute after WFC completes
     // C# Reference: WFCNode extends Branch, which parses children
+    // Children operate on the output grid (newgrid), not the input grid
     let children = load_children_from_xml(xml, &newgrid, parent_symmetry, ctx)?;
 
     // Create TileNode
@@ -2407,6 +2438,40 @@ fn get_symmetry(is_2d: bool, name: &str) -> Result<Vec<bool>, LoadError> {
             _ => Err(LoadError::UnknownSymmetry(name.to_string())),
         }
     }
+}
+
+/// Get the first tile name from a tileset XML file.
+///
+/// C# Reference: TileModel.cs line 34
+fn get_first_tile_name(tileset_path: &Path) -> Result<String, LoadError> {
+    let xml = std::fs::read_to_string(tileset_path)
+        .map_err(|e| LoadError::FileNotFound(format!("{}: {}", tileset_path.display(), e)))?;
+
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(true);
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) => {
+                let name_bytes = e.name();
+                let name = std::str::from_utf8(name_bytes.as_ref()).unwrap_or("");
+                if name == "tile" {
+                    for attr in e.attributes().flatten() {
+                        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                        if key == "name" {
+                            let value = std::str::from_utf8(&attr.value).unwrap_or("");
+                            return Ok(value.to_string());
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(LoadError::XmlError(format!("error parsing tileset: {}", e))),
+            _ => {}
+        }
+    }
+
+    Err(LoadError::XmlError("no tile found in tileset".to_string()))
 }
 
 /// Parse attributes from an XML element into a HashMap.

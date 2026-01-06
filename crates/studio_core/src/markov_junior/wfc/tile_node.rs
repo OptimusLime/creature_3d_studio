@@ -99,6 +99,20 @@ impl TileNode {
             .join(&format!("{}.vox", tile_info[0].0));
         let (s, sz) = get_tile_size(&first_tile_path)?;
 
+        // Calculate correct output grid dimensions
+        // C# Reference: TileModel.cs line 55:
+        // newgrid = Grid.Load(xelem, (S - overlap) * grid.MX + overlap, ...)
+        let output_mx = (s - overlap) * input_grid.mx + overlap;
+        let output_my = (s - overlap) * input_grid.my + overlap;
+        let output_mz = (sz - overlapz) * input_grid.mz + overlapz;
+
+        // Create newgrid with correct dimensions (preserving values/characters from passed newgrid)
+        let mut correct_newgrid = MjGrid::new(output_mx, output_my, output_mz);
+        correct_newgrid.c = newgrid.c;
+        correct_newgrid.characters = newgrid.characters.clone();
+        correct_newgrid.values = newgrid.values.clone();
+        correct_newgrid.waves = newgrid.waves.clone();
+
         // Load all tiles with symmetry variants
         let mut tiledata: Vec<Vec<u8>> = Vec::new();
         let mut weights: Vec<f64> = Vec::new();
@@ -139,12 +153,12 @@ impl TileNode {
         let propagator =
             build_tile_propagator(&tiledata, &neighbors, &tile_positions, s, sz, full_symmetry)?;
 
-        // Calculate output grid dimensions
-        let mx = input_grid.mx;
-        let my = input_grid.my;
-        let mz = input_grid.mz;
-        let wave_length = mx * my * mz;
-        let num_directions = if mz == 1 { 4 } else { 6 };
+        // Wave dimensions are based on input grid (each wave cell places one tile)
+        let wave_mx = input_grid.mx;
+        let wave_my = input_grid.my;
+        let wave_mz = input_grid.mz;
+        let wave_length = wave_mx * wave_my * wave_mz;
+        let num_directions = if wave_mz == 1 { 4 } else { 6 };
 
         // Build map from input values to allowed patterns
         let map = build_tile_map(input_grid, &tile_positions, rules, num_patterns);
@@ -155,15 +169,15 @@ impl TileNode {
             num_directions,
             propagator,
             weights,
-            newgrid,
+            correct_newgrid, // Use the correctly-sized output grid
             map,
             s,
             periodic,
             shannon,
             tries,
-            mx,
-            my,
-            mz,
+            wave_mx,
+            wave_my,
+            wave_mz,
         );
 
         Ok(Self {
@@ -1300,5 +1314,104 @@ mod tests {
         // Uncomment to enforce after fix:
         // assert!(has_column_markers || has_path_markers,
         //     "WFC output should have structure marker values (D=2, P=5, etc.)");
+    }
+
+    /// Test that WFC newgrid dimensions are calculated correctly.
+    ///
+    /// C# Reference: TileModel.cs line 55:
+    /// newgrid = Grid.Load(xelem, (S - overlap) * grid.MX + overlap, ...)
+    ///
+    /// For 5x5x5 tiles with 0 overlap on an 8x8x8 input grid:
+    /// newgrid should be (5-0)*8+0 = 40x40x40, NOT 8x8x8
+    ///
+    /// BUG: loader.rs creates newgrid with input grid dimensions instead of
+    /// calculated output dimensions based on tile size and overlap.
+    #[test]
+    fn test_wfc_newgrid_dimensions() {
+        // This test documents the KNOWN BUG in WFC newgrid dimension calculation.
+        //
+        // The Paths tileset has 5x5x5 tiles.
+        // With an 8x8x8 input grid and 0 overlap:
+        // - C# formula: (S - overlap) * input_dim + overlap
+        // - Expected output: (5-0)*8+0 = 40 in each dimension
+        //
+        // Our code incorrectly uses input grid dimensions (8x8x8).
+
+        let tileset_path = tilesets_path().join("Paths.xml");
+        if !tileset_path.exists() {
+            println!("Skipping test: {:?} not found", tileset_path);
+            return;
+        }
+
+        // Create input grid (like Apartemazements before WFC)
+        let input_grid = MjGrid::try_with_values(8, 8, 8, "BWN").unwrap();
+
+        // Create newgrid with values from WFC (like Apartemazements WFC)
+        let newgrid = MjGrid::try_with_values(8, 8, 8, "BYDAWP RFUENC").unwrap();
+
+        // Load the TileNode
+        let result = TileNode::from_tileset(
+            &tileset_path,
+            "Paths",
+            true,  // periodic
+            false, // shannon
+            10,    // tries
+            0,     // overlap
+            0,     // overlapz
+            newgrid,
+            &input_grid,
+            &[], // no rules
+            false,
+        );
+
+        let tile_node = result.expect("Failed to load tileset");
+
+        // The tile size should be 5x5x5
+        assert_eq!(tile_node.s, 5, "Paths tiles should be 5x5 in XY");
+        assert_eq!(tile_node.sz, 5, "Paths tiles should be 5 in Z");
+
+        // The WFC newgrid dimensions should be:
+        // (tile_size - overlap) * input_size + overlap
+        // = (5 - 0) * 8 + 0 = 40
+        let expected_dim = (tile_node.s - tile_node.overlap) * input_grid.mx + tile_node.overlap;
+        let expected_dimz =
+            (tile_node.sz - tile_node.overlapz) * input_grid.mz + tile_node.overlapz;
+
+        println!(
+            "Tile size: {}x{}x{}",
+            tile_node.s, tile_node.s, tile_node.sz
+        );
+        println!(
+            "Input grid: {}x{}x{}",
+            input_grid.mx, input_grid.my, input_grid.mz
+        );
+        println!(
+            "Overlap: {}, overlapz: {}",
+            tile_node.overlap, tile_node.overlapz
+        );
+        println!(
+            "Expected output dimensions: {}x{}x{}",
+            expected_dim, expected_dim, expected_dimz
+        );
+        println!(
+            "Actual output dimensions: {}x{}x{}",
+            tile_node.wfc.newgrid.mx, tile_node.wfc.newgrid.my, tile_node.wfc.newgrid.mz
+        );
+
+        // This assertion will FAIL until the bug is fixed
+        assert_eq!(
+            tile_node.wfc.newgrid.mx,
+            expected_dim,
+            "BUG: WFC newgrid MX should be {} (calculated from tile size and input), got {}.\n\
+             C# formula: (S - overlap) * grid.MX + overlap = ({} - {}) * {} + {} = {}\n\
+             See: TileModel.cs line 55",
+            expected_dim,
+            tile_node.wfc.newgrid.mx,
+            tile_node.s,
+            tile_node.overlap,
+            input_grid.mx,
+            tile_node.overlap,
+            expected_dim
+        );
     }
 }
