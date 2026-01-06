@@ -12,6 +12,7 @@
 
 use super::field::delta_pointwise;
 use super::node::{ExecutionContext, Node};
+use super::observation::Observation;
 use super::rule_node::RuleNodeData;
 use super::MjRule;
 
@@ -105,6 +106,17 @@ impl OneNode {
         &mut self,
         ctx: &mut ExecutionContext,
     ) -> Option<(usize, i32, i32, i32)> {
+        // Check if goal reached (with observations)
+        // C# Reference: OneNode.RandomMatch() lines 79-83
+        if let (Some(ref observations), Some(ref future)) =
+            (&self.data.observations, &self.data.future)
+        {
+            if Observation::is_goal_reached(&ctx.grid.state, future) {
+                self.data.future_computed = false;
+                return None;
+            }
+        }
+
         let mx = ctx.grid.mx;
         let my = ctx.grid.my;
         let temperature = self.data.temperature;
