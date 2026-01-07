@@ -636,46 +636,21 @@ fn square_symmetries_3d(tile: &[u8], s: usize, sz: usize) -> Vec<Vec<u8>> {
 }
 
 /// Rotate a tile 90 degrees around Y axis.
-/// Transformation: (x, y, z) -> (sz-1-z, y, x)
+///
+/// C# Reference (TileModel.cs line 63):
+///   byte[] yRotate(byte[] p) => newtile((x, y, z) => p[z + y * S + (S - 1 - x) * S * S]);
+///
+/// This means: result[x, y, z] = input[z, y, S-1-x]
 fn y_rotate(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
-    // After Y rotation, dimensions change: (s, s, sz) -> (sz, s, s)
-    // Only works correctly when s == sz (cubic tiles)
-    // For non-cubic tiles, we'd need to track dimension changes
-    let new_sx = sz;
-    let new_sy = s;
-    let new_sz = s;
-
-    let mut result = vec![0u8; new_sx * new_sy * new_sz];
-    for z in 0..new_sz {
-        for y in 0..new_sy {
-            for x in 0..new_sx {
-                // new[x, y, z] = old[s-1-z, y, x] (when s == sz)
-                // More generally: new[x, y, z] = old[sz-1-z, y, x]
-                let src_x = sz - 1 - x; // Actually this maps x -> sz-1-x in old coords
-                let src_y = y;
-                let src_z = x; // No wait, need to think about this more carefully
-
-                // C# Reference (Rule.cs lines 78-80):
-                // for (int z = 0; z < IMX; z++) for (int y = 0; y < IMY; y++) for (int x = 0; x < IMZ; x++)
-                //     newinput[x + y * IMZ + z * IMZ * IMY] = input[IMX - 1 - z + y * IMX + x * IMX * IMY];
-                // So: new[x,y,z] = old[IMX-1-z, y, x]
-                // Where new dims are (IMZ, IMY, IMX) and old dims are (IMX, IMY, IMZ)
-
-                // For our case: old is (s, s, sz), new is (sz, s, s)
-                // new[x,y,z] = old[s-1-z, y, x]
-                if s == sz {
-                    // Cubic case - straightforward
-                    let src = (s - 1 - z) + src_y * s + x * s * s;
-                    let dst = x + y * new_sx + z * new_sx * new_sy;
-                    result[dst] = tile[src];
-                } else {
-                    // Non-cubic case
-                    let src = (s - 1 - z) + src_y * s + x * s * s;
-                    let dst = x + y * new_sx + z * new_sx * new_sy;
-                    if src < tile.len() {
-                        result[dst] = tile[src];
-                    }
-                }
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                // C#: result[x + y*S + z*S*S] = p[z + y * S + (S - 1 - x) * S * S]
+                // So input position is (z, y, S-1-x)
+                let src = z + y * s + (s - 1 - x) * s * s;
+                let dst = x + y * s + z * s * s;
+                result[dst] = tile[src];
             }
         }
     }
@@ -880,16 +855,21 @@ fn x_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
 }
 
 /// Rotate a tile 90 degrees around Y axis (for propagator building).
+///
+/// C# Reference (TileModel.cs line 63):
+///   byte[] yRotate(byte[] p) => newtile((x, y, z) => p[z + y * S + (S - 1 - x) * S * S]);
+///
+/// This means: result[x, y, z] = input[z, y, S-1-x]
 fn y_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
     let mut result = vec![0u8; s * s * sz];
     for z in 0..sz {
         for y in 0..s {
             for x in 0..s {
-                if s == sz {
-                    let src = (s - 1 - z) + y * s + x * s * s;
-                    let dst = x + y * s + z * s * s;
-                    result[dst] = tile[src];
-                }
+                // C#: result[x + y*S + z*S*S] = p[z + y * S + (S - 1 - x) * S * S]
+                // So input position is (z, y, S-1-x)
+                let src = z + y * s + (s - 1 - x) * s * s;
+                let dst = x + y * s + z * s * s;
+                result[dst] = tile[src];
             }
         }
     }
