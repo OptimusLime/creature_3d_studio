@@ -24,6 +24,12 @@ use std::path::Path;
 ///
 /// Like C# WFCNode, TileNode extends Branch and can have child nodes
 /// that execute after WFC completes on the newgrid.
+///
+/// IMPORTANT: TileNode implements the C# `ip.current` delegation pattern:
+/// - When a branch child returns true, it becomes "active"
+/// - Subsequent Go() calls delegate directly to the active child
+/// - When the child returns false, we clear active child and return true
+/// - This allows the main loop to call TileNode again, running children fresh
 pub struct TileNode {
     /// Base WFC node with shared algorithms
     pub wfc: WfcNode,
@@ -48,6 +54,12 @@ pub struct TileNode {
 
     /// Current child index for sequential execution
     child_n: usize,
+
+    /// Index of currently active branch child, if any.
+    /// When a branch child succeeds, it becomes "active" and subsequent Go()
+    /// calls delegate directly to it (simulating ip.current = child).
+    /// C# Reference: See Branch.Go() lines 83-85 and Interpreter.cs main loop.
+    active_branch_child: Option<usize>,
 }
 
 impl TileNode {
@@ -193,6 +205,7 @@ impl TileNode {
             overlapz,
             children: Vec::new(),
             child_n: 0,
+            active_branch_child: None,
         })
     }
 
@@ -284,6 +297,7 @@ impl Node for TileNode {
     fn reset(&mut self) {
         self.wfc.reset();
         self.child_n = 0;
+        self.active_branch_child = None;
         for child in &mut self.children {
             child.reset();
         }
@@ -292,20 +306,51 @@ impl Node for TileNode {
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
         // Phase 2: Execute children after WFC completes
         // C# Reference: WFCNode.Go() line 71: `if (n >= 0) return base.Go();`
+        //
+        // IMPORTANT: Implements the ip.current delegation pattern.
+        // In C#, when a branch child returns true, ip.current is set to that child.
+        // The main loop then calls current.Go() directly on the child.
+        // When the child eventually returns false, ip.current is set to its parent,
+        // and the parent's Go() is called fresh (with n unchanged).
+        // We simulate this with active_branch_child.
         if self.wfc.child_index >= 0 {
-            // Execute children sequentially (like Branch.Go())
-            while self.child_n < self.children.len() {
-                let child = &mut self.children[self.child_n];
-                if child.go(ctx) {
+            // If we have an active branch child, delegate to it directly
+            if let Some(active_idx) = self.active_branch_child {
+                if self.children[active_idx].go(ctx) {
+                    // Child still making progress
                     return true;
                 }
-                // Child completed, move to next
+                // Child returned false - in C#, ip.current = parent, then main loop
+                // calls parent.Go() which runs base.Go() starting from same n.
+                // The child has already called its own Reset() before returning false.
+                self.active_branch_child = None;
+                // Return true so main loop increments counter and calls us again.
+                // On the next call, we'll fall through to the normal loop below,
+                // which will try the same child_n again (child was reset by itself).
+                return true;
+            }
+
+            // Normal Branch.Go() execution: try children from current child_n
+            while self.child_n < self.children.len() {
+                let child = &mut self.children[self.child_n];
+                // Check if child is a branch type (SequenceNode, MarkovNode, etc.)
+                // In C#, all our WFC children (SequenceNode) are branches.
+                // For now, assume all children are branches and use delegation.
+                // TODO: Only delegate for actual Branch types if needed.
+                if child.go(ctx) {
+                    // Child returned true - set it as active for delegation
+                    // C# Reference: Branch.Go() line 84: if (node is Branch branch) ip.current = branch;
+                    self.active_branch_child = Some(self.child_n);
+                    return true;
+                }
+                // Child returned false without ever returning true - advance to next
                 self.child_n += 1;
                 if self.child_n < self.children.len() {
                     self.children[self.child_n].reset();
                 }
             }
-            // All children done
+            // All children done - this means all children returned false on first call
+            // In C#, this sets ip.current = parent = null (for WFCNode), calls Reset()
             self.reset();
             return false;
         }
