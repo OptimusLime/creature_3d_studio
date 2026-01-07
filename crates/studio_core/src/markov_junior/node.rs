@@ -176,14 +176,18 @@ impl Node for SequenceNode {
                 return true;
             }
             // Child failed - in C#, this sets ip.current = parent and child.Reset() is called
-            // The child's Reset() is already called by the child's Go() implementation
-            // Clear active child and advance n
+            // The child's Reset() is already called by the child's Go() implementation when
+            // it falls through to the end of its for loop.
+            //
+            // IMPORTANT: Do NOT increment n here! In C#, when the parent returned true last
+            // time (with ip.current = child), the parent's for-loop was exited via return,
+            // so n was never incremented. When we resume at the same n, the for-loop's
+            // condition check will call the same child again (which has been reset).
+            // The for-loop's n++ only happens on loop continuation (child returns false),
+            // not after returning from the method.
             self.active_branch_child = None;
-            self.n += 1;
-            // IMPORTANT: In C#, after child fails, ip.current = parent, then the main loop
-            // increments counter and calls parent.Go() NEXT iteration. We need to return
-            // here to allow that counter increment to happen. Return true to continue
-            // execution, and next call will try the next child.
+            // Don't increment n - we'll try the same child again, which has now been reset
+            // Return true to allow counter increment before next call
             return true;
         }
 

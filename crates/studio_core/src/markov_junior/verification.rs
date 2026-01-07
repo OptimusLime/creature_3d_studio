@@ -131,7 +131,11 @@ pub fn parse_models_xml(model_name: &str) -> Result<ModelConfig, VerificationErr
                             "width" => width = val.parse().ok(),
                             "height" => height = val.parse().ok(),
                             "d" => d = val.parse().unwrap_or(2),
-                            "steps" => steps = val.parse().unwrap_or(50000),
+                            "steps" => {
+                                // steps="-1" means unlimited, use 0 which our run loop treats as unlimited
+                                let parsed: i64 = val.parse().unwrap_or(50000);
+                                steps = if parsed < 0 { 0 } else { parsed as usize };
+                            }
                             _ => {}
                         }
                     }
@@ -223,13 +227,14 @@ pub fn capture_model_state(
     interpreter.reset_with_rng(rng);
 
     // Run to completion (use model's steps from models.xml if max_steps is 0)
+    // A limit of 0 means unlimited
     let mut steps = 0;
     let limit = if max_steps == 0 {
         config.steps
     } else {
         max_steps
     };
-    while interpreter.is_running() && steps < limit {
+    while interpreter.is_running() && (limit == 0 || steps < limit) {
         interpreter.step();
         steps += 1;
     }
