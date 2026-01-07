@@ -1034,22 +1034,117 @@ fn build_tile_propagator(
                 }
             }
         } else {
-            // Non-fullSymmetry case: simple direction-based constraints
-            let left_name = get_tile_name(&neighbor.left);
-            let right_name = get_tile_name(&neighbor.right);
+            // Non-fullSymmetry case with proper rotation/reflection handling
+            // C# Reference: TileModel.cs lines 212-254
+            match neighbor.dir {
+                NeighborDir::Horizontal => {
+                    // C# lines 214-236: left/right neighbors
+                    // Uses tile() to apply rotation prefix, then 4 symmetry variants for dir 0,
+                    // and 4 more variants (with zRotate) for dir 1
 
-            if let (Some(left_pos), Some(right_pos)) = (
-                tile_positions.get(left_name),
-                tile_positions.get(right_name),
-            ) {
-                let dir_idx = match neighbor.dir {
-                    NeighborDir::Horizontal => 0,
-                    NeighborDir::Vertical => 1,
-                };
+                    // Direction 0 (+X): 4 symmetry variants
+                    // C# lines 222-225:
+                    // propagator[0][ltile][rtile] = true
+                    // propagator[0][yReflect(ltile)][yReflect(rtile)] = true
+                    // propagator[0][xReflect(rtile)][xReflect(ltile)] = true  (swapped!)
+                    // propagator[0][yReflect(xReflect(rtile))][yReflect(xReflect(ltile))] = true
 
-                for &l in left_pos {
-                    for &r in right_pos {
-                        propagator[dir_idx][l][r] = true;
+                    if let (Some(li), Some(ri)) = (
+                        find_tile_index(tiledata, &left_tile),
+                        find_tile_index(tiledata, &right_tile),
+                    ) {
+                        propagator[0][li][ri] = true;
+                    }
+
+                    let ly = y_reflect_tile(&left_tile, s, sz);
+                    let ry = y_reflect_tile(&right_tile, s, sz);
+                    if let (Some(li), Some(ri)) = (
+                        find_tile_index(tiledata, &ly),
+                        find_tile_index(tiledata, &ry),
+                    ) {
+                        propagator[0][li][ri] = true;
+                    }
+
+                    // xReflect: swapped (rtile, ltile)
+                    let rx = x_reflect_tile(&right_tile, s, sz);
+                    let lx = x_reflect_tile(&left_tile, s, sz);
+                    if let (Some(ri), Some(li)) = (
+                        find_tile_index(tiledata, &rx),
+                        find_tile_index(tiledata, &lx),
+                    ) {
+                        propagator[0][ri][li] = true;
+                    }
+
+                    let ryx = y_reflect_tile(&x_reflect_tile(&right_tile, s, sz), s, sz);
+                    let lyx = y_reflect_tile(&x_reflect_tile(&left_tile, s, sz), s, sz);
+                    if let (Some(ri), Some(li)) = (
+                        find_tile_index(tiledata, &ryx),
+                        find_tile_index(tiledata, &lyx),
+                    ) {
+                        propagator[0][ri][li] = true;
+                    }
+
+                    // Direction 1 (+Y): zRotate tiles, then 4 variants
+                    // C# lines 227-235
+                    let dtile = z_rotate_tile(&left_tile, s, sz);
+                    let utile = z_rotate_tile(&right_tile, s, sz);
+
+                    if let (Some(di), Some(ui)) = (
+                        find_tile_index(tiledata, &dtile),
+                        find_tile_index(tiledata, &utile),
+                    ) {
+                        propagator[1][di][ui] = true;
+                    }
+
+                    let dx = x_reflect_tile(&dtile, s, sz);
+                    let ux = x_reflect_tile(&utile, s, sz);
+                    if let (Some(di), Some(ui)) = (
+                        find_tile_index(tiledata, &dx),
+                        find_tile_index(tiledata, &ux),
+                    ) {
+                        propagator[1][di][ui] = true;
+                    }
+
+                    // yReflect: swapped
+                    let uy = y_reflect_tile(&utile, s, sz);
+                    let dy = y_reflect_tile(&dtile, s, sz);
+                    if let (Some(ui), Some(di)) = (
+                        find_tile_index(tiledata, &uy),
+                        find_tile_index(tiledata, &dy),
+                    ) {
+                        propagator[1][ui][di] = true;
+                    }
+
+                    let uxy = x_reflect_tile(&y_reflect_tile(&utile, s, sz), s, sz);
+                    let dxy = x_reflect_tile(&y_reflect_tile(&dtile, s, sz), s, sz);
+                    if let (Some(ui), Some(di)) = (
+                        find_tile_index(tiledata, &uxy),
+                        find_tile_index(tiledata, &dxy),
+                    ) {
+                        propagator[1][ui][di] = true;
+                    }
+                }
+                NeighborDir::Vertical => {
+                    // C# lines 239-253: top/bottom neighbors
+                    // For top/bottom (note: parse_neighbor puts bottom in left, top in right)
+                    // top = right_tile, bottom = left_tile
+                    let ttile = &right_tile; // top
+                    let btile = &left_tile; // bottom
+
+                    // Generate 4 square symmetries for each
+                    let tsym =
+                        tile_square_symmetries_with(ttile, s, sz, z_rotate_tile, x_reflect_tile);
+                    let bsym =
+                        tile_square_symmetries_with(btile, s, sz, z_rotate_tile, x_reflect_tile);
+
+                    // Direction 4 (+Z): all symmetry pairs
+                    for i in 0..tsym.len() {
+                        if let (Some(bi), Some(ti)) = (
+                            find_tile_index(tiledata, &bsym[i]),
+                            find_tile_index(tiledata, &tsym[i]),
+                        ) {
+                            propagator[4][bi][ti] = true;
+                        }
                     }
                 }
             }
