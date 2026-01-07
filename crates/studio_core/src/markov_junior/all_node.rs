@@ -168,12 +168,13 @@ impl Node for AllNode {
             return false;
         }
 
+        // Record this as the last matched turn BEFORE checking match_count
+        // C# sets lastMatchedTurn = ip.counter at line 44, before checking matchCount at line 54
+        self.data.last_matched_turn = ctx.counter as i32;
+
         if self.data.match_count == 0 {
             return false;
         }
-
-        // Record this as the last matched turn
-        self.data.last_matched_turn = ctx.counter as i32;
 
         let mx = ctx.grid.mx;
         let my = ctx.grid.my;
