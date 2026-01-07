@@ -134,7 +134,6 @@ impl TileNode {
                 square_symmetries_3d(&flat_tile, s, sz)
             };
 
-            let start_idx = tiledata.len();
             let mut positions = Vec::new();
 
             for variant in variants {
@@ -798,16 +797,21 @@ fn apply_tile_rotations(tile: &[u8], prefix: &str, s: usize, sz: usize) -> Vec<u
 }
 
 /// Rotate a tile 90 degrees around X axis (for propagator building).
+///
+/// C# Reference (TileModel.cs line 64):
+///   byte[] xRotate(byte[] p) => newtile((x, y, z) => p[x + z * S + (S - 1 - y) * S * S]);
+///
+/// This means: result[x, y, z] = input[x, z, S-1-y]
 fn x_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
     let mut result = vec![0u8; s * s * sz];
     for z in 0..sz {
         for y in 0..s {
             for x in 0..s {
-                let src = x + (sz - 1 - z) * s + y * s * s;
+                // C#: result[x + y*S + z*S*S] = p[x + z * S + (S - 1 - y) * S * S]
+                // So input position is (x, z, S-1-y)
+                let src = x + z * s + (s - 1 - y) * s * s;
                 let dst = x + y * s + z * s * s;
-                if src < tile.len() {
-                    result[dst] = tile[src];
-                }
+                result[dst] = tile[src];
             }
         }
     }

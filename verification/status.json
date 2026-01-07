@@ -5,49 +5,29 @@
       "reason": "99.65% (221 differ)",
       "seed": 42
     },
-    "ClosedSurface": {
-      "accuracy": 84.87654320987654,
-      "reason": "84.88% (7056 differ)",
+    "IslandL17": {
+      "accuracy": 99.87015625,
+      "reason": "99.87% (831 differ)",
       "seed": 42
     },
-    "CompleteSAW": {
-      "accuracy": 57.06371191135734,
-      "reason": "57.06% (155 differ)",
+    "IslandL17b": {
+      "accuracy": 99.2728125,
+      "reason": "99.27% (4654 differ)",
       "seed": 42
     },
-    "CompleteSAWSmart": {
-      "accuracy": 57.46691871455577,
-      "reason": "57.47% (225 differ)",
+    "IslandL18": {
+      "accuracy": 99.86703125,
+      "reason": "99.87% (851 differ)",
       "seed": 42
     },
-    "Escher": {
-      "accuracy": 0.0,
-      "reason": "Dim mismatch: [40, 40, 40] vs [8, 8, 8]",
+    "IslandL19": {
+      "accuracy": 99.5609375,
+      "reason": "99.56% (2810 differ)",
       "seed": 42
     },
-    "EscherSurface": {
-      "accuracy": 90.103125,
-      "reason": "90.10% (6334 differ)",
-      "seed": 42
-    },
-    "FindLongCycle": {
-      "accuracy": 58.29903978052126,
-      "reason": "58.30% (304 differ)",
-      "seed": 42
-    },
-    "HamiltonianPath": {
-      "accuracy": 68.77054569362262,
-      "reason": "68.77% (475 differ)",
-      "seed": 42
-    },
-    "Island": {
-      "accuracy": 0.14671875,
-      "reason": "0.15% (639061 differ)",
-      "seed": 42
-    },
-    "OrientedEscher": {
-      "accuracy": 0.0,
-      "reason": "Dim mismatch: [30, 30, 30] vs [6, 6, 6]",
+    "IslandL20": {
+      "accuracy": 99.55859375,
+      "reason": "99.56% (2825 differ)",
       "seed": 42
     },
     "Partitioning": {
@@ -55,34 +35,14 @@
       "reason": "98.93% (105 differ)",
       "seed": 42
     },
-    "PeriodicEscher": {
-      "accuracy": 0.0,
-      "reason": "Dim mismatch: [40, 40, 40] vs [8, 8, 8]",
-      "seed": 42
-    },
-    "PillarsOfEternity": {
-      "accuracy": 0.0,
-      "reason": "Dim mismatch: [45, 45, 45] vs [9, 9, 9]",
-      "seed": 42
-    },
-    "SelectLongKnots": {
-      "accuracy": 99.44444444444444,
-      "reason": "99.44% (150 differ)",
-      "seed": 42
-    },
-    "SmartSAW": {
-      "accuracy": 45.42936288088643,
-      "reason": "45.43% (197 differ)",
-      "seed": 42
-    },
     "SubmergedKnots": {
       "accuracy": 68.51761429398148,
       "reason": "68.52% (34817 differ)",
       "seed": 42
     },
-    "Surface": {
-      "accuracy": 70.04814814814814,
-      "reason": "70.05% (8087 differ)",
+    "TestObsL4": {
+      "accuracy": 97.75,
+      "reason": "97.75% (9 differ)",
       "seed": 42
     }
   },
@@ -204,7 +164,19 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "ClosedSurface": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "ColoredKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CompleteSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CompleteSAWSmart": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -268,7 +240,19 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "Escher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "EscherSurface": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "EuclideanPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "FindLongCycle": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -316,6 +300,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "HamiltonianPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "HamiltonianPaths": {
       "accuracy": 100.0,
       "seed": 42
@@ -329,6 +317,78 @@
       "seed": 42
     },
     "IrregularSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Island": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL10": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL11": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL12": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL13": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL14": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL15": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL16": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL17a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL5": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL6": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL7": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL8": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL9": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -428,6 +488,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "OrientedEscher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "PaintCompetition": {
       "accuracy": 100.0,
       "seed": 42
@@ -441,6 +505,14 @@
       "seed": 42
     },
     "Percolation": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PeriodicEscher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PillarsOfEternity": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -484,6 +556,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "SelectLongKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "SelfAvoidingWalk": {
       "accuracy": 100.0,
       "seed": 42
@@ -493,6 +569,102 @@
       "seed": 42
     },
     "SewersSimple1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5b": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5c": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5d": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5e": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5f": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5g": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5h": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6b": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6c": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6d": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6e": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6f": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6g": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6h": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL7": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -529,6 +701,10 @@
       "seed": 42
     },
     "StrangeNoise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Surface": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -569,6 +745,14 @@
       "seed": 42
     },
     "TestObsL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestUnionAll1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestUnionAll2": {
       "accuracy": 100.0,
       "seed": 42
     },
