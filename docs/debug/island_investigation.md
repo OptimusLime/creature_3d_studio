@@ -1,14 +1,18 @@
 # Island Investigation
 
-**Status:** IN PROGRESS
+**Status:** RESOLVED
 **Model:** Island.xml (2D, 800x800)
 **Initial Match:** 0.15% (639,061 cells differ out of 640,000)
-**Current Match:** 77.55% (143,674 cells differ)  
+**Final Match:** 100%
 **Seed:** 42
 
 ## Summary
 
 Island is a complex procedural terrain generator that creates islands with coastlines, rivers, mountains, forests, and beaches. It uses nearly every node type: `sequence`, `one`, `all`, `prl`, `convolution`, and critically `field` + `observe` for river pathfinding.
+
+Two bugs were found and fixed:
+1. **Step limit parsing** - `steps="-1"` was being parsed incorrectly
+2. **SequenceNode n increment** - Active branch child completion was incorrectly advancing to next child
 
 ## Root Cause #1: Step Limit Bug (FIXED)
 
@@ -39,13 +43,7 @@ In `verification.rs` line 134:
 "steps" => steps = val.parse().unwrap_or(50000),
 ```
 
-When XML has `steps="-1"` (unlimited), parsing as `usize` fails for negative values, defaulting to 50000. Island's many OneNodes consumed ~50000 total interpreter steps:
-- `<one steps="1"/>` = 1
-- `<one steps="400"/>` = 400  
-- `<one steps="20"/>` = 20
-- `<one steps="2300"/>` = 2300
-- Voronoi `<one/>` = 47,274
-- **Total: ~50,000 (hit the limit)**
+When XML has `steps="-1"` (unlimited), parsing as `usize` fails for negative values, defaulting to 50000. Island's many OneNodes consumed ~50000 total interpreter steps.
 
 ### Fix
 
@@ -57,21 +55,96 @@ When XML has `steps="-1"` (unlimited), parsing as `usize` fails for negative val
 }
 ```
 
-And in the run loop:
+### Result
+
+- Island: 0.15% -> 77.55%
+
+## Root Cause #2: SequenceNode n Increment Bug (FIXED)
+
+### Discovery
+
+Created layer test models IslandL11-L20 to isolate the remaining 22.45% divergence:
+
+| Layer | Content | Status |
+|-------|---------|--------|
+| IslandL11 | ocean painting | 100% |
+| IslandL12 | UI->UU | 100% |
+| IslandL13 | coast marking | 100% |
+| IslandL14 | shallow water | 100% |
+| IslandL15 | deep ocean | 100% |
+| IslandL16 | river source setup | 100% |
+| **IslandL17** | **river sequence with field+observe** | **FAIL (99.87%)** |
+| IslandL17a | just field | FAIL (99.99%) |
+
+### Debug Logging
+
+Added identical debug logging to C# OneNode.Go() and Rust one_node.go():
+
+```csharp
+// C#
+Console.WriteLine($"[OneNode.Go] counter={counter} matchCount={matchCount} steps={steps} potentials={(potentials != null ? "yes" : "no")}");
+```
+
 ```rust
-while interpreter.is_running() && (limit == 0 || steps < limit) {
+// Rust
+eprintln!("[OneNode.Go] counter={} matchCount={} steps={} potentials={}", ...);
+```
+
+**C# output (77 calls to field-guided OneNode):**
+```
+[OneNode.Go] counter=0 matchCount=92 steps=1 potentials=yes
+[OneNode.Go] RandomMatch returned R=1 X=514 Y=432 Z=0
+[OneNode.Go] Applied rule 1 at (514,432,0), counter now 1
+[OneNode.Go] counter=0 matchCount=91 steps=1 potentials=yes   <- reset, retry
+[OneNode.Go] RandomMatch returned R=2 X=515 Y=431 Z=0
+...
+```
+
+**Rust output (1 call to field-guided OneNode):**
+```
+[OneNode.Go] counter=0 matchCount=92 steps=1 potentials=yes
+[OneNode.Go] RandomMatch returned R=1 X=514 Y=432 Z=0
+[OneNode.Go] Applied rule 1 at (514,432,0), counter now 1
+<nothing more>
+```
+
+### Root Cause
+
+In `node.rs`, SequenceNode's handling of active branch child completion:
+
+**Before (WRONG):**
+```rust
+if let Some(active_idx) = self.active_branch_child {
+    if self.nodes[active_idx].go(ctx) { return true; }
+    self.active_branch_child = None;
+    self.n += 1;  // <-- BUG: Advancing past the child
+    return true;
+}
+```
+
+**C# behavior:** When a sequence's branch child fails after being active, control returns to the parent. The parent's `n` was never incremented (because it returned via `return true` last time). On the next call, the for-loop starts at the same `n`, retrying the same (now reset) child.
+
+**Rust behavior (buggy):** We were incrementing `n` when the active child failed, skipping to the next child instead of retrying.
+
+### Fix
+
+```rust
+if let Some(active_idx) = self.active_branch_child {
+    if self.nodes[active_idx].go(ctx) { return true; }
+    // Child failed - it has already reset itself
+    // IMPORTANT: Do NOT increment n! Parent should retry the same child.
+    self.active_branch_child = None;
+    // Don't increment n - we'll try the same child again, which has now been reset
+    return true;
+}
 ```
 
 ### Result
 
-- IslandL1-L10: ALL 100% match
-- Full Island: 0.15% -> 77.55%
+- Island: 77.55% -> 100%
+- All 109 2D models: 100%
 
-## Remaining Issue
-
-Island is at 77.55% (143,674 cells differ). The issue is somewhere between L10 and the full model. Need to create more layer models to isolate.
-
-## Layer Test Results
+## Layer Test Results (Final)
 
 | Layer | Content | Status |
 |-------|---------|--------|
@@ -85,64 +158,29 @@ Island is at 77.55% (143,674 cells differ). The issue is somewhere between L10 a
 | IslandL8 | L7 + low-prob prl | 100% |
 | IslandL9 | L8 + Voronoi | 100% |
 | IslandL10 | L9 + convolution | 100% |
-| ... | ... | TBD |
-| Full Island | All content | 77.55% |
-
-## Hypothesis for Remaining Issue
-
-Looking at Island.xml beyond L10, the next sections are:
-1. Ocean painting with symmetry `(x)`
-2. More prl/all operations
-3. **River pathfinding with `<field>` + `<observe>`** (likely culprit)
-4. More convolution smoothing
-5. Beach, forest, mountain generation
-
-The `field`+`observe` pattern is used in passing models (BiasedGrowth, etc.) but Island uses it in a nested `<sequence>` context which may expose different bugs.
-
-## Debugging Plan
-
-### Phase 1: Isolate Failure Point (CURRENT)
-
-Create IslandL11-L20 to find exactly which section fails:
-- L11: L10 + ocean painting `all in="U/*" out="I/*" symmetry="(x)"`
-- L12: L11 + `all in="UI" out="UU"`
-- L13: L12 + coast marking
-- L14: L13 + shallow water prl
-- L15: L14 + deep ocean conversion
-- L16: L15 + river source setup
-- **L17: L16 + river sequence with field+observe** (suspect)
-- Continue until failure found
-
-### Phase 2: Fix the Bug
-
-Once isolated, compare C# vs Rust execution at the failing section.
-
-### Phase 3: Verify
-
-After fix, verify all layers pass and full Island reaches 100%.
-
-## Commands
-
-```bash
-# Generate C# reference
-cd MarkovJunior && dotnet run -- --model Island --seed 42 --dump-json
-
-# Generate Rust output  
-MJ_MODELS=Island MJ_SEED=42 cargo test -p studio_core batch_generate_outputs -- --ignored --nocapture
-
-# Compare outputs
-python3 scripts/compare_grids.py MarkovJunior/verification/Island_seed42.json verification/rust/Island_seed42.json
-
-# Test layer models
-python3 scripts/batch_verify.py IslandL1 IslandL2 ... --regenerate
-```
+| IslandL11-L20 | various | 100% |
+| **Full Island** | **All content** | **100%** |
 
 ## Files Modified
 
 - `crates/studio_core/src/markov_junior/verification.rs` - Fixed step limit parsing
+- `crates/studio_core/src/markov_junior/node.rs` - Fixed SequenceNode n increment bug
 
-## Related Models
+## Commands
 
-Other models with `steps="-1"` that may have been affected:
-- Island (0.15% -> 77.55%)
-- Any model in models.xml with negative steps value
+```bash
+# Run full 2D verification
+python3 scripts/batch_verify.py --all-2d --regenerate
+
+# Test specific model
+python3 scripts/batch_verify.py Island --regenerate
+```
+
+## Key Takeaway
+
+The debugging methodology from HOW_WE_WORK.md was essential:
+1. Create layer test models to isolate failure point (IslandL17a)
+2. Add **identical** debug logging to C# and Rust at **same** points
+3. Compare line-by-line to find divergence (77 calls vs 1 call)
+4. Trace C# behavior to understand correct semantics
+5. Fix Rust to match
