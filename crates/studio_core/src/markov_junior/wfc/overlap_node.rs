@@ -87,15 +87,19 @@ impl OverlapNode {
         let mut weights_map: HashMap<i64, usize> = HashMap::new();
         let mut ordering: Vec<i64> = Vec::new();
 
+        // C# uses grid.MX/MY (input grid dimensions) for loop bounds, NOT sample dimensions!
+        // This affects the order patterns are discovered (and thus pattern indices).
+        // Pattern extraction still uses sample dimensions with modulo wrapping.
+        // C# Reference: OverlapModel.cs lines 71-72
         let ymax = if periodic_input {
-            smy
+            input_grid.my
         } else {
-            smy.saturating_sub(n - 1)
+            input_grid.my.saturating_sub(n - 1)
         };
         let xmax = if periodic_input {
-            smx
+            input_grid.mx
         } else {
-            smx.saturating_sub(n - 1)
+            input_grid.mx.saturating_sub(n - 1)
         };
 
         for y in 0..ymax {
@@ -371,34 +375,46 @@ fn pattern_from_index(idx: i64, n: usize, c: usize) -> Vec<u8> {
 
 /// Generate symmetry variants of a pattern.
 ///
-/// C# Reference: SymmetryHelper.SquareSymmetries with pattern-specific functions
+/// C# Reference: SymmetryHelper.SquareSymmetries (lines 19-35)
+/// The 8 symmetries are generated in this specific order:
+///   things[0] = thing;                  // e (identity)
+///   things[1] = reflection(things[0]);  // b
+///   things[2] = rotation(things[0]);    // a
+///   things[3] = reflection(things[2]);  // ba
+///   things[4] = rotation(things[2]);    // a2
+///   things[5] = reflection(things[4]);  // ba2
+///   things[6] = rotation(things[4]);    // a3
+///   things[7] = reflection(things[6]);  // ba3
+///
+/// IMPORTANT: In OverlapModel.cs, the `same` function is `(q1, q2) => false`, meaning
+/// patterns are NEVER considered duplicates. All 8 variants are returned regardless
+/// of actual equality. This is intentional for weight counting purposes.
 fn pattern_symmetries(pattern: &[u8], n: usize, symmetry: &[bool]) -> Vec<Vec<u8>> {
-    let mut results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    // Generate all 8 transformations in C# order
+    let mut things = vec![Vec::new(); 8];
 
-    // Generate all 8 square symmetry transforms
-    let mut current = pattern.to_vec();
+    things[0] = pattern.to_vec(); // e (identity)
+    things[1] = reflect_pattern(&things[0], n); // b
+    things[2] = rotate_pattern(&things[0], n); // a
+    things[3] = reflect_pattern(&things[2], n); // ba
+    things[4] = rotate_pattern(&things[2], n); // a2
+    things[5] = reflect_pattern(&things[4], n); // ba2
+    things[6] = rotate_pattern(&things[4], n); // a3
+    things[7] = reflect_pattern(&things[6], n); // ba3
+
+    // Filter by symmetry mask only - DO NOT deduplicate
+    // C# passes `(q1, q2) => false` as the `same` function, meaning patterns
+    // are never considered equal, so all 8 variants are always included.
+    let mut results = Vec::new();
 
     for i in 0..8 {
+        // Check symmetry mask (default to false if mask is shorter)
         if i < symmetry.len() && symmetry[i] {
-            // Check if we've seen this pattern
-            let key: Vec<u8> = current.clone();
-            if !seen.contains(&key) {
-                seen.insert(key.clone());
-                results.push(current.clone());
-            }
-        }
-
-        // Transform for next iteration
-        if i == 3 {
-            // After 4 rotations, reflect
-            current = reflect_pattern(&current, n);
-        } else {
-            // Rotate 90 degrees
-            current = rotate_pattern(&current, n);
+            results.push(things[i].clone());
         }
     }
 
+    // If nothing matched, return identity (shouldn't happen with valid symmetry)
     if results.is_empty() {
         results.push(pattern.to_vec());
     }

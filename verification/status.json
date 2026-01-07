@@ -70,11 +70,6 @@
       "reason": "99.44% (150 differ)",
       "seed": 42
     },
-    "Sewers": {
-      "accuracy": 49.75,
-      "reason": "49.75% (804 differ)",
-      "seed": 42
-    },
     "SmartSAW": {
       "accuracy": 45.42936288088643,
       "reason": "45.43% (197 differ)",
@@ -490,6 +485,14 @@
       "seed": 42
     },
     "SelfAvoidingWalk": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Sewers": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SewersSimple1": {
       "accuracy": 100.0,
       "seed": 42
     },
