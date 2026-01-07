@@ -261,12 +261,10 @@ impl WfcNode {
             self.stack.clear();
             self.wave.copy_from(&self.start_wave);
 
-            let mut observations_so_far = 0;
             loop {
                 let node = self.next_unobserved_node(&mut local_rng);
                 if node >= 0 {
                     self.observe(node as usize, &mut local_rng);
-                    observations_so_far += 1;
                     let success = self.propagate();
                     if !success {
                         // Contradiction - try another seed
