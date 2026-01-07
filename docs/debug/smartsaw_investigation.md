@@ -1,6 +1,6 @@
 # SmartSAW Investigation
 
-**Status:** PARTIALLY RESOLVED
+**Status:** RESOLVED
 **Models:** SmartSAW.xml, CompleteSAW.xml, CompleteSAWSmart.xml
 
 **Initial Match Rates:**
@@ -8,147 +8,109 @@
 - CompleteSAW: 57.06%
 - CompleteSAWSmart: 57.47%
 
-**Final Match Rates (after fix):**
-- SmartSAW: 45.43% (unchanged - different issue, see below)
+**Final Match Rates (after all fixes):**
+- SmartSAW: **100%**
 - CompleteSAW: **100%**
 - CompleteSAWSmart: **100%**
 
-## Root Cause: Search Mode Not Wired Up
+## Root Cause Summary
 
-### Bug 1: `run_search()` never called
+There were TWO distinct bugs affecting SAW models:
 
-**Location:** `rule_node.rs:compute_matches()`
+### Bug Set 1: Search Mode Not Wired Up (CompleteSAW, CompleteSAWSmart)
 
-**Problem:** The `search` flag was set when parsing XML, but the actual A* search was never executed. The search implementation existed in `search.rs` but was only called in unit tests.
+These models use `search="True"` attribute. Three sub-bugs:
 
-**C# Reference:** `RuleNode.cs:137-142`
-```csharp
-if (search)
-{
-    trajectory = null;
-    int TRIES = limit < 0 ? 1 : 20;
-    for (int k = 0; k < TRIES && trajectory == null; k++) 
-        trajectory = Search.Run(grid.state, future, rules, grid.MX, grid.MY, grid.MZ, 
-                               grid.C, this is AllNode, limit, depthCoefficient, ip.random.Next());
-    if (trajectory == null) Console.WriteLine("SEARCH RETURNED NULL");
-}
-```
+1. **`run_search()` never called** - Search implementation existed but wasn't invoked
+2. **Trajectory replay missing** - C# replays search results step-by-step
+3. **Wrong RNG type** - Search used `StdRandom` instead of `DotNetRandom`
 
-**Fix:** Added call to `run_search()` in `compute_matches()` when `self.search == true` and `self.future_computed == true`:
+### Bug Set 2: Branch Node Execution Order (SmartSAW)
+
+SmartSAW uses deeply nested markov/sequence structure WITHOUT search. The issue was in how branch children (MarkovNode, SequenceNode) delegate to their active child branches.
+
+**Root Cause:** When a branch child completes (returns false), the parent was immediately falling through to try other children in the SAME Go() call. In C#, when `ip.current` returns to parent, the main loop increments counter BEFORE calling parent.Go() again.
+
+**The Fix:** When an active branch child fails, return `true` from the parent to allow the counter increment to happen before the next attempt.
+
+## Detailed Fix for Bug Set 2
+
+### MarkovNode (node.rs)
+
+**Before:**
 ```rust
-if self.search {
-    self.trajectory = None;
-    let tries = if self.limit < 0 { 1 } else { 20 };
-    for _ in 0..tries {
-        if self.trajectory.is_some() { break; }
-        let seed = ctx.random.next_int();
-        self.trajectory = run_search(
-            &ctx.grid.state, future, &self.rules,
-            ctx.grid.mx, ctx.grid.my, ctx.grid.mz,
-            ctx.grid.c as usize, is_all,
-            self.limit, self.depth_coefficient, seed,
-        );
-    }
+if let Some(active_idx) = self.active_branch_child {
+    if self.nodes[active_idx].go(ctx) { return true; }
+    self.active_branch_child = None;
+    // WRONG: Falls through to try children immediately
 }
+self.n = 0; // ...
 ```
 
-### Bug 2: Trajectory replay missing in OneNode
-
-**Location:** `one_node.rs:go()`
-
-**Problem:** When a trajectory is computed by search, C# replays it step-by-step by copying states. The Rust implementation went directly to random matching without checking for a trajectory.
-
-**C# Reference:** `OneNode.cs:56-62`
-```csharp
-if (trajectory != null)
-{
-    if (counter >= trajectory.Length) return false;
-    Array.Copy(trajectory[counter], grid.state, grid.state.Length);
-    counter++;
-    return true;
-}
-```
-
-**Fix:** Added trajectory replay before random matching:
+**After:**
 ```rust
-if let Some(ref trajectory) = self.data.trajectory {
-    if self.data.counter >= trajectory.len() {
-        return false;
-    }
-    ctx.grid.state.copy_from_slice(&trajectory[self.data.counter]);
-    self.data.counter += 1;
-    return true;
+if let Some(active_idx) = self.active_branch_child {
+    if self.nodes[active_idx].go(ctx) { return true; }
+    self.active_branch_child = None;
+    return true;  // FIX: Return to allow counter increment
+}
+self.n = 0; // ...
+```
+
+### SequenceNode (node.rs)
+
+Same pattern - when active branch child fails, return `true` before advancing to next child:
+
+```rust
+if let Some(active_idx) = self.active_branch_child {
+    if self.nodes[active_idx].go(ctx) { return true; }
+    self.active_branch_child = None;
+    self.n += 1;
+    return true;  // FIX: Return to allow counter increment
 }
 ```
 
-### Bug 3: Wrong RNG type for search seed
+## How We Found It
 
-**Location:** `search.rs` and `rule_node.rs`
+Used incremental layer testing per HOW_WE_WORK.md:
 
-**Problem:** Search was using `StdRandom` with a u64 seed, but C# uses `new Random(seed)` with an i32 seed from `ip.random.Next()`.
+1. Created SmartSAWL1 through SmartSAWL7, each adding one layer of complexity
+2. Found L1-L5 passed, L6 failed at 81.16%
+3. Narrowed to the issue being two markov siblings in a parent markov
+4. Further isolated to when an active branch child completes
+5. Traced C# execution to find the counter increment timing difference
 
-**Fix:** 
-1. Changed `search.rs` to use `DotNetRandom::from_seed(seed)` instead of `StdRandom`
-2. Changed seed parameter type from `u64` to `i32`
-3. Changed call site to use `ctx.random.next_int()` instead of `next_u64()`
+**Key test models created:**
+- SmartSAWL1: Just union symbols
+- SmartSAWL2: Union + initial all block
+- SmartSAWL3-L5: Adding nested markov layers
+- SmartSAWL6: Two markov siblings (first failure point)
+- SmartSAWL6a-h: Various isolation tests
 
 ## Files Modified
 
-### `crates/studio_core/src/markov_junior/rule_node.rs`
-- Added import for `run_search`
-- Added `is_all: bool` parameter to `compute_matches()`
-- Added search execution logic when `self.search == true`
+### For Bug Set 1 (Search):
+- `rule_node.rs` - Added `run_search()` call
+- `one_node.rs` - Added trajectory replay
+- `search.rs` - Changed to `DotNetRandom`
 
-### `crates/studio_core/src/markov_junior/one_node.rs`
-- Added trajectory replay logic before random matching
-- Updated `compute_matches()` call to pass `is_all=false`
-
-### `crates/studio_core/src/markov_junior/all_node.rs`
-- Updated `compute_matches()` call to pass `is_all=true`
-
-### `crates/studio_core/src/markov_junior/search.rs`
-- Changed from `StdRandom` to `DotNetRandom` for RNG
-- Changed seed parameter type from `u64` to `i32`
-
-## Remaining Issue: SmartSAW
-
-SmartSAW is still at 45.43% match rate. This is a **different issue** because SmartSAW does NOT use `search="True"`. Looking at its structure:
-
-```xml
-<sequence values="BRDYGWEUN" origin="True">
-  <union symbol="?" values="BD"/>
-  <union symbol="_" values="BN"/>
-  <!-- ... nested markov/sequence structure ... -->
-</sequence>
-```
-
-SmartSAW uses:
-- Union symbols (`?` = BD, `_` = BN) 
-- Deeply nested markov/sequence control flow
-- No search attribute
-
-This requires a separate investigation focused on:
-1. Union symbol handling
-2. Nested control flow execution order
+### For Bug Set 2 (Branch Execution):
+- `node.rs` - Fixed MarkovNode and SequenceNode active_branch_child handling
 
 ## Verification Results
 
 ```
-CompleteSAW:      57.06% -> 100% (FIXED)
-CompleteSAWSmart: 57.47% -> 100% (FIXED)
-SmartSAW:         45.43% -> 45.43% (separate issue)
+CompleteSAW:      57.06% -> 100% (FIXED - Bug Set 1)
+CompleteSAWSmart: 57.47% -> 100% (FIXED - Bug Set 1)
+SmartSAW:         45.43% -> 100% (FIXED - Bug Set 2)
 ```
 
 ## Commands
 
 ```bash
-# Test CompleteSAW
-cd MarkovJunior && dotnet run -- --model CompleteSAW --seed 42 --dump-json
-MJ_MODELS=CompleteSAW MJ_SEED=42 cargo test -p studio_core batch_generate_outputs -- --ignored --nocapture
-python3 scripts/compare_grids.py MarkovJunior/verification/CompleteSAW_seed42.json verification/rust/CompleteSAW_seed42.json
+# Test all SAW variants
+python3 scripts/batch_verify.py SmartSAW CompleteSAW CompleteSAWSmart --regenerate
 
-# Test CompleteSAWSmart  
-cd MarkovJunior && dotnet run -- --model CompleteSAWSmart --seed 42 --dump-json
-MJ_MODELS=CompleteSAWSmart MJ_SEED=42 cargo test -p studio_core batch_generate_outputs -- --ignored --nocapture
-python3 scripts/compare_grids.py MarkovJunior/verification/CompleteSAWSmart_seed42.json verification/rust/CompleteSAWSmart_seed42.json
+# Test layer models
+python3 scripts/batch_verify.py SmartSAWL1 SmartSAWL2 SmartSAWL3 SmartSAWL4 SmartSAWL5 SmartSAWL6 SmartSAWL7 --regenerate
 ```

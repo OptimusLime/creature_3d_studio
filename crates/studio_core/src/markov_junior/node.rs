@@ -117,17 +117,21 @@ pub trait Node {
 /// class SequenceNode : Branch { }
 /// ```
 /// Branch.Go() (lines 79-90) handles the sequential execution.
+///
+/// IMPORTANT: In C#, when a branch child succeeds, `ip.current` is set to that
+/// child. The main loop then calls `current.Go()` directly on subsequent
+/// iterations, bypassing the parent. This continues until the child fails.
+/// We simulate this by tracking `active_branch_child` - if set, we delegate
+/// directly to that child until it fails.
 pub struct SequenceNode {
     /// Child nodes to execute in sequence
     pub nodes: Vec<Box<dyn Node>>,
     /// Current child index
     n: usize,
-    /// Whether a branch child was active on the previous call.
-    /// In C#, when a branch child succeeds, ip.current points to it. When
-    /// it later fails, ip.current returns to parent, and the NEXT main loop
-    /// iteration calls parent.Go() which retries the same child (n unchanged).
-    /// We track this to give branch children one retry after they fail.
-    branch_child_was_active: bool,
+    /// Index of currently active branch child, if any.
+    /// When a branch child succeeds, it becomes "active" and subsequent Go()
+    /// calls delegate directly to it (simulating ip.current = child).
+    active_branch_child: Option<usize>,
 }
 
 impl SequenceNode {
@@ -136,7 +140,7 @@ impl SequenceNode {
         Self {
             nodes,
             n: 0,
-            branch_child_was_active: false,
+            active_branch_child: None,
         }
     }
 }
@@ -158,43 +162,46 @@ impl Node for SequenceNode {
     /// return false;
     /// ```
     ///
-    /// IMPORTANT: In C#, when a branch child succeeds, ip.current points to it.
-    /// Subsequent main loop iterations call the child directly. When the child
-    /// finally fails, ip.current returns to parent, and the parent's NEXT call
-    /// retries that same child (because n wasn't advanced, and child was reset).
-    ///
-    /// We simulate this by tracking branch_child_was_active. When a branch child
-    /// fails after being active, we return true WITHOUT making progress to
-    /// trigger a counter increment, matching C#'s behavior where the main loop
-    /// increments counter when ip.current changes from child back to parent.
+    /// IMPORTANT: In C#, when a branch child succeeds, `ip.current` is set to that
+    /// child before Go() returns. The main loop then calls `ip.current.Go()` directly,
+    /// which means the child keeps running until it fails. We simulate this by:
+    /// 1. Tracking which branch child is "active"
+    /// 2. Delegating Go() calls to the active child until it fails
+    /// 3. When it fails, clearing active_branch_child and advancing n
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
+        // If we have an active branch child, delegate to it (simulates ip.current = child)
+        if let Some(active_idx) = self.active_branch_child {
+            if self.nodes[active_idx].go(ctx) {
+                // Child still making progress
+                return true;
+            }
+            // Child failed - in C#, this sets ip.current = parent and child.Reset() is called
+            // The child's Reset() is already called by the child's Go() implementation
+            // Clear active child and advance n
+            self.active_branch_child = None;
+            self.n += 1;
+            // IMPORTANT: In C#, after child fails, ip.current = parent, then the main loop
+            // increments counter and calls parent.Go() NEXT iteration. We need to return
+            // here to allow that counter increment to happen. Return true to continue
+            // execution, and next call will try the next child.
+            return true;
+        }
+
+        // Normal execution: try children from current n
         while self.n < self.nodes.len() {
             let is_branch = self.nodes[self.n].is_branch();
 
             if self.nodes[self.n].go(ctx) {
                 // Child succeeded
                 if is_branch {
-                    self.branch_child_was_active = true;
+                    // In C#: ip.current = branch (before Go() returns true)
+                    // This means next iteration will call this child directly
+                    self.active_branch_child = Some(self.n);
                 }
                 return true;
             }
 
-            // Child failed
-            if is_branch && self.branch_child_was_active {
-                // Branch child was active and just failed.
-                // In C#, this sets ip.current = parent, and the main loop
-                // increments counter before calling parent.Go() again.
-                // The parent will then retry this child (n unchanged, child reset).
-                //
-                // We return true here to trigger counter increment.
-                // On next call, branch_child_was_active is false, so we'll
-                // actually retry the child (which just reset itself).
-                self.branch_child_was_active = false;
-                return true;
-            }
-
-            // Non-branch child failed, or branch child's retry also failed
-            self.branch_child_was_active = false;
+            // Child failed immediately, advance to next
             self.n += 1;
         }
         // All children done, reset for next use
@@ -207,7 +214,7 @@ impl Node for SequenceNode {
             node.reset();
         }
         self.n = 0;
-        self.branch_child_was_active = false;
+        self.active_branch_child = None;
     }
 
     fn is_branch(&self) -> bool {
@@ -231,17 +238,31 @@ impl Node for SequenceNode {
 ///     }
 /// }
 /// ```
+///
+/// IMPORTANT: In C#, when a branch child succeeds, `ip.current` is set to that
+/// child. The main loop then calls `current.Go()` directly on subsequent
+/// iterations, bypassing the parent. This continues until the child fails.
+/// We simulate this by tracking `active_branch_child` - if set, we delegate
+/// directly to that child until it fails.
 pub struct MarkovNode {
     /// Child nodes to execute
     pub nodes: Vec<Box<dyn Node>>,
     /// Current child index (reset to 0 on each Go call)
     n: usize,
+    /// Index of currently active branch child, if any.
+    /// When a branch child succeeds, it becomes "active" and subsequent Go()
+    /// calls delegate directly to it (simulating ip.current = child).
+    active_branch_child: Option<usize>,
 }
 
 impl MarkovNode {
     /// Create a new Markov node with the given children.
     pub fn new(nodes: Vec<Box<dyn Node>>) -> Self {
-        Self { nodes, n: 0 }
+        Self {
+            nodes,
+            n: 0,
+            active_branch_child: None,
+        }
     }
 }
 
@@ -250,11 +271,45 @@ impl Node for MarkovNode {
     /// Returns false only when no child can make progress.
     ///
     /// Key difference from SequenceNode: n is reset to 0 at the START of each call.
+    ///
+    /// IMPORTANT: In C#, when a branch child succeeds, `ip.current` is set to that
+    /// child before Go() returns. The main loop then calls `ip.current.Go()` directly,
+    /// which means the child keeps running until it fails. We simulate this by:
+    /// 1. Tracking which branch child is "active"
+    /// 2. Delegating Go() calls to the active child until it fails
+    /// 3. When it fails, clearing active_branch_child and continuing normal execution
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
+        // If we have an active branch child, delegate to it (simulates ip.current = child)
+        if let Some(active_idx) = self.active_branch_child {
+            if self.nodes[active_idx].go(ctx) {
+                // Child still making progress
+                return true;
+            }
+            // Child failed - in C#, this sets ip.current = parent and child.Reset() is called
+            // The child's Reset() is already called by the child's Go() implementation
+            // Clear active child.
+            self.active_branch_child = None;
+            // IMPORTANT: In C#, after child fails, ip.current = parent, then the main loop
+            // increments counter and calls parent.Go() NEXT iteration. We need to return
+            // here to allow that counter increment to happen. Return true to continue
+            // execution (we're still "making progress" in the sense that we're transitioning
+            // state), and next call will start fresh with n=0.
+            return true;
+        }
+
+        // Normal execution: try children from n=0
         self.n = 0; // C#: n = 0; return base.Go();
 
         while self.n < self.nodes.len() {
+            let is_branch = self.nodes[self.n].is_branch();
+
             if self.nodes[self.n].go(ctx) {
+                // Child succeeded
+                if is_branch {
+                    // In C#: ip.current = branch (before Go() returns true)
+                    // This means next iteration will call this child directly
+                    self.active_branch_child = Some(self.n);
+                }
                 return true;
             }
             self.n += 1;
@@ -269,6 +324,7 @@ impl Node for MarkovNode {
             node.reset();
         }
         self.n = 0;
+        self.active_branch_child = None;
     }
 
     fn is_branch(&self) -> bool {
