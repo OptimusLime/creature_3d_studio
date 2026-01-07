@@ -331,12 +331,18 @@ impl Node for TileNode {
             if self.wfc.state == WfcState::Completed {
                 self.update_state(ctx.grid);
                 // Mark that we should execute children now
+                // C# Reference: WFCNode.Go() line 114: `else n++;` followed by line 117: `return true;`
+                // C# returns true on the step when WFC completes (n becomes 0), then on the
+                // NEXT call, base.Go() is invoked (line 71). This means WFC completion
+                // counts as a step, even if there are no children.
                 self.wfc.child_index = 0;
                 // Reset first child for execution
                 if !self.children.is_empty() {
                     self.children[0].reset();
-                    return true; // Continue to execute children
                 }
+                // Always return true on completion - C# does this even with no children
+                // The next call will go to child execution path, which returns false if empty
+                return true;
             }
             false
         }

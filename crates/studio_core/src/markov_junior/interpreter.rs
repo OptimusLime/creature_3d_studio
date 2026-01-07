@@ -180,17 +180,18 @@ impl Interpreter {
 
     /// Execute a single step of the model.
     ///
-    /// Returns `true` if the model made progress (root.go() returned true).
-    /// Returns `false` if the model is done or was never started.
+    /// Returns `true` if the model is still running (current != null in C# terms).
+    /// Returns `false` if the model is done.
     ///
-    /// After this returns `false`, the model is complete and further calls
-    /// will continue to return `false` until `reset()` is called.
+    /// IMPORTANT: In C#, counter++ happens on EVERY iteration, not just when
+    /// Go() returns true. The loop only stops when `current` becomes null
+    /// (which happens when root fails and sets ip.current = ip.current.parent = null).
     ///
     /// C# Reference: Interpreter.cs lines 68-78
     /// ```csharp
     /// while (current != null && (steps <= 0 || counter < steps)) {
     ///     current.Go();
-    ///     counter++;
+    ///     counter++;  // <-- ALWAYS increments
     ///     first.Add(changes.Count);
     /// }
     /// ```
@@ -211,20 +212,22 @@ impl Interpreter {
         };
 
         // Execute one step
-        let made_progress = self.root.go(&mut ctx);
+        let still_running = self.root.go(&mut ctx);
 
         // Restore state from context
         self.changes = ctx.changes;
         self.first = ctx.first;
 
-        if made_progress {
-            self.counter += 1;
-            self.first.push(self.changes.len());
-            true
-        } else {
+        // C# always increments counter, regardless of Go() return value
+        self.counter += 1;
+        self.first.push(self.changes.len());
+
+        if !still_running {
+            // Root returned false, meaning ip.current would be set to null in C#
             self.running = false;
-            false
         }
+
+        still_running
     }
 
     /// Run the model to completion or until max_steps.

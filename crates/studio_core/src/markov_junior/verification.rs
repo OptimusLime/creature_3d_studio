@@ -593,4 +593,38 @@ mod tests {
 
         println!("\nGenerated: {}, Failed: {}", success, failed);
     }
+
+    /// Test to see how many steps Circuit takes without a limit
+    #[test]
+    #[ignore]
+    fn test_circuit_step_count() {
+        use crate::markov_junior::loader::LoadedModel;
+        use crate::markov_junior::rng::DotNetRandom;
+        use crate::markov_junior::Interpreter;
+
+        let (loaded, config) = load_model_by_name("Circuit").unwrap();
+        let LoadedModel { root, grid, origin } = loaded;
+
+        let mut interpreter = if origin {
+            Interpreter::with_origin(root, grid)
+        } else {
+            Interpreter::new(root, grid)
+        };
+
+        let rng = Box::new(DotNetRandom::from_seed(42));
+        interpreter.reset_with_rng(rng);
+
+        println!("Config steps: {}", config.steps);
+
+        // Run without limit (but cap at 5000 to avoid infinite loops)
+        let mut external_steps = 0;
+        while interpreter.is_running() && external_steps < 5000 {
+            interpreter.step();
+            external_steps += 1;
+        }
+
+        println!("External steps: {}", external_steps);
+        println!("Interpreter counter: {}", interpreter.counter());
+        println!("Still running: {}", interpreter.is_running());
+    }
 }

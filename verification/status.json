@@ -1,38 +1,13 @@
 {
   "failed": {
-    "Apartemazements": {
-      "accuracy": 84.728125,
-      "reason": "84.73% (9774 differ)",
-      "seed": 42
-    },
-    "ChainDungeon": {
-      "accuracy": 62.19444444444444,
-      "reason": "62.19% (1361 differ)",
-      "seed": 42
-    },
-    "ChainDungeonMaze": {
-      "accuracy": 73.22222222222223,
-      "reason": "73.22% (964 differ)",
-      "seed": 42
-    },
-    "ChainMaze": {
-      "accuracy": 62.916666666666664,
-      "reason": "62.92% (1335 differ)",
-      "seed": 42
-    },
-    "Circuit": {
-      "accuracy": 94.45561620224073,
-      "reason": "94.46% (193 differ)",
+    "ApartemazemeentsSimple2": {
+      "accuracy": 99.6546875,
+      "reason": "99.65% (221 differ)",
       "seed": 42
     },
     "ClosedSurface": {
-      "accuracy": 82.54886831275721,
-      "reason": "82.55% (8142 differ)",
-      "seed": 42
-    },
-    "ColoredKnots": {
-      "accuracy": 94.39300411522633,
-      "reason": "94.39% (2616 differ)",
+      "accuracy": 84.87654320987654,
+      "reason": "84.88% (7056 differ)",
       "seed": 42
     },
     "CompleteSAW": {
@@ -45,19 +20,14 @@
       "reason": "57.47% (225 differ)",
       "seed": 42
     },
-    "CrawlersChase": {
-      "accuracy": 98.61111111111111,
-      "reason": "98.61% (50 differ)",
-      "seed": 42
-    },
     "Escher": {
-      "accuracy": 83.6890625,
-      "reason": "83.69% (10439 differ)",
+      "accuracy": 0.0,
+      "reason": "Dim mismatch: [40, 40, 40] vs [8, 8, 8]",
       "seed": 42
     },
     "EscherSurface": {
-      "accuracy": 93.515625,
-      "reason": "93.52% (4150 differ)",
+      "accuracy": 90.103125,
+      "reason": "90.10% (6334 differ)",
       "seed": 42
     },
     "FindLongCycle": {
@@ -65,14 +35,9 @@
       "reason": "58.30% (304 differ)",
       "seed": 42
     },
-    "FireNoise": {
-      "accuracy": 63.39666666666667,
-      "reason": "63.40% (32943 differ)",
-      "seed": 42
-    },
     "HamiltonianPath": {
-      "accuracy": 68.83629191321499,
-      "reason": "68.84% (474 differ)",
+      "accuracy": 68.77054569362262,
+      "reason": "68.77% (475 differ)",
       "seed": 42
     },
     "Island": {
@@ -80,44 +45,19 @@
       "reason": "0.15% (639061 differ)",
       "seed": 42
     },
-    "Knots2D": {
-      "accuracy": 88.55555555555556,
-      "reason": "88.56% (412 differ)",
-      "seed": 42
-    },
-    "Knots3D": {
-      "accuracy": 92.8125,
-      "reason": "92.81% (4600 differ)",
-      "seed": 42
-    },
-    "MultiHeadedDungeon": {
-      "accuracy": 68.03305785123968,
-      "reason": "68.03% (967 differ)",
-      "seed": 42
-    },
-    "MultiHeadedWalk": {
-      "accuracy": 85.59330680542801,
-      "reason": "85.59% (1412 differ)",
-      "seed": 42
-    },
-    "MultiHeadedWalkDungeon": {
-      "accuracy": 91.00833093938523,
-      "reason": "91.01% (313 differ)",
-      "seed": 42
-    },
     "OrientedEscher": {
-      "accuracy": 78.35925925925926,
-      "reason": "78.36% (5843 differ)",
+      "accuracy": 0.0,
+      "reason": "Dim mismatch: [30, 30, 30] vs [6, 6, 6]",
       "seed": 42
     },
     "Partitioning": {
-      "accuracy": 91.3988368533823,
-      "reason": "91.40% (843 differ)",
+      "accuracy": 98.92868074686257,
+      "reason": "98.93% (105 differ)",
       "seed": 42
     },
     "PeriodicEscher": {
-      "accuracy": 80.69375,
-      "reason": "80.69% (12356 differ)",
+      "accuracy": 0.0,
+      "reason": "Dim mismatch: [40, 40, 40] vs [8, 8, 8]",
       "seed": 42
     },
     "PillarsOfEternity": {
@@ -125,19 +65,14 @@
       "reason": "Dim mismatch: [45, 45, 45] vs [9, 9, 9]",
       "seed": 42
     },
-    "SelectLargeCaves": {
-      "accuracy": 86.02777777777777,
-      "reason": "86.03% (503 differ)",
-      "seed": 42
-    },
     "SelectLongKnots": {
-      "accuracy": 95.0,
-      "reason": "95.00% (1350 differ)",
+      "accuracy": 99.44444444444444,
+      "reason": "99.44% (150 differ)",
       "seed": 42
     },
     "Sewers": {
-      "accuracy": 32.25,
-      "reason": "32.25% (1084 differ)",
+      "accuracy": 49.75,
+      "reason": "49.75% (804 differ)",
       "seed": 42
     },
     "SmartSAW": {
@@ -146,28 +81,30 @@
       "seed": 42
     },
     "SubmergedKnots": {
-      "accuracy": 60.73585792824074,
-      "reason": "60.74% (43423 differ)",
+      "accuracy": 68.51761429398148,
+      "reason": "68.52% (34817 differ)",
       "seed": 42
     },
     "Surface": {
-      "accuracy": 69.83333333333333,
-      "reason": "69.83% (8145 differ)",
-      "seed": 42
-    },
-    "TileDungeon": {
-      "accuracy": 75.61728395061728,
-      "reason": "75.62% (316 differ)",
-      "seed": 42
-    },
-    "TilePath": {
-      "accuracy": 86.7,
-      "reason": "86.70% (1330 differ)",
+      "accuracy": 70.04814814814814,
+      "reason": "70.05% (8087 differ)",
       "seed": 42
     }
   },
   "skipped": {},
   "verified": {
+    "ApartemazemeentsSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ApartemazemeentsSimple3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Apartemazements": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Backtracker": {
       "accuracy": 100.0,
       "seed": 42
@@ -244,6 +181,38 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "ChainDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainDungeonMaze": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainMaze": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainMazeSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Circuit": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CircuitSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CircuitSimple2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ColoredKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "ConnectedCaves": {
       "accuracy": 100.0,
       "seed": 42
@@ -257,6 +226,10 @@
       "seed": 42
     },
     "Coupling": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CrawlersChase": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -292,11 +265,19 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "DungeonGrowthSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Dwarves": {
       "accuracy": 100.0,
       "seed": 42
     },
     "EuclideanPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "FireNoise": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -364,6 +345,14 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "Knots2D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Knots3D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Laplace": {
       "accuracy": 100.0,
       "seed": 42
@@ -393,6 +382,18 @@
       "seed": 42
     },
     "MazeTrail": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedWalk": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedWalkDungeon": {
       "accuracy": 100.0,
       "seed": 42
     },
@@ -484,6 +485,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "SelectLargeCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "SelfAvoidingWalk": {
       "accuracy": 100.0,
       "seed": 42
@@ -524,6 +529,30 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "TestCrawlL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestKnotsL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestKnotsL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "TestObsL1": {
       "accuracy": 100.0,
       "seed": 42
@@ -545,6 +574,14 @@
       "seed": 42
     },
     "Texture": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TileDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TilePath": {
       "accuracy": 100.0,
       "seed": 42
     },
