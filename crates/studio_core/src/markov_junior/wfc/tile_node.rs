@@ -9,6 +9,7 @@ use super::wfc_node::{WfcNode, WfcState};
 
 use crate::markov_junior::helper::load_vox;
 use crate::markov_junior::node::{ExecutionContext, Node};
+use crate::markov_junior::rng::{DotNetRandom, MjRng};
 use crate::markov_junior::MjGrid;
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -77,7 +78,7 @@ impl TileNode {
         newgrid: MjGrid,
         input_grid: &MjGrid,
         rules: &[(u8, Vec<String>)], // (input_value, allowed_tile_names)
-        full_symmetry: bool,
+        _full_symmetry: bool,        // Ignored - read from tileset XML instead
     ) -> Result<Self, String> {
         // Load tileset XML
         let xml = std::fs::read_to_string(tileset_path)
@@ -86,8 +87,9 @@ impl TileNode {
         // Get directory for tile VOX files
         let tileset_dir = tileset_path.parent().unwrap_or(Path::new("."));
 
-        // Parse tileset
-        let (tile_info, neighbors) = parse_tileset_xml(&xml)?;
+        // Parse tileset - fullSymmetry comes from tileset XML, not from caller
+        // C# Reference: TileModel.cs line 33
+        let (tile_info, neighbors, full_symmetry) = parse_tileset_xml(&xml)?;
 
         if tile_info.is_empty() {
             return Err("No tiles found in tileset".to_string());
@@ -153,6 +155,23 @@ impl TileNode {
         let propagator =
             build_tile_propagator(&tiledata, &neighbors, &tile_positions, s, sz, full_symmetry)?;
 
+        // DEBUG: Dump propagator statistics
+        eprintln!("DEBUG TileNode propagator (P={}):", num_patterns);
+        for d in 0..6 {
+            let total: usize = propagator[d].iter().map(|v| v.len()).sum();
+            eprintln!("  Direction {}: {} constraints", d, total);
+        }
+        // Dump ALL pairs for all directions
+        for d in 0..6 {
+            let mut pairs: Vec<String> = Vec::new();
+            for p1 in 0..num_patterns {
+                for &p2 in &propagator[d][p1] {
+                    pairs.push(format!("{}:{}", p1, p2));
+                }
+            }
+            eprintln!("  Direction {} pairs: {}", d, pairs.join(","));
+        }
+
         // Wave dimensions are based on input grid (each wave cell places one tile)
         let wave_mx = input_grid.mx;
         let wave_my = input_grid.my;
@@ -163,6 +182,9 @@ impl TileNode {
         // Build map from input values to allowed patterns
         let map = build_tile_map(input_grid, &tile_positions, rules, num_patterns);
 
+        // For TileModel, N=1 because each wave cell places one tile at a discrete position.
+        // (The tile SIZE is s, but the wave cell SIZE for boundary checks is 1.)
+        // C# Reference: WFCNode line 11: "protected int P, N = 1;"
         let wfc = WfcNode::new(
             wave_length,
             num_patterns,
@@ -171,7 +193,7 @@ impl TileNode {
             weights,
             correct_newgrid, // Use the correctly-sized output grid
             map,
-            s,
+            1, // N=1 for TileModel (not s)
             periodic,
             shannon,
             tries,
@@ -204,6 +226,16 @@ impl TileNode {
     ///
     /// C# Reference: TileNode.UpdateState() (lines 290-330)
     pub fn update_state(&self, grid: &mut MjGrid) {
+        // Debug: print tiledata[13] and check wave cell 1
+        eprintln!("Rust tiledata[13] = {:?}", &self.tiledata[13]);
+        // Get pattern at wave cell 1
+        for t in 0..self.wfc.wave.p {
+            if self.wfc.wave.get_data(1, t) {
+                eprintln!("Rust wave cell 1 has pattern {}", t);
+                break;
+            }
+        }
+
         let input_mx = self.wfc.mx;
         let input_my = self.wfc.my;
         let input_mz = self.wfc.mz;
@@ -217,7 +249,8 @@ impl TileNode {
         let output_my = grid.my;
         let output_mz = grid.mz;
 
-        let mut rng = rand::thread_rng();
+        // Use fixed seed to match C# for testing
+        let mut rng = DotNetRandom::from_seed(12345);
 
         for z in 0..input_mz {
             for y in 0..input_my {
@@ -249,11 +282,30 @@ impl TileNode {
                                 let mut max_vote = -1.0;
                                 let mut argmax: u8 = 0xff;
 
+                                // Debug: count non-zero votes
+                                let non_zero_votes: usize = v.iter().filter(|&&x| x > 0).count();
+
                                 for (c, &vote) in v.iter().enumerate() {
-                                    let value = vote as f64 + 0.1 * rng.gen::<f64>();
+                                    let value = vote as f64 + 0.1 * rng.next_double();
                                     if value > max_vote {
                                         argmax = c as u8;
                                         max_vote = value;
+                                    }
+                                }
+
+                                if non_zero_votes > 1 {
+                                    static TIE_COUNT: std::sync::atomic::AtomicUsize =
+                                        std::sync::atomic::AtomicUsize::new(0);
+                                    let count = TIE_COUNT
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if count < 5 {
+                                        eprintln!(
+                                            "UpdateState TIE at ({},{},{}): {} non-zero votes",
+                                            x * (s - overlap) + dx,
+                                            y * (s - overlap) + dy,
+                                            z * (sz - overlapz) + dz,
+                                            non_zero_votes
+                                        );
                                     }
                                 }
 
@@ -362,8 +414,10 @@ enum NeighborDir {
     Vertical,   // top/bottom
 }
 
-/// Parse tileset XML to extract tiles and neighbors.
-fn parse_tileset_xml(xml: &str) -> Result<(TileInfo, Vec<Neighbor>), String> {
+/// Parse tileset XML to extract tiles, neighbors, and fullSymmetry flag.
+///
+/// C# Reference: TileModel.cs line 33 reads fullSymmetry from tileset XML root.
+fn parse_tileset_xml(xml: &str) -> Result<(TileInfo, Vec<Neighbor>, bool), String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -371,6 +425,7 @@ fn parse_tileset_xml(xml: &str) -> Result<(TileInfo, Vec<Neighbor>), String> {
     let mut neighbors = Vec::new();
     let mut in_tiles = false;
     let mut in_neighbors = false;
+    let mut full_symmetry = false;
 
     loop {
         match reader.read_event() {
@@ -378,6 +433,16 @@ fn parse_tileset_xml(xml: &str) -> Result<(TileInfo, Vec<Neighbor>), String> {
                 let name_bytes = e.name();
                 let name = std::str::from_utf8(name_bytes.as_ref()).unwrap_or("");
                 match name {
+                    "tileset" => {
+                        // Parse fullSymmetry attribute from root tileset element
+                        for attr in e.attributes().flatten() {
+                            let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                            let value = std::str::from_utf8(&attr.value).unwrap_or("");
+                            if key == "fullSymmetry" {
+                                full_symmetry = value.eq_ignore_ascii_case("true");
+                            }
+                        }
+                    }
                     "tiles" => in_tiles = true,
                     "neighbors" => in_neighbors = true,
                     _ => {}
@@ -411,7 +476,7 @@ fn parse_tileset_xml(xml: &str) -> Result<(TileInfo, Vec<Neighbor>), String> {
         }
     }
 
-    Ok((tiles, neighbors))
+    Ok((tiles, neighbors, full_symmetry))
 }
 
 fn parse_tile_element(e: &quick_xml::events::BytesStart) -> Option<(String, f64)> {
@@ -776,7 +841,148 @@ fn x_reflect(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
     result
 }
 
+/// Find the index of a tile in tiledata by comparing byte arrays.
+fn find_tile_index(tiledata: &[Vec<u8>], tile: &[u8]) -> Option<usize> {
+    tiledata.iter().position(|t| t == tile)
+}
+
+/// Apply prefix rotations to a tile (e.g., "z Line" -> z-rotate the Line tile).
+fn apply_tile_rotations(tile: &[u8], prefix: &str, s: usize, sz: usize) -> Vec<u8> {
+    let mut result = tile.to_vec();
+    // Apply rotations in reverse order (right to left in prefix)
+    for c in prefix.chars().rev() {
+        match c {
+            'x' => result = x_rotate_tile(&result, s, sz),
+            'y' => result = y_rotate_tile(&result, s, sz),
+            'z' => result = z_rotate_tile(&result, s, sz),
+            ' ' => {}
+            _ => {}
+        }
+    }
+    result
+}
+
+/// Rotate a tile 90 degrees around X axis (for propagator building).
+fn x_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                let src = x + (sz - 1 - z) * s + y * s * s;
+                let dst = x + y * s + z * s * s;
+                if src < tile.len() {
+                    result[dst] = tile[src];
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Rotate a tile 90 degrees around Y axis (for propagator building).
+fn y_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                if s == sz {
+                    let src = (s - 1 - z) + y * s + x * s * s;
+                    let dst = x + y * s + z * s * s;
+                    result[dst] = tile[src];
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Rotate a tile 90 degrees around Z axis (for propagator building).
+fn z_rotate_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                let src = x + y * s + z * s * s;
+                let dst = (s - 1 - y) + x * s + z * s * s;
+                result[dst] = tile[src];
+            }
+        }
+    }
+    result
+}
+
+/// Reflect a tile along X axis (for propagator building).
+fn x_reflect_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                let src = x + y * s + z * s * s;
+                let dst = (s - 1 - x) + y * s + z * s * s;
+                result[dst] = tile[src];
+            }
+        }
+    }
+    result
+}
+
+/// Reflect a tile along Y axis (for propagator building).
+fn y_reflect_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                let src = x + y * s + z * s * s;
+                let dst = x + (s - 1 - y) * s + z * s * s;
+                result[dst] = tile[src];
+            }
+        }
+    }
+    result
+}
+
+/// Reflect a tile along Z axis (for propagator building).
+fn z_reflect_tile(tile: &[u8], s: usize, sz: usize) -> Vec<u8> {
+    let mut result = vec![0u8; s * s * sz];
+    for z in 0..sz {
+        for y in 0..s {
+            for x in 0..s {
+                let src = x + y * s + z * s * s;
+                let dst = x + y * s + (sz - 1 - z) * s * s;
+                result[dst] = tile[src];
+            }
+        }
+    }
+    result
+}
+
+/// Generate square symmetries for a tile (8 elements) with parametric rotation and reflection.
+/// C# Reference: SymmetryHelper.SquareSymmetries
+fn tile_square_symmetries_with<R, F>(
+    tile: &[u8],
+    s: usize,
+    sz: usize,
+    rotate: R,
+    reflect: F,
+) -> Vec<Vec<u8>>
+where
+    R: Fn(&[u8], usize, usize) -> Vec<u8>,
+    F: Fn(&[u8], usize, usize) -> Vec<u8>,
+{
+    let s0 = tile.to_vec();
+    let s1 = reflect(&s0, s, sz);
+    let s2 = rotate(&s0, s, sz);
+    let s3 = reflect(&s2, s, sz);
+    let s4 = rotate(&s2, s, sz);
+    let s5 = reflect(&s4, s, sz);
+    let s6 = rotate(&s4, s, sz);
+    let s7 = reflect(&s6, s, sz);
+    vec![s0, s1, s2, s3, s4, s5, s6, s7]
+}
+
 /// Build propagator from neighbor constraints.
+///
+/// C# Reference: TileModel.cs lines 165-261
 fn build_tile_propagator(
     tiledata: &[Vec<u8>],
     neighbors: &[Neighbor],
@@ -791,33 +997,138 @@ fn build_tile_propagator(
     let mut propagator: Vec<Vec<Vec<bool>>> =
         vec![vec![vec![false; num_patterns]; num_patterns]; 6];
 
+    // Helper to get tile data for an attribute like "z Line"
+    let get_tile_data = |attr: &str| -> Option<Vec<u8>> {
+        let parts: Vec<&str> = attr.split(' ').collect();
+        let (prefix, tile_name) = if parts.len() == 2 {
+            (parts[0], parts[1])
+        } else {
+            ("", parts[0])
+        };
+        let positions = tile_positions.get(tile_name)?;
+        if positions.is_empty() {
+            return None;
+        }
+        let base_tile = &tiledata[positions[0]];
+        Some(apply_tile_rotations(base_tile, prefix, s, sz))
+    };
+
     // Process each neighbor constraint
     for neighbor in neighbors {
-        let left_name = get_tile_name(&neighbor.left);
-        let right_name = get_tile_name(&neighbor.right);
-
-        let left_positions = tile_positions.get(left_name);
-        let right_positions = tile_positions.get(right_name);
-
-        if left_positions.is_none() || right_positions.is_none() {
-            continue; // Unknown tile, skip
-        }
-
-        let left_pos = left_positions.unwrap();
-        let right_pos = right_positions.unwrap();
-
-        // Apply constraint based on direction
-        let (dir_idx, opp_idx) = match neighbor.dir {
-            NeighborDir::Horizontal => (0, 2), // +X and -X
-            NeighborDir::Vertical => (1, 3),   // +Y and -Y
+        let left_tile = match get_tile_data(&neighbor.left) {
+            Some(t) => t,
+            None => continue,
+        };
+        let right_tile = match get_tile_data(&neighbor.right) {
+            Some(t) => t,
+            None => continue,
         };
 
-        // Set constraints for all variants
-        for &l in left_pos {
-            for &r in right_pos {
-                propagator[dir_idx][l][r] = true;
-                propagator[opp_idx][r][l] = true;
+        if full_symmetry {
+            // C# Reference: TileModel.cs lines 167-210
+            // For X direction: SquareSymmetries(tile, xRotate, yReflect, ...)
+            let lsym =
+                tile_square_symmetries_with(&left_tile, s, sz, x_rotate_tile, y_reflect_tile);
+            let rsym =
+                tile_square_symmetries_with(&right_tile, s, sz, x_rotate_tile, y_reflect_tile);
+
+            // For each symmetry pair, set X-direction constraint
+            for i in 0..lsym.len() {
+                if let (Some(li), Some(ri)) = (
+                    find_tile_index(tiledata, &lsym[i]),
+                    find_tile_index(tiledata, &rsym[i]),
+                ) {
+                    propagator[0][li][ri] = true;
+                }
+
+                // Also set x-reflected version
+                let lref = x_reflect_tile(&rsym[i], s, sz);
+                let rref = x_reflect_tile(&lsym[i], s, sz);
+                if let (Some(li), Some(ri)) = (
+                    find_tile_index(tiledata, &lref),
+                    find_tile_index(tiledata, &rref),
+                ) {
+                    propagator[0][li][ri] = true;
+                }
             }
+
+            // For Y direction: zRotate tiles, then SquareSymmetries(tile, yRotate, zReflect, ...)
+            let dtile = z_rotate_tile(&left_tile, s, sz);
+            let utile = z_rotate_tile(&right_tile, s, sz);
+            let dsym = tile_square_symmetries_with(&dtile, s, sz, y_rotate_tile, z_reflect_tile);
+            let usym = tile_square_symmetries_with(&utile, s, sz, y_rotate_tile, z_reflect_tile);
+
+            for i in 0..dsym.len() {
+                if let (Some(di), Some(ui)) = (
+                    find_tile_index(tiledata, &dsym[i]),
+                    find_tile_index(tiledata, &usym[i]),
+                ) {
+                    propagator[1][di][ui] = true;
+                }
+
+                let dref = y_reflect_tile(&usym[i], s, sz);
+                let uref = y_reflect_tile(&dsym[i], s, sz);
+                if let (Some(di), Some(ui)) = (
+                    find_tile_index(tiledata, &dref),
+                    find_tile_index(tiledata, &uref),
+                ) {
+                    propagator[1][di][ui] = true;
+                }
+            }
+
+            // For Z direction: yRotate tiles, then SquareSymmetries(tile, zRotate, xReflect, ...)
+            let btile = y_rotate_tile(&left_tile, s, sz);
+            let ttile = y_rotate_tile(&right_tile, s, sz);
+            let bsym = tile_square_symmetries_with(&btile, s, sz, z_rotate_tile, x_reflect_tile);
+            let tsym = tile_square_symmetries_with(&ttile, s, sz, z_rotate_tile, x_reflect_tile);
+
+            for i in 0..bsym.len() {
+                if let (Some(bi), Some(ti)) = (
+                    find_tile_index(tiledata, &bsym[i]),
+                    find_tile_index(tiledata, &tsym[i]),
+                ) {
+                    propagator[4][bi][ti] = true;
+                }
+
+                let bref = z_reflect_tile(&tsym[i], s, sz);
+                let tref = z_reflect_tile(&bsym[i], s, sz);
+                if let (Some(bi), Some(ti)) = (
+                    find_tile_index(tiledata, &bref),
+                    find_tile_index(tiledata, &tref),
+                ) {
+                    propagator[4][bi][ti] = true;
+                }
+            }
+        } else {
+            // Non-fullSymmetry case: simple direction-based constraints
+            let left_name = get_tile_name(&neighbor.left);
+            let right_name = get_tile_name(&neighbor.right);
+
+            if let (Some(left_pos), Some(right_pos)) = (
+                tile_positions.get(left_name),
+                tile_positions.get(right_name),
+            ) {
+                let dir_idx = match neighbor.dir {
+                    NeighborDir::Horizontal => 0,
+                    NeighborDir::Vertical => 1,
+                };
+
+                for &l in left_pos {
+                    for &r in right_pos {
+                        propagator[dir_idx][l][r] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // Derive opposite directions
+    // C# Reference: TileModel.cs lines 256-261
+    for p2 in 0..num_patterns {
+        for p1 in 0..num_patterns {
+            propagator[2][p2][p1] = propagator[0][p1][p2]; // -X from +X
+            propagator[3][p2][p1] = propagator[1][p1][p2]; // -Y from +Y
+            propagator[5][p2][p1] = propagator[4][p1][p2]; // -Z from +Z
         }
     }
 
@@ -897,13 +1208,14 @@ mod tests {
         </tileset>
         "#;
 
-        let (tiles, neighbors) = parse_tileset_xml(xml).unwrap();
+        let (tiles, neighbors, full_symmetry) = parse_tileset_xml(xml).unwrap();
 
         assert_eq!(tiles.len(), 2);
         assert_eq!(tiles[0], ("Empty".to_string(), 2.0));
         assert_eq!(tiles[1], ("Line".to_string(), 1.0));
 
         assert_eq!(neighbors.len(), 2);
+        assert!(!full_symmetry); // No fullSymmetry attribute in this test
     }
 
     #[test]

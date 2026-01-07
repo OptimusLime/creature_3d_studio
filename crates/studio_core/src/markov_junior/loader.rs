@@ -752,10 +752,11 @@ fn load_tile_node(
     })?;
 
     // Get attributes
+    // C# defaults periodic to false for TileModel (TileModel.cs line 17)
     let periodic = attrs
         .get("periodic")
         .map(|s| s.eq_ignore_ascii_case("true"))
-        .unwrap_or(true);
+        .unwrap_or(false);
     let shannon = attrs
         .get("shannon")
         .map(|s| s.eq_ignore_ascii_case("true"))
