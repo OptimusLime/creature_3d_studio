@@ -90,6 +90,7 @@ impl AllNode {
         }
 
         // Sort by key descending (higher key = higher priority)
+        // C# uses OrderBy which is stable, Rust's sort_by is also stable
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return just the indices
@@ -167,12 +168,12 @@ impl Node for AllNode {
             return false;
         }
 
-        // Record this as the last matched turn
-        self.data.last_matched_turn = ctx.counter as i32;
-
         if self.data.match_count == 0 {
             return false;
         }
+
+        // Record this as the last matched turn
+        self.data.last_matched_turn = ctx.counter as i32;
 
         let mx = ctx.grid.mx;
         let my = ctx.grid.my;

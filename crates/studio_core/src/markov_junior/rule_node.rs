@@ -277,7 +277,10 @@ impl RuleNodeData {
 
                                 let si = sx as usize + sy as usize * mx + sz as usize * mx * my;
 
-                                if !mask[si] && ctx.grid.matches(rule, sx, sy, sz) {
+                                // C# full scan (RuleNode.Go line 194) does NOT check mask.
+                                // The mask is only used for deduplication in incremental scan.
+                                // Full scan visits each position exactly once per rule.
+                                if ctx.grid.matches(rule, sx, sy, sz) {
                                     mask[si] = true;
                                     let m = (r, sx, sy, sz);
                                     if self.match_count < self.matches.len() {
