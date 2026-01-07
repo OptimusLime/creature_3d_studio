@@ -155,23 +155,6 @@ impl TileNode {
         let propagator =
             build_tile_propagator(&tiledata, &neighbors, &tile_positions, s, sz, full_symmetry)?;
 
-        // DEBUG: Dump propagator statistics
-        eprintln!("DEBUG TileNode propagator (P={}):", num_patterns);
-        for d in 0..6 {
-            let total: usize = propagator[d].iter().map(|v| v.len()).sum();
-            eprintln!("  Direction {}: {} constraints", d, total);
-        }
-        // Dump ALL pairs for all directions
-        for d in 0..6 {
-            let mut pairs: Vec<String> = Vec::new();
-            for p1 in 0..num_patterns {
-                for &p2 in &propagator[d][p1] {
-                    pairs.push(format!("{}:{}", p1, p2));
-                }
-            }
-            eprintln!("  Direction {} pairs: {}", d, pairs.join(","));
-        }
-
         // Wave dimensions are based on input grid (each wave cell places one tile)
         let wave_mx = input_grid.mx;
         let wave_my = input_grid.my;
@@ -226,16 +209,6 @@ impl TileNode {
     ///
     /// C# Reference: TileNode.UpdateState() (lines 290-330)
     pub fn update_state(&self, grid: &mut MjGrid) {
-        // Debug: print tiledata[13] and check wave cell 1
-        eprintln!("Rust tiledata[13] = {:?}", &self.tiledata[13]);
-        // Get pattern at wave cell 1
-        for t in 0..self.wfc.wave.p {
-            if self.wfc.wave.get_data(1, t) {
-                eprintln!("Rust wave cell 1 has pattern {}", t);
-                break;
-            }
-        }
-
         let input_mx = self.wfc.mx;
         let input_my = self.wfc.my;
         let input_mz = self.wfc.mz;
@@ -282,30 +255,11 @@ impl TileNode {
                                 let mut max_vote = -1.0;
                                 let mut argmax: u8 = 0xff;
 
-                                // Debug: count non-zero votes
-                                let non_zero_votes: usize = v.iter().filter(|&&x| x > 0).count();
-
                                 for (c, &vote) in v.iter().enumerate() {
                                     let value = vote as f64 + 0.1 * rng.next_double();
                                     if value > max_vote {
                                         argmax = c as u8;
                                         max_vote = value;
-                                    }
-                                }
-
-                                if non_zero_votes > 1 {
-                                    static TIE_COUNT: std::sync::atomic::AtomicUsize =
-                                        std::sync::atomic::AtomicUsize::new(0);
-                                    let count = TIE_COUNT
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    if count < 5 {
-                                        eprintln!(
-                                            "UpdateState TIE at ({},{},{}): {} non-zero votes",
-                                            x * (s - overlap) + dx,
-                                            y * (s - overlap) + dy,
-                                            z * (sz - overlapz) + dz,
-                                            non_zero_votes
-                                        );
                                     }
                                 }
 

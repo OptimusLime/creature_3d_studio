@@ -265,39 +265,15 @@ impl WfcNode {
             loop {
                 let node = self.next_unobserved_node(&mut local_rng);
                 if node >= 0 {
-                    // Debug: print first 10 observations with more detail
-                    if observations_so_far < 10 {
-                        let mx = self.mx;
-                        let my = self.my;
-                        let x = node as usize % mx;
-                        let y = (node as usize / mx) % my;
-                        let z = node as usize / (mx * my);
-                        // Count remaining patterns before observe
-                        let remaining = self.wave.remaining(node as usize);
-                        // Also print cell 896's remaining
-                        let remaining_896 = self.wave.remaining(896);
-                        eprintln!(
-                            "  Rust observe #{}: node={} (x={}, y={}, z={}), remaining={}, cell896_remaining={}",
-                            observations_so_far, node, x, y, z, remaining, remaining_896
-                        );
-                    }
                     self.observe(node as usize, &mut local_rng);
                     observations_so_far += 1;
                     let success = self.propagate();
                     if !success {
                         // Contradiction - try another seed
-                        eprintln!(
-                            "  CONTRADICTION on try {} with {} observations",
-                            k, observations_so_far
-                        );
                         break;
                     }
                 } else {
                     // Successfully collapsed - found a good seed
-                    eprintln!(
-                        "  wfc found a good seed {} on try {} with {} observations",
-                        seed, k, observations_so_far
-                    );
                     return Some(seed as u64);
                 }
             }
@@ -345,14 +321,8 @@ impl WfcNode {
     ///
     /// C# Reference: WFCNode.NextUnobservedNode() (lines 157-178)
     fn next_unobserved_node(&self, rng: &mut dyn MjRng) -> i32 {
-        static NEXT_OBS_CALL: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let call_num = NEXT_OBS_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
         let mut min_entropy = 1e4;
         let mut argmin: i32 = -1;
-        let mut noise_count = 0;
-        let mut rng_calls = 0;
 
         for z in 0..self.mz {
             for y in 0..self.my {
@@ -363,16 +333,7 @@ impl WfcNode {
                     if !self.periodic
                         && (x + self.n > self.mx || y + self.n > self.my || z + 1 > self.mz)
                     {
-                        // Debug: check if cell 896 is being skipped
-                        if call_num == 4 && i == 896 {
-                            eprintln!("    Rust NextUnobserved #4: SKIPPING cell 896 (x={}, y={}, z={}, n={})", x, y, z, self.n);
-                        }
                         continue;
-                    }
-
-                    // Debug: check if cell 896 is NOT being skipped
-                    if call_num == 4 && i == 896 {
-                        eprintln!("    Rust NextUnobserved #4: NOT skipping cell 896 (x={}, y={}, z={}, n={}, periodic={})", x, y, z, self.n, self.periodic);
                     }
 
                     let remaining = self.wave.remaining(i);
@@ -382,44 +343,12 @@ impl WfcNode {
                         if entropy <= min_entropy {
                             // Add small noise for tie-breaking
                             let noise = 1e-6 * rng.next_double();
-                            rng_calls += 1;
-                            if call_num == 0 && noise_count < 5 {
-                                eprintln!(
-                                    "    Rust noise[{}] at i={}: noise={:E}, ent={}",
-                                    noise_count, i, noise, entropy
-                                );
-                                noise_count += 1;
-                            }
                             if entropy + noise < min_entropy {
                                 min_entropy = entropy + noise;
                                 argmin = i as i32;
                             }
                         }
                     }
-                }
-            }
-        }
-
-        if call_num < 10 {
-            eprintln!(
-                "    Rust NextUnobserved #{}: {} rng calls, selected={}, min_ent={}",
-                call_num, rng_calls, argmin, min_entropy
-            );
-        }
-
-        // After obs #3 (call_num == 4), dump cells with remaining count 4-7
-        if call_num == 4 {
-            eprintln!("    Rust cells with remaining 2-7 at NextUnobserved #4:");
-            for i in 0..self.wave.length {
-                let rem = self.wave.remaining(i);
-                if rem >= 2 && rem <= 7 {
-                    let x = i % self.mx;
-                    let y = (i / self.mx) % self.my;
-                    let z = i / (self.mx * self.my);
-                    eprintln!(
-                        "      cell {} (x={}, y={}, z={}): remaining={}",
-                        i, x, y, z, rem
-                    );
                 }
             }
         }
@@ -433,9 +362,6 @@ impl WfcNode {
     ///
     /// C# Reference: WFCNode.Observe() (lines 181-186)
     fn observe(&mut self, cell: usize, rng: &mut dyn MjRng) {
-        static OBS_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let obs_num = OBS_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
         // Build distribution of possible patterns
         for t in 0..self.wave.p {
             self.distribution[t] = if self.wave.get_data(cell, t) {
@@ -448,11 +374,6 @@ impl WfcNode {
         // Weighted random selection
         let r = self.weighted_random(&self.distribution, rng);
 
-        // Debug: show which pattern was selected
-        if obs_num < 1000 {
-            eprintln!("    Rust cell {} selected pattern {}", cell, r);
-        }
-
         // Ban all other patterns
         for t in 0..self.wave.p {
             if self.wave.get_data(cell, t) && t != r {
@@ -463,9 +384,6 @@ impl WfcNode {
 
     /// Select a random index based on weights.
     fn weighted_random(&self, weights: &[f64], rng: &mut dyn MjRng) -> usize {
-        static WR_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let wr_num = WR_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
         let sum: f64 = weights.iter().sum();
         if sum <= 0.0 {
             return 0;
@@ -473,13 +391,6 @@ impl WfcNode {
 
         let r = rng.next_double();
         let threshold = r * sum;
-
-        if wr_num < 10 {
-            eprintln!(
-                "      Rust weighted_random: sum={}, r={}, threshold={}",
-                sum, r, threshold
-            );
-        }
 
         let mut partial_sum = 0.0;
 
@@ -580,19 +491,6 @@ impl WfcNode {
     ///
     /// C# Reference: WFCNode.Ban() (lines 231-251)
     fn ban(&mut self, cell: usize, pattern: usize) {
-        // Debug: track first few bans at cell 896
-        static BAN896_COUNT: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        if cell == 896 {
-            let count = BAN896_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count < 5 {
-                eprintln!(
-                    "    Rust FIRST bans at cell 896: pattern {} (count={})",
-                    pattern, count
-                );
-            }
-        }
-
         self.wave.set_data(cell, pattern, false);
 
         // Zero out compatible counts for this pattern
