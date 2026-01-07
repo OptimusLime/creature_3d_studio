@@ -8,6 +8,7 @@
 use super::field::Field;
 use super::node::ExecutionContext;
 use super::observation::Observation;
+use super::search::run_search;
 use super::MjRule;
 
 /// A match: (rule_index, x, y, z) position where rule can be applied.
@@ -366,8 +367,12 @@ impl RuleNodeData {
     /// Returns false if steps limit reached or essential field computation fails.
     /// After calling, matches are populated and ready for node-specific logic.
     ///
+    /// # Arguments
+    /// * `ctx` - Execution context with grid and RNG
+    /// * `is_all` - True if this is an AllNode (affects search behavior)
+    ///
     /// C# Reference: RuleNode.Go() lines 124-217
-    pub fn compute_matches(&mut self, ctx: &mut ExecutionContext) -> bool {
+    pub fn compute_matches(&mut self, ctx: &mut ExecutionContext, is_all: bool) -> bool {
         // Clear last flags
         for r in 0..self.last.len() {
             self.last[r] = false;
@@ -379,7 +384,7 @@ impl RuleNodeData {
         }
 
         // Handle observation initialization (one-time at start)
-        // C# Reference: RuleNode.Go() lines 123-142
+        // C# Reference: RuleNode.Go() lines 131-146
         if self.observations.is_some() && !self.future_computed {
             let (future, observations) = match (self.future.as_mut(), self.observations.as_ref()) {
                 (Some(f), Some(o)) => (f, o),
@@ -393,9 +398,37 @@ impl RuleNodeData {
 
             self.future_computed = true;
 
-            // In non-search mode with observations, compute backward potentials
-            // These guide heuristic selection toward the goal state
-            if !self.search {
+            // C# Reference: RuleNode.Go() lines 137-144
+            if self.search {
+                // Run A* search to find trajectory
+                self.trajectory = None;
+                let tries = if self.limit < 0 { 1 } else { 20 };
+                for _ in 0..tries {
+                    if self.trajectory.is_some() {
+                        break;
+                    }
+                    // C# uses ip.random.Next() which returns int (i32)
+                    let seed = ctx.random.next_int();
+                    self.trajectory = run_search(
+                        &ctx.grid.state,
+                        future,
+                        &self.rules,
+                        ctx.grid.mx,
+                        ctx.grid.my,
+                        ctx.grid.mz,
+                        ctx.grid.c as usize,
+                        is_all,
+                        self.limit,
+                        self.depth_coefficient,
+                        seed,
+                    );
+                }
+                if self.trajectory.is_none() {
+                    eprintln!("SEARCH RETURNED NULL");
+                }
+            } else {
+                // In non-search mode with observations, compute backward potentials
+                // These guide heuristic selection toward the goal state
                 if let Some(ref mut potentials) = self.potentials {
                     let mx = ctx.grid.mx;
                     let my = ctx.grid.my;

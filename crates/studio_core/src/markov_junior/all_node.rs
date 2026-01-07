@@ -163,8 +163,8 @@ impl Node for AllNode {
     ///
     /// C# Reference: AllNode.Go() lines 41-107
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
-        // Compute matches
-        if !self.data.compute_matches(ctx) {
+        // Compute matches - AllNode passes is_all=true
+        if !self.data.compute_matches(ctx, true) {
             return false;
         }
 

@@ -6,6 +6,8 @@
 //! C# Reference: Search.cs (~295 lines)
 
 use super::observation::Observation;
+use super::rng::DotNetRandom;
+#[cfg(test)]
 use super::rng::StdRandom;
 use super::MjRule;
 use std::collections::{BinaryHeap, HashMap};
@@ -125,7 +127,7 @@ fn state_hash(state: &[u8]) -> u64 {
 /// * `all` - If true, use AllNode semantics (apply all non-overlapping matches)
 /// * `limit` - Maximum states to explore (-1 for unlimited)
 /// * `depth_coefficient` - Coefficient for depth in ranking
-/// * `seed` - Random seed for tie-breaking
+/// * `seed` - Random seed for tie-breaking (i32 to match C#'s System.Random)
 ///
 /// # Returns
 /// * `Some(trajectory)` - Sequence of states from start to goal (empty if already at goal)
@@ -141,7 +143,7 @@ pub fn run_search(
     all: bool,
     limit: i32,
     depth_coefficient: f64,
-    seed: u64,
+    seed: i32,
 ) -> Option<Vec<Vec<u8>>> {
     let grid_size = mx * my * mz;
 
@@ -182,7 +184,8 @@ pub fn run_search(
     visited.insert(state_hash(present), 0);
 
     let mut frontier: BinaryHeap<PriorityEntry> = BinaryHeap::new();
-    let mut random = StdRandom::from_u64_seed(seed);
+    // Use DotNetRandom to match C#'s System.Random behavior
+    let mut random = DotNetRandom::from_seed(seed);
 
     frontier.push(PriorityEntry {
         index: 0,

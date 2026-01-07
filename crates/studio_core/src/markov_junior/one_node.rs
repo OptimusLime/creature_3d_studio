@@ -215,12 +215,26 @@ impl Node for OneNode {
     /// C# Reference: OneNode.Go() lines 51-73
     fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
         // Compute matches (returns false if step limit reached)
-        if !self.data.compute_matches(ctx) {
+        // OneNode passes is_all=false
+        if !self.data.compute_matches(ctx, false) {
             return false;
         }
 
         // Record this as the last matched turn for incremental updates
         self.data.last_matched_turn = ctx.counter as i32;
+
+        // C# Reference: OneNode.Go() lines 56-62 - trajectory replay
+        if let Some(ref trajectory) = self.data.trajectory {
+            if self.data.counter >= trajectory.len() {
+                return false;
+            }
+            // Copy state from trajectory
+            ctx.grid
+                .state
+                .copy_from_slice(&trajectory[self.data.counter]);
+            self.data.counter += 1;
+            return true;
+        }
 
         // Pick and apply random match
         if let Some((r, x, y, z)) = self.random_match(ctx) {
