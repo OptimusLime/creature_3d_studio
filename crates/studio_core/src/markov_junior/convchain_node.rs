@@ -172,12 +172,14 @@ impl Node for ConvChainNode {
         let state = &mut ctx.grid.state;
 
         // First step: initialize substrate
+        // C# Reference: ConvChain.cs Go() lines 69-79
         if self.counter == 0 {
             let mut any_substrate = false;
             for i in 0..self.substrate.len() {
                 if state[i] == self.substrate_color {
                     // Randomly initialize to c0 or c1
-                    state[i] = if ctx.random.next_bool() {
+                    // C#: state[i] = ip.random.Next(2) == 0 ? c0 : c1;
+                    state[i] = if ctx.random.next_int_max(2) == 0 {
                         self.c0
                     } else {
                         self.c1
@@ -192,10 +194,10 @@ impl Node for ConvChainNode {
 
         // MCMC sampling: try to toggle random substrate cells
         let n = self.n as i32;
-
-        for _ in 0..state.len() {
+        for _k in 0..state.len() {
             // Pick a random substrate cell
-            let r = ctx.random.next_usize_max(state.len());
+            // C#: int r = ip.random.Next(state.Length);
+            let r = ctx.random.next_int_max(state.len() as i32) as usize;
             if !self.substrate[r] {
                 continue;
             }
@@ -416,10 +418,11 @@ fn square_symmetries_bool(
         None => [true; 8],
     };
 
-    // Filter and deduplicate
+    // Filter by mask (no deduplication - C# doesn't deduplicate)
+    // C# uses (q1, q2) => false as comparator, meaning all symmetries are included
     let mut result: Vec<Vec<bool>> = Vec::new();
     for i in 0..8 {
-        if mask[i] && !result.iter().any(|r| patterns_equal(r, &things[i])) {
+        if mask[i] {
             result.push(things[i].clone());
         }
     }
