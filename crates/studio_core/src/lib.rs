@@ -60,7 +60,7 @@ pub use physics_math::{
     has_ceiling_contact, has_floor_contact, has_wall_contact, integrate_angular_velocity,
     integrate_position, integrate_rotation, integrate_velocity, simulate_single_body,
     simulate_single_body_on_terrain, simulate_two_bodies, BodyId, BodyState, FragmentParticleData,
-    ParticleConfig, PhysicsConfig, PhysicsEngine, TerrainContact,
+    ParticleConfig, PhysicsConfig, PhysicsEngine, TerrainContact, VoxelFace,
 };
 pub use scene_utils::{
     centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset, spawn_chunk,

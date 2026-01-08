@@ -123,12 +123,16 @@ impl ParallelNode {
                                 let sy = y - shifty;
                                 let sz = z - shiftz;
 
+                                // Check bounds for both input AND output pattern dimensions
+                                let max_x = rule.imx.max(rule.omx) as i32;
+                                let max_y = rule.imy.max(rule.omy) as i32;
+                                let max_z = rule.imz.max(rule.omz) as i32;
                                 if sx < 0
                                     || sy < 0
                                     || sz < 0
-                                    || sx + rule.imx as i32 > mx as i32
-                                    || sy + rule.imy as i32 > my as i32
-                                    || sz + rule.imz as i32 > mz as i32
+                                    || sx + max_x > mx as i32
+                                    || sy + max_y > my as i32
+                                    || sz + max_z > mz as i32
                                 {
                                     continue;
                                 }
@@ -169,6 +173,12 @@ impl Node for ParallelNode {
         // Check step limit
         if self.data.steps > 0 && self.data.counter >= self.data.steps {
             return false;
+        }
+
+        // Ensure newstate buffer matches current grid size (grid can grow via map nodes)
+        let grid_size = ctx.grid.state.len();
+        if self.newstate.len() != grid_size {
+            self.newstate.resize(grid_size, 0);
         }
 
         // Record changes start

@@ -592,6 +592,11 @@ impl VoxelWorld {
         self.chunks.remove(&pos)
     }
 
+    /// Clear all chunks from the world.
+    pub fn clear(&mut self) {
+        self.chunks.clear();
+    }
+
     /// Check if a chunk exists at position.
     pub fn has_chunk(&self, pos: ChunkPos) -> bool {
         self.chunks.contains_key(&pos)

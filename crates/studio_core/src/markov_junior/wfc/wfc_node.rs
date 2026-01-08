@@ -534,6 +534,8 @@ impl WfcNode {
         self.first_go = true;
         self.rng = None;
         self.stack.clear();
+        // Clear the newgrid to avoid stale data from previous runs
+        self.newgrid.clear();
     }
 }
 

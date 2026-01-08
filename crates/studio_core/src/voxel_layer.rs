@@ -223,6 +223,21 @@ impl VoxelLayers {
         self.layers.iter_mut().find(|l| l.name == name)
     }
 
+    /// Add a new layer, replacing any existing layer with the same name.
+    pub fn add_layer(&mut self, layer: VoxelLayer) {
+        // Remove existing layer with same name first
+        self.layers.retain(|l| l.name != layer.name);
+        self.layers.push(layer);
+        self.sort_by_priority();
+    }
+
+    /// Remove a layer by name. Returns true if a layer was removed.
+    pub fn remove_layer(&mut self, name: &str) -> bool {
+        let len_before = self.layers.len();
+        self.layers.retain(|l| l.name != name);
+        self.layers.len() < len_before
+    }
+
     /// Iterate layers by priority (lowest first).
     pub fn iter_by_priority(&self) -> impl Iterator<Item = &VoxelLayer> {
         self.layers.iter()

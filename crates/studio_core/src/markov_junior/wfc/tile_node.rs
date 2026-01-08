@@ -228,7 +228,16 @@ impl TileNode {
         let sz = self.sz;
         let overlap = self.overlap;
         let overlapz = self.overlapz;
-        let num_colors = grid.c as usize;
+        // Use max of grid.c and the maximum ordinal in tiledata + 1
+        // to avoid index out of bounds when tiles have more colors than grid
+        let max_tile_color = self
+            .tiledata
+            .iter()
+            .flat_map(|t| t.iter())
+            .copied()
+            .max()
+            .unwrap_or(0) as usize;
+        let num_colors = (grid.c as usize).max(max_tile_color + 1);
 
         let output_mx = grid.mx;
         let output_my = grid.my;
