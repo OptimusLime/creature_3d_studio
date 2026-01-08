@@ -29,7 +29,7 @@
 //! ```
 
 use bevy::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::voxel::{ChunkPos, Voxel, VoxelWorld, CHUNK_SIZE_I32};
 
@@ -286,6 +286,148 @@ impl VoxelLayers {
 }
 
 // ============================================================================
+// ChunkEntityMap - tracks mesh entities for incremental updates
+// ============================================================================
+
+/// Maps world chunk positions to their mesh entities.
+/// Used by update_dirty_chunks to know which entities to rebuild.
+#[derive(Resource, Default)]
+pub struct ChunkEntityMap {
+    /// World chunk position → mesh entity
+    chunks: HashMap<ChunkPos, Entity>,
+}
+
+impl ChunkEntityMap {
+    /// Create a new empty map.
+    pub fn new() -> Self {
+        Self {
+            chunks: HashMap::new(),
+        }
+    }
+
+    /// Register a chunk entity.
+    pub fn register(&mut self, pos: ChunkPos, entity: Entity) {
+        self.chunks.insert(pos, entity);
+    }
+
+    /// Get entity for chunk position.
+    pub fn get(&self, pos: &ChunkPos) -> Option<Entity> {
+        self.chunks.get(pos).copied()
+    }
+
+    /// Remove and return entity for chunk position.
+    pub fn remove(&mut self, pos: &ChunkPos) -> Option<Entity> {
+        self.chunks.remove(pos)
+    }
+
+    /// Check if a chunk is registered.
+    pub fn contains(&self, pos: &ChunkPos) -> bool {
+        self.chunks.contains_key(pos)
+    }
+
+    /// Iterate all registered chunks.
+    pub fn iter(&self) -> impl Iterator<Item = (&ChunkPos, &Entity)> {
+        self.chunks.iter()
+    }
+
+    /// Number of registered chunks.
+    pub fn len(&self) -> usize {
+        self.chunks.len()
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    /// Clear all registrations.
+    pub fn clear(&mut self) {
+        self.chunks.clear();
+    }
+}
+
+// ============================================================================
+// Bevy Systems for dirty chunk updates
+// ============================================================================
+
+use crate::voxel_mesh::{
+    build_merged_chunk_mesh, ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
+};
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+
+/// System that rebuilds mesh for any dirty chunks.
+/// Runs every frame, only does work if chunks are dirty.
+///
+/// This system should be added to your app:
+/// ```ignore
+/// app.add_systems(Update, update_dirty_chunks);
+/// ```
+pub fn update_dirty_chunks(
+    mut layers: ResMut<VoxelLayers>,
+    chunk_map: Res<ChunkEntityMap>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mesh_query: Query<&Mesh3d>,
+) {
+    let dirty = layers.collect_dirty_chunks();
+    if dirty.is_empty() {
+        return;
+    }
+
+    info!("Rebuilding {} dirty chunks", dirty.len());
+
+    for chunk_pos in dirty {
+        // Get existing entity for this chunk
+        let Some(entity) = chunk_map.get(&chunk_pos) else {
+            // No entity yet - will be created by initial spawn or separate system
+            debug!("No entity registered for chunk {:?}", chunk_pos);
+            continue;
+        };
+
+        // Get mesh handle from entity
+        let Ok(mesh_handle) = mesh_query.get(entity) else {
+            warn!("Chunk entity {:?} missing Mesh3d component", entity);
+            continue;
+        };
+
+        // Build merged chunk mesh from all layers
+        if let Some(chunk_mesh) = build_merged_chunk_mesh(&layers, chunk_pos, true) {
+            // Rebuild mesh in place
+            if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
+                *mesh = chunk_mesh.mesh;
+            }
+        } else {
+            // Chunk is now empty - clear the mesh to an empty mesh
+            if let Some(mesh) = meshes.get_mut(&mesh_handle.0) {
+                // Create empty mesh with same topology
+                let mut empty = Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::default(),
+                );
+                empty.insert_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new());
+                empty.insert_attribute(Mesh::ATTRIBUTE_NORMAL, Vec::<[f32; 3]>::new());
+                empty.insert_attribute(ATTRIBUTE_VOXEL_COLOR, Vec::<[f32; 3]>::new());
+                empty.insert_attribute(ATTRIBUTE_VOXEL_EMISSION, Vec::<f32>::new());
+                empty.insert_attribute(ATTRIBUTE_VOXEL_AO, Vec::<f32>::new());
+                empty.insert_indices(Indices::U32(Vec::new()));
+                *mesh = empty;
+            }
+        }
+    }
+}
+
+/// Plugin that registers VoxelLayers resources and systems.
+pub struct VoxelLayersPlugin;
+
+impl Plugin for VoxelLayersPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<VoxelLayers>()
+            .init_resource::<ChunkEntityMap>()
+            .add_systems(Update, update_dirty_chunks);
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -492,5 +634,86 @@ mod tests {
 
         // Should no longer be solid
         assert!(!layers.is_solid(5, 5, 5));
+    }
+
+    // ========================================================================
+    // Phase 4: ChunkEntityMap tests
+    // ========================================================================
+
+    #[test]
+    fn test_chunk_entity_map_basic() {
+        let mut map = ChunkEntityMap::new();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+
+        // Create a fake entity (just for testing the map)
+        let entity = Entity::from_bits(42);
+        let chunk_pos = ChunkPos::new(1, 2, 3);
+
+        // Register
+        map.register(chunk_pos, entity);
+        assert!(!map.is_empty());
+        assert_eq!(map.len(), 1);
+        assert!(map.contains(&chunk_pos));
+
+        // Get
+        assert_eq!(map.get(&chunk_pos), Some(entity));
+        assert_eq!(map.get(&ChunkPos::new(0, 0, 0)), None);
+
+        // Remove
+        let removed = map.remove(&chunk_pos);
+        assert_eq!(removed, Some(entity));
+        assert!(map.is_empty());
+        assert!(!map.contains(&chunk_pos));
+    }
+
+    #[test]
+    fn test_chunk_entity_map_overwrite() {
+        let mut map = ChunkEntityMap::new();
+        let chunk_pos = ChunkPos::new(0, 0, 0);
+
+        let entity1 = Entity::from_bits(1);
+        let entity2 = Entity::from_bits(2);
+
+        map.register(chunk_pos, entity1);
+        assert_eq!(map.get(&chunk_pos), Some(entity1));
+
+        // Overwrite with new entity
+        map.register(chunk_pos, entity2);
+        assert_eq!(map.get(&chunk_pos), Some(entity2));
+        assert_eq!(map.len(), 1); // Still only one entry
+    }
+
+    #[test]
+    fn test_dirty_tracking_flow() {
+        let mut layers = VoxelLayers::new();
+
+        // Initially no dirty chunks
+        assert!(layers.collect_dirty_chunks().is_empty());
+
+        // Set voxel in terrain layer
+        layers
+            .get_mut("terrain")
+            .unwrap()
+            .set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+
+        // Now have dirty chunks
+        let dirty = layers.collect_dirty_chunks();
+        assert_eq!(dirty.len(), 1);
+        assert!(dirty.contains(&ChunkPos::from_world(5, 5, 5)));
+
+        // After collect, dirty is cleared
+        assert!(layers.collect_dirty_chunks().is_empty());
+
+        // Set voxel in generated layer with offset
+        let gen = layers.get_mut("generated").unwrap();
+        gen.offset = IVec3::new(100, 0, 0);
+        gen.set_voxel(5, 5, 5, Voxel::solid(0, 255, 0)); // Local (5,5,5)
+
+        // Dirty chunk should be at WORLD position (105, 5, 5)
+        let dirty = layers.collect_dirty_chunks();
+        assert_eq!(dirty.len(), 1);
+        // World pos 105 / 32 = chunk 3
+        assert!(dirty.contains(&ChunkPos::from_world(105, 5, 5)));
     }
 }

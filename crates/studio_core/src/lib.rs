@@ -93,12 +93,16 @@ pub use voxel_fragment::{
     FragmentSurfaceParticles, StaticVoxelWorld, TerrainOccupancy, VoxelFragment,
     VoxelFragmentBundle, VoxelFragmentPlugin,
 };
+pub use voxel_layer::{
+    update_dirty_chunks, ChunkEntityMap, VoxelLayer, VoxelLayers, VoxelLayersPlugin,
+};
 pub use voxel_mesh::{
     build_chunk_mesh, build_chunk_mesh_greedy, build_chunk_mesh_greedy_with_borders,
-    build_chunk_mesh_with_borders, build_single_chunk_mesh, build_world_meshes,
-    build_world_meshes_cross_chunk, build_world_meshes_cross_chunk_with_options,
-    build_world_meshes_with_options, ChunkMesh, VoxelMaterial, VoxelMaterialPlugin,
-    ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
+    build_chunk_mesh_with_borders, build_merged_chunk, build_merged_chunk_mesh,
+    build_single_chunk_mesh, build_world_meshes, build_world_meshes_cross_chunk,
+    build_world_meshes_cross_chunk_with_options, build_world_meshes_with_options, ChunkMesh,
+    VoxelMaterial, VoxelMaterialPlugin, ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR,
+    ATTRIBUTE_VOXEL_EMISSION,
 };
 pub use voxel_physics::{
     generate_chunk_colliders, generate_cuboid_collider, generate_merged_cuboid_collider,
