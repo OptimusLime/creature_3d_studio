@@ -29,6 +29,7 @@ pub mod voxel;
 pub mod voxel_collision;
 pub mod voxel_collision_gpu;
 pub mod voxel_fragment;
+pub mod voxel_layer;
 pub mod voxel_mesh;
 pub mod voxel_physics;
 pub mod voxel_world_plugin;

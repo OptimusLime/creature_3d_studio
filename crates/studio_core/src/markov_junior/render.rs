@@ -6,6 +6,7 @@
 //! C# Reference: Graphics.cs (BitmapRender, IsometricRender, SaveBitmap)
 
 use super::MjGrid;
+use crate::voxel::Voxel;
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,12 +14,15 @@ use std::path::Path;
 /// Default background color (dark gray, matches C# GUI.BACKGROUND)
 const BACKGROUND: [u8; 4] = [34, 34, 34, 255];
 
-/// MarkovJunior palette mapping characters to RGBA colors.
-/// Based on the C# palette.xml file.
+/// MarkovJunior palette mapping characters to RGBA colors and emission.
+/// Based on the C# palette.xml file, extended with emission support for
+/// integration with VoxelWorld.
 #[derive(Debug, Clone)]
 pub struct RenderPalette {
     /// Character to RGBA color mapping
     colors: HashMap<char, [u8; 4]>,
+    /// Character to emission level (0-255). Missing = 0.
+    emission: HashMap<char, u8>,
 }
 
 impl Default for RenderPalette {
@@ -91,12 +95,54 @@ impl RenderPalette {
         colors.insert('Z', [0xFF, 0xFF, 0xFF, 0xFF]); // Z (pure white)
         colors.insert('z', [0xCB, 0xDB, 0xFC, 0xFF]); // z
 
-        Self { colors }
+        Self {
+            colors,
+            emission: HashMap::new(),
+        }
     }
 
     /// Get the color for a character.
     pub fn get(&self, ch: char) -> Option<[u8; 4]> {
         self.colors.get(&ch).copied()
+    }
+
+    /// Convert MJ character to Voxel with color and emission.
+    /// This is the main method for MJ→VoxelWorld integration.
+    ///
+    /// # Arguments
+    /// * `ch` - The MJ character to convert
+    ///
+    /// # Returns
+    /// A Voxel with the palette color and emission value.
+    pub fn to_voxel(&self, ch: char) -> Voxel {
+        let rgba = self
+            .colors
+            .get(&ch)
+            .copied()
+            .unwrap_or([128, 128, 128, 255]);
+        let emission = self.emission.get(&ch).copied().unwrap_or(0);
+        Voxel::new(rgba[0], rgba[1], rgba[2], emission)
+    }
+
+    /// Get emission value for a character.
+    pub fn get_emission(&self, ch: char) -> u8 {
+        self.emission.get(&ch).copied().unwrap_or(0)
+    }
+
+    /// Set emission for a character. Builder pattern.
+    pub fn with_emission(mut self, ch: char, emission: u8) -> Self {
+        self.emission.insert(ch, emission);
+        self
+    }
+
+    /// Apply default emission for warm colors (Y, O, R, W).
+    /// Call after from_palette_xml() for standard glowing behavior.
+    pub fn with_default_emission(mut self) -> Self {
+        self.emission.insert('Y', 200); // Yellow glows bright
+        self.emission.insert('O', 180); // Orange glows
+        self.emission.insert('R', 150); // Red glows
+        self.emission.insert('W', 80); // White slight glow
+        self
     }
 
     /// Get colors as a Vec ordered by grid index.
@@ -2621,5 +2667,67 @@ mod tests {
 
         // The issue is: the rule only marks Z-direction boundaries
         // because (xy) symmetry doesn't rotate a vertical pattern to horizontal
+    }
+
+    // ========================================================================
+    // Phase 3: Emissive Palette Mapping tests
+    // ========================================================================
+
+    #[test]
+    fn test_palette_to_voxel_basic() {
+        let palette = RenderPalette::from_palette_xml();
+
+        // Y (Yellow) without emission set → emission 0
+        let voxel = palette.to_voxel('Y');
+        assert_eq!(voxel.color, [0xFF, 0xEC, 0x27]); // Yellow from palette.xml
+        assert_eq!(voxel.emission, 0); // No emission by default
+    }
+
+    #[test]
+    fn test_palette_with_emission() {
+        let palette = RenderPalette::from_palette_xml()
+            .with_emission('Y', 200)
+            .with_emission('O', 180);
+
+        let y_voxel = palette.to_voxel('Y');
+        assert_eq!(y_voxel.emission, 200);
+
+        let o_voxel = palette.to_voxel('O');
+        assert_eq!(o_voxel.emission, 180);
+
+        // B (Black) not set → emission 0
+        let b_voxel = palette.to_voxel('B');
+        assert_eq!(b_voxel.emission, 0);
+    }
+
+    #[test]
+    fn test_palette_default_emission() {
+        let palette = RenderPalette::from_palette_xml().with_default_emission();
+
+        assert_eq!(palette.to_voxel('Y').emission, 200);
+        assert_eq!(palette.to_voxel('O').emission, 180);
+        assert_eq!(palette.to_voxel('R').emission, 150);
+        assert_eq!(palette.to_voxel('W').emission, 80);
+        assert_eq!(palette.to_voxel('B').emission, 0); // Not a warm color
+        assert_eq!(palette.to_voxel('G').emission, 0); // Not a warm color
+    }
+
+    #[test]
+    fn test_palette_unknown_char_fallback() {
+        let palette = RenderPalette::from_palette_xml();
+
+        // Unknown character → gray fallback, no emission
+        let voxel = palette.to_voxel('?');
+        assert_eq!(voxel.color, [128, 128, 128]);
+        assert_eq!(voxel.emission, 0);
+    }
+
+    #[test]
+    fn test_palette_get_emission() {
+        let palette = RenderPalette::from_palette_xml().with_emission('Y', 200);
+
+        assert_eq!(palette.get_emission('Y'), 200);
+        assert_eq!(palette.get_emission('B'), 0); // Not set
+        assert_eq!(palette.get_emission('?'), 0); // Unknown char
     }
 }
