@@ -52,6 +52,7 @@ pub mod symmetry;
 pub mod verification;
 pub mod voxel_bridge;
 pub mod wfc;
+pub mod write_target;
 
 pub use all_node::AllNode;
 pub use convchain_node::ConvChainNode;
@@ -72,6 +73,7 @@ pub use search::{run_search, Board};
 pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
 pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
+pub use write_target::{MjWriteTarget, VoxelLayerTarget};
 
 // RNG abstraction (for C# compatibility testing)
 pub use rng::{DotNetRandom, MjRng, StdRandom};
