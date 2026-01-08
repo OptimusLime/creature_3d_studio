@@ -159,6 +159,22 @@ impl Model {
     pub fn is_running(&self) -> bool {
         self.interpreter.is_running()
     }
+
+    /// Enable or disable animated mode.
+    ///
+    /// When animated is true, the grid state is updated incrementally during execution,
+    /// allowing visualization of the generation process step-by-step. This is useful
+    /// for real-time rendering of the generation process.
+    ///
+    /// Call this after loading the model but before calling `reset()` or `step()`.
+    pub fn set_animated(&mut self, animated: bool) {
+        self.interpreter.set_animated(animated);
+    }
+
+    /// Check if animated mode is enabled.
+    pub fn is_animated(&self) -> bool {
+        self.interpreter.is_animated()
+    }
 }
 
 #[cfg(test)]

@@ -123,19 +123,25 @@ impl MjPalette {
 ///
 /// The grid is centered at the origin, so a 5x5x1 grid will
 /// have voxels from (-2, -2, 0) to (2, 2, 0).
+///
+/// **Coordinate mapping**: MarkovJunior uses Y as height (vertical),
+/// but Bevy/VoxelWorld uses Z as height. We swap Y<->Z:
+/// - MJ (x, y, z) -> VoxelWorld (x, z, y)
 pub fn to_voxel_world(grid: &MjGrid, palette: &MjPalette) -> VoxelWorld {
     let mut world = VoxelWorld::new();
 
     // Center offset so the grid is centered at origin
+    // Note: we swap Y and Z for the offset calculation to match the coordinate swap
     let offset_x = (grid.mx / 2) as i32;
-    let offset_y = (grid.my / 2) as i32;
-    let offset_z = (grid.mz / 2) as i32;
+    let offset_y = (grid.my / 2) as i32; // MJ height -> VoxelWorld Z offset
+    let offset_z = (grid.mz / 2) as i32; // MJ depth -> VoxelWorld Y offset
 
     for (x, y, z, value) in grid.iter_nonzero() {
         if let Some(voxel) = palette.get(value) {
+            // Swap Y and Z: MJ Y (height) -> VoxelWorld Z, MJ Z (depth) -> VoxelWorld Y
             let world_x = x as i32 - offset_x;
-            let world_y = y as i32 - offset_y;
-            let world_z = z as i32 - offset_z;
+            let world_y = z as i32 - offset_z; // MJ Z -> VoxelWorld Y
+            let world_z = y as i32 - offset_y; // MJ Y -> VoxelWorld Z (height)
             world.set_voxel(world_x, world_y, world_z, voxel);
         }
     }
@@ -219,25 +225,29 @@ mod tests {
     #[test]
     fn test_to_voxel_world_cross_pattern() {
         let mut grid = MjGrid::new(5, 5, 1);
-        // Cross pattern: center + 4 adjacent
+        // Cross pattern in MJ coords (x, y=height, z=depth):
+        // All at z=0 (MJ depth), y=2 (MJ height)
         grid.set(2, 2, 0, 1); // center
         grid.set(1, 2, 0, 1); // left
         grid.set(3, 2, 0, 1); // right
-        grid.set(2, 1, 0, 1); // down
-        grid.set(2, 3, 0, 1); // up
+        grid.set(2, 1, 0, 1); // lower (MJ y=1)
+        grid.set(2, 3, 0, 1); // upper (MJ y=3)
 
         let palette = MjPalette::default();
         let world = grid.to_voxel_world(&palette);
 
-        // 5x5 grid, offset is (-2, -2, 0)
-        // Center (2,2) -> world (0, 0, 0)
-        // Left (1,2) -> world (-1, 0, 0)
-        // etc.
+        // Coordinate swap: MJ (x, y, z) -> VoxelWorld (x, z, y)
+        // 5x5x1 grid: offset_x=2, offset_y=2, offset_z=0
+        // MJ (2,2,0) -> VW (0, 0, 0)
+        // MJ (1,2,0) -> VW (-1, 0, 0)
+        // MJ (3,2,0) -> VW (1, 0, 0)
+        // MJ (2,1,0) -> VW (0, 0, -1) - lower in height
+        // MJ (2,3,0) -> VW (0, 0, 1) - upper in height
         assert!(world.get_voxel(0, 0, 0).is_some(), "center missing");
         assert!(world.get_voxel(-1, 0, 0).is_some(), "left missing");
         assert!(world.get_voxel(1, 0, 0).is_some(), "right missing");
-        assert!(world.get_voxel(0, -1, 0).is_some(), "down missing");
-        assert!(world.get_voxel(0, 1, 0).is_some(), "up missing");
-        assert!(world.get_voxel(0, 0, 1).is_none(), "should be empty");
+        assert!(world.get_voxel(0, 0, -1).is_some(), "lower missing");
+        assert!(world.get_voxel(0, 0, 1).is_some(), "upper missing");
+        assert!(world.get_voxel(0, 1, 0).is_none(), "should be empty");
     }
 }

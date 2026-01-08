@@ -677,10 +677,11 @@ fn load_overlap_node(
         .get("shannon")
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    // C# defaults to 1000 tries (WaveFunctionCollapse.cs line 34)
     let tries = attrs
         .get("tries")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(1000);
 
     // Get sample path
     let sample_path = ctx.sample_path(sample_name).ok_or_else(|| {
@@ -761,10 +762,11 @@ fn load_tile_node(
         .get("shannon")
         .map(|s| s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    // C# defaults to 1000 tries (WaveFunctionCollapse.cs line 34)
     let tries = attrs
         .get("tries")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10);
+        .unwrap_or(1000);
 
     // Get overlap (can be negative in C# but we use 0 as default)
     let overlap = attrs

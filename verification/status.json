@@ -35,11 +35,6 @@
       "reason": "98.93% (105 differ)",
       "seed": 42
     },
-    "SubmergedKnots": {
-      "accuracy": 68.51761429398148,
-      "reason": "68.52% (34817 differ)",
-      "seed": 42
-    },
     "TestObsL4": {
       "accuracy": 97.75,
       "reason": "97.75% (9 differ)",
@@ -704,6 +699,10 @@
       "accuracy": 100.0,
       "seed": 42
     },
+    "SubmergedKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
     "Surface": {
       "accuracy": 100.0,
       "seed": 42
@@ -745,6 +744,26 @@
       "seed": 42
     },
     "TestObsL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestOneSteps": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL5": {
       "accuracy": 100.0,
       "seed": 42
     },

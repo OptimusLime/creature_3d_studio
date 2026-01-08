@@ -64,6 +64,10 @@ pub struct Interpreter {
     counter: usize,
     /// Whether the model is still running (root.go() returned true last step)
     running: bool,
+    /// Whether to update grid state incrementally during execution (for animation).
+    /// When true, nodes like WFC will update the grid after each step.
+    /// When false, updates only happen when nodes complete.
+    animated: bool,
 }
 
 impl Interpreter {
@@ -81,6 +85,7 @@ impl Interpreter {
             first: vec![0],
             counter: 0,
             running: false,
+            animated: false,
         }
     }
 
@@ -103,7 +108,21 @@ impl Interpreter {
             first: vec![0],
             counter: 0,
             running: false,
+            animated: false,
         }
+    }
+
+    /// Enable or disable animated mode.
+    ///
+    /// When animated is true, the grid state is updated incrementally during execution,
+    /// allowing visualization of the generation process step-by-step.
+    pub fn set_animated(&mut self, animated: bool) {
+        self.animated = animated;
+    }
+
+    /// Check if animated mode is enabled.
+    pub fn is_animated(&self) -> bool {
+        self.animated
     }
 
     /// Reset the interpreter for a new run with the given seed.
@@ -208,7 +227,7 @@ impl Interpreter {
             changes: std::mem::take(&mut self.changes),
             first: std::mem::take(&mut self.first),
             counter: self.counter,
-            gif: false,
+            gif: self.animated, // Enable incremental updates when animated
         };
 
         // Execute one step

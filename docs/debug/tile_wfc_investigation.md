@@ -3,7 +3,15 @@
 ## Problem Statement
 3D tile WFC models (TestKnotsL1, SelectLongKnots, etc.) fail verification.
 Starting verification: 108/140 models (77.1%).
-Current status: 96.05% match on TestKnotsL1 (1066 cells differ out of 27000).
+
+## RESOLVED - Final Status
+- **111/144 models verified (77.1%)**
+- TestKnotsL1: **100% match** (was 96.05%)
+- ColoredKnots: **100% match** (was 94.39%)
+- TestKnotsL2: **100% match**
+- SelectLongKnots: 99.44% (was 92.73%) - remaining diff is post-WFC processing
+
+Original issue: 96.05% match on TestKnotsL1 (1066 cells differ out of 27000).
 
 ## Model Structure (TestKnotsL1)
 ```xml
@@ -108,43 +116,51 @@ C# wave cell 0: pattern 0  <- Should match!
 
 Also required changing the `rng` field type from `Option<StdRandom>` to `Option<Box<dyn MjRng>>`.
 
-## Current Status
+### Bug 7: y_rotate and y_rotate_tile had wrong indexing formula
+**Location:** `tile_node.rs` y_rotate() and y_rotate_tile() functions
 
-After all fixes:
+**Problem:**
+The y-axis rotation functions were computing the wrong transformation.
+
+C# TileModel.cs line 63:
+```csharp
+byte[] yRotate(byte[] p) => newtile((x, y, z) => p[z + y * S + (S - 1 - x) * S * S]);
+```
+
+This means: `result[x, y, z] = input[z, y, S-1-x]`
+
+Rust was computing: `result[x, y, z] = input[S-1-z, y, x]` (wrong!)
+
+**Evidence:** tiledata arrays differed:
+```
+Rust tiledata[13] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, ...]  <- Wrong!
+C#   tiledata[13] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, ...]  <- Correct
+```
+
+This caused:
+- tiledata arrays to differ between C# and Rust (pattern 13 had different voxels)
+- Propagator constraints for Z-direction (dir 4/5) to be swapped
+
+**Fix:** Changed both `y_rotate` and `y_rotate_tile` to use the correct formula:
+```rust
+let src = z + y * s + (s - 1 - x) * s * s;
+let dst = x + y * s + z * s * s;
+result[dst] = tile[src];
+```
+
+## Final Status
+
+After all 7 bugs fixed:
+- **TestKnotsL1: 100% match**
 - Propagator: 146 constraints for all 6 directions (matches C#)
 - Propagator pairs: Identical between C# and Rust
-- WFC observations: First 882 observations match exactly
-- Wave state: First 20 cells match exactly
-- **Output: 96.05% match (1066 cells differ)**
+- Wave states: Identical
+- tiledata arrays: Identical
+- Output grids: Identical
 
-## Remaining Issue
+## Debug Output
 
-The wave states match, but the output grids differ by ~4%.
-- No ties detected in UpdateState (wave is fully collapsed)
-- tiledata arrays match between C# and Rust
-- Parameters (s=3, sz=3, overlap=0, overlapz=0) match
-
-Differences occur at coordinates like (4,1,0), (7,1,0), (10,1,0)... which are all at `3n+1` positions (middle of tiles).
-
-## Debug Output Still Active
-
-**WARNING:** The following debug output is still enabled and should be removed before final commit:
-
-### wfc_node.rs
-- Lines 267-284: Observation logging during GoodSeed
-- Lines 285-293: Contradiction/success logging
-- Lines 359-376: SKIPPING cell debug
-- Lines 437-447: Pattern selection logging
-- Lines 461-477: weighted_random logging
-
-### tile_node.rs  
-- Lines 229-235: tiledata debug output
-- Lines 275-300: TIE detection in UpdateState
-
-### C# changes (MarkovJunior/source/)
-- TileModel.cs: Debug output in UpdateState, propagator pair dump
-- WaveFunctionCollapse.cs: NextUnobservedNode debug, Observe debug
-- Helper.cs: weighted_random debug
+All debug logging has been removed in commit 534bd5c.
 
 ## Key Commands
 
@@ -166,9 +182,12 @@ python3 scripts/batch_verify.py TestKnotsL1 --regenerate
 python3 scripts/compare_grids.py MarkovJunior/verification/TestKnotsL1_seed42.json verification/rust/TestKnotsL1_seed42.json
 ```
 
-## Next Steps
+## Lessons Learned
 
-1. Debug the UpdateState output coordinate calculation
-2. Compare actual output values at specific coordinates
-3. Check if there's a difference in how tile subcells are indexed (dx, dy, dz order)
-4. Clean up debug output after finding root cause
+1. **Rotation formulas must match exactly** - Different rotation formulas produce different symmetry variants, which cascade into different propagator constraints and WFC outcomes.
+
+2. **Multiple functions may implement the same rotation** - In this codebase, `y_rotate` (for cube_symmetries) and `y_rotate_tile` (for propagator building) both needed to match C#'s `yRotate`.
+
+3. **Hypothesis-driven debugging is essential** - By comparing specific data structures (tiledata arrays, propagator pairs), we identified the root cause rather than guessing.
+
+4. **Wave state matching != Output matching** - Even with identical wave states, the output can differ if tile definitions are different.
