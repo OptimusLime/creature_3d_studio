@@ -20,6 +20,7 @@ use bevy::render::{
     renderer::{RenderContext, RenderDevice},
     view::{ExtractedView, ViewTarget},
 };
+use std::f32::consts::TAU;
 
 use super::gbuffer::ViewGBufferTextures;
 use super::sky_dome::SkyDomeConfig;
@@ -35,14 +36,74 @@ pub struct SkyDomeUniform {
     pub horizon_color: [f32; 4],
     /// Zenith color (rgb, a unused)
     pub zenith_color: [f32; 4],
-    /// x = blend_power, yzw = unused
+    /// x = blend_power, y = moons_enabled, zw = unused
     pub params: [f32; 4],
+    /// Moon 1: xyz = direction, w = size
+    pub moon1_direction: [f32; 4],
+    /// Moon 1: rgb = color, a = glow_intensity
+    pub moon1_color: [f32; 4],
+    /// Moon 1: x = glow_falloff, yzw = unused
+    pub moon1_params: [f32; 4],
+    /// Moon 2: xyz = direction, w = size
+    pub moon2_direction: [f32; 4],
+    /// Moon 2: rgb = color, a = glow_intensity
+    pub moon2_color: [f32; 4],
+    /// Moon 2: x = glow_falloff, yzw = unused
+    pub moon2_params: [f32; 4],
+}
+
+/// Moon orbital configuration (matches day_night.rs MoonCycleConfig logic)
+struct MoonOrbit {
+    period: f32,
+    phase_offset: f32,
+    inclination: f32,
+}
+
+impl MoonOrbit {
+    /// Purple moon orbit (from day_night.rs)
+    fn purple() -> Self {
+        Self {
+            period: 1.0,
+            phase_offset: 0.0,
+            inclination: 30.0,
+        }
+    }
+
+    /// Orange moon orbit (from day_night.rs)
+    fn orange() -> Self {
+        Self {
+            period: 0.8,
+            phase_offset: 0.5,
+            inclination: 15.0,
+        }
+    }
+
+    /// Calculate moon direction at a given cycle time.
+    /// Returns normalized direction TO the moon (for rendering, not lighting).
+    fn calculate_direction(&self, cycle_time: f32) -> Vec3 {
+        // Adjust time by period and phase offset
+        let moon_time = (cycle_time / self.period + self.phase_offset).fract();
+
+        // Convert to radians for orbital position
+        let angle = moon_time * TAU;
+
+        // Calculate position on inclined orbit
+        let incline_rad = self.inclination.to_radians();
+
+        // Basic circular orbit in XY plane, then tilt around X axis
+        let x = angle.cos();
+        let y_base = angle.sin();
+        let y = y_base * incline_rad.cos();
+        let z = y_base * incline_rad.sin();
+
+        Vec3::new(x, y, z).normalize()
+    }
 }
 
 /// Render graph node for sky dome rendering.
 ///
 /// Draws a fullscreen triangle, checks depth from G-buffer,
-/// and renders sky gradient where no geometry exists.
+/// and renders sky gradient with moons where no geometry exists.
 #[derive(Default)]
 pub struct SkyDomeNode;
 
@@ -94,6 +155,16 @@ impl ViewNode for SkyDomeNode {
         let horizon_linear = config.horizon_color.to_linear();
         let zenith_linear = config.zenith_color.to_linear();
 
+        // Compute moon positions from time_of_day
+        let moon1_orbit = MoonOrbit::purple();
+        let moon2_orbit = MoonOrbit::orange();
+        let moon1_dir = moon1_orbit.calculate_direction(config.time_of_day);
+        let moon2_dir = moon2_orbit.calculate_direction(config.time_of_day);
+
+        // Convert moon colors to linear
+        let moon1_color_linear = config.moon1.color.to_linear();
+        let moon2_color_linear = config.moon2.color.to_linear();
+
         // Create uniform data
         let uniform = SkyDomeUniform {
             inv_view_proj: inv_view_proj.to_cols_array_2d(),
@@ -109,7 +180,28 @@ impl ViewNode for SkyDomeNode {
                 zenith_linear.blue,
                 1.0,
             ],
-            params: [config.horizon_blend_power, 0.0, 0.0, 0.0],
+            params: [
+                config.horizon_blend_power,
+                if config.moons_enabled { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
+            moon1_direction: [moon1_dir.x, moon1_dir.y, moon1_dir.z, config.moon1.size],
+            moon1_color: [
+                moon1_color_linear.red,
+                moon1_color_linear.green,
+                moon1_color_linear.blue,
+                config.moon1.glow_intensity,
+            ],
+            moon1_params: [config.moon1.glow_falloff, 0.0, 0.0, 0.0],
+            moon2_direction: [moon2_dir.x, moon2_dir.y, moon2_dir.z, config.moon2.size],
+            moon2_color: [
+                moon2_color_linear.red,
+                moon2_color_linear.green,
+                moon2_color_linear.blue,
+                config.moon2.glow_intensity,
+            ],
+            moon2_params: [config.moon2.glow_falloff, 0.0, 0.0, 0.0],
         };
 
         // Create uniform buffer

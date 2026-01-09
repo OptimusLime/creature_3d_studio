@@ -17,6 +17,7 @@
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use std::path::Path;
+use studio_core::deferred::SkyDomeConfig;
 use studio_core::markov_junior::render::RenderPalette;
 use studio_core::markov_junior::Model;
 use studio_core::{DeferredLightingConfig, Voxel, VoxelWorld, VoxelWorldApp, WorldSource};
@@ -120,6 +121,8 @@ struct CapturePosition {
     name: &'static str,
     position: Vec3,
     look_at: Vec3,
+    /// Optional time of day override (0.0-1.0) for moon positioning
+    time_of_day: Option<f32>,
 }
 
 /// State machine for the capture sequence.
@@ -142,30 +145,50 @@ impl CaptureState {
                 // Looking straight up from ground level
                 position: Vec3::new(0.0, 5.0, 0.0),
                 look_at: Vec3::new(0.0, 100.0, 0.0),
+                time_of_day: Some(0.15), // Moons visible above
             },
             CapturePosition {
                 name: "sky_horizon",
                 // Looking at horizon from elevated position
                 position: Vec3::new(0.0, 30.0, -60.0),
                 look_at: Vec3::new(0.0, 20.0, 100.0),
+                time_of_day: Some(0.15), // Moons near horizon
+            },
+            // Moon position verification captures
+            CapturePosition {
+                name: "moon_time_00",
+                // Looking at sky at time 0.0 - moons at starting position
+                position: Vec3::new(0.0, 5.0, 0.0),
+                look_at: Vec3::new(1.0, 0.5, 0.0), // Looking toward +X horizon
+                time_of_day: Some(0.0),
+            },
+            CapturePosition {
+                name: "moon_time_25",
+                // Looking at sky at time 0.25 - moons at quarter position
+                position: Vec3::new(0.0, 5.0, 0.0),
+                look_at: Vec3::new(0.0, 1.0, 1.0), // Looking toward +Z/up
+                time_of_day: Some(0.25),
             },
             CapturePosition {
                 name: "building_front",
                 // Close front view of building area
                 position: Vec3::new(30.0, 20.0, 30.0),
                 look_at: Vec3::new(0.0, 15.0, 0.0),
+                time_of_day: None, // Keep default
             },
             CapturePosition {
                 name: "building_aerial",
                 // Top-down aerial view
                 position: Vec3::new(0.0, 80.0, 0.0),
                 look_at: Vec3::new(0.0, 0.0, 0.1),
+                time_of_day: None,
             },
             CapturePosition {
                 name: "terrain_distance",
                 // Looking at distant terrain/horizon
                 position: Vec3::new(-30.0, 15.0, -30.0),
                 look_at: Vec3::new(50.0, 5.0, 50.0),
+                time_of_day: None,
             },
         ];
 
@@ -241,6 +264,7 @@ fn setup_building(world: &mut World) {
 fn capture_sequence_system(
     mut state: ResMut<CaptureState>,
     mut camera_query: Query<&mut Transform, With<Camera>>,
+    mut sky_config: ResMut<SkyDomeConfig>,
     mut commands: Commands,
     mut exit: bevy::ecs::event::EventWriter<AppExit>,
 ) {
@@ -264,14 +288,21 @@ fn capture_sequence_system(
         return;
     };
 
-    // If we just started a new capture, position the camera
+    // If we just started a new capture, position the camera and set time
     if state.frames_waited == 0 && !state.capture_pending {
         // Position camera for this capture
         for mut transform in camera_query.iter_mut() {
             transform.translation = capture.position;
             transform.look_at(capture.look_at, Vec3::Y);
         }
-        println!("Positioning camera for: {}", capture.name);
+
+        // Set time of day if specified
+        if let Some(time) = capture.time_of_day {
+            sky_config.time_of_day = time;
+            println!("Positioning camera for: {} (time={})", capture.name, time);
+        } else {
+            println!("Positioning camera for: {}", capture.name);
+        }
     }
 
     // Wait for scene to settle
