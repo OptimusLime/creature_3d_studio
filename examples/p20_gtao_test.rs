@@ -41,130 +41,158 @@ fn main() {
     }
 
     // Configure debug screenshots for systematic verification
-    // 
+    //
     // ORDERED BY ALGORITHM PHASE - see docs/GTAO_VERIFICATION.md
-    // 
+    //
     // IMPORTANT: GTAO debug modes write to the GTAO texture, which is then sampled
     // by the lighting shader. To SEE the GTAO debug output, we must ALSO set
     // lighting_debug_mode = 5 (AO only) so the lighting shader passes through
     // the GTAO texture values directly.
     let debug_config = DebugScreenshotConfig::new("screenshots/gtao_test")
         .with_base_wait_frames(15) // Wait for scene to stabilize
-
         // ============================================================
         // PHASE 1: G-Buffer Inputs (pre-requisite)
         // ============================================================
         .with_capture("p1_gbuffer_depth", DebugCapture::lighting_debug(2))
         .with_capture("p1_gbuffer_normals", DebugCapture::lighting_debug(1))
-
         // ============================================================
         // PHASE 2: Depth Linearization & MIP Chain
         // ============================================================
-        .with_capture("p2_depth_mip0", DebugCapture {
-            name: "p2_depth_mip0".to_string(),
-            gtao_debug_mode: 11,      // Viewspace linear depth MIP 0
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-        .with_capture("p2_depth_mip1", DebugCapture {
-            name: "p2_depth_mip1".to_string(),
-            gtao_debug_mode: 12,      // Depth MIP level 1
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-        .with_capture("p2_depth_mip2", DebugCapture {
-            name: "p2_depth_mip2".to_string(),
-            gtao_debug_mode: 13,      // Depth MIP level 2
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-        .with_capture("p2_depth_log", DebugCapture {
-            name: "p2_depth_log".to_string(),
-            gtao_debug_mode: 16,      // Log-scale depth (full range visible)
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-
+        .with_capture(
+            "p2_depth_mip0",
+            DebugCapture {
+                name: "p2_depth_mip0".to_string(),
+                gtao_debug_mode: 11, // Viewspace linear depth MIP 0
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
+        .with_capture(
+            "p2_depth_mip1",
+            DebugCapture {
+                name: "p2_depth_mip1".to_string(),
+                gtao_debug_mode: 12, // Depth MIP level 1
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
+        .with_capture(
+            "p2_depth_mip2",
+            DebugCapture {
+                name: "p2_depth_mip2".to_string(),
+                gtao_debug_mode: 13, // Depth MIP level 2
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
+        .with_capture(
+            "p2_depth_log",
+            DebugCapture {
+                name: "p2_depth_log".to_string(),
+                gtao_debug_mode: 16, // Log-scale depth (full range visible)
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         // ============================================================
         // PHASE 3: Edge Detection
         // ============================================================
-        .with_capture("p3_edges_packed", DebugCapture {
-            name: "p3_edges_packed".to_string(),
-            gtao_debug_mode: 40,      // Packed edges (raw output)
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-        .with_capture("p3_edges_inverted", DebugCapture {
-            name: "p3_edges_inverted".to_string(),
-            gtao_debug_mode: 44,      // Inverted edges (edges = bright)
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-
+        .with_capture(
+            "p3_edges_packed",
+            DebugCapture {
+                name: "p3_edges_packed".to_string(),
+                gtao_debug_mode: 40, // Packed edges (raw output)
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
+        .with_capture(
+            "p3_edges_inverted",
+            DebugCapture {
+                name: "p3_edges_inverted".to_string(),
+                gtao_debug_mode: 44, // Inverted edges (edges = bright)
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         // ============================================================
         // PHASE 4: View-Space Normals
         // ============================================================
-        .with_capture("p4_normal_z", DebugCapture {
-            name: "p4_normal_z".to_string(),
-            gtao_debug_mode: 20,      // View-space normal.z
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-        .with_capture("p4_normal_xy", DebugCapture {
-            name: "p4_normal_xy".to_string(),
-            gtao_debug_mode: 21,      // View-space normal.xy
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-
+        .with_capture(
+            "p4_normal_z",
+            DebugCapture {
+                name: "p4_normal_z".to_string(),
+                gtao_debug_mode: 20, // View-space normal.z
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
+        .with_capture(
+            "p4_normal_xy",
+            DebugCapture {
+                name: "p4_normal_xy".to_string(),
+                gtao_debug_mode: 21, // View-space normal.xy
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         // ============================================================
         // PHASE 5: Screen-Space Radius
         // ============================================================
-        .with_capture("p5_radius", DebugCapture {
-            name: "p5_radius".to_string(),
-            gtao_debug_mode: 30,      // Screenspace radius
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-
+        .with_capture(
+            "p5_radius",
+            DebugCapture {
+                name: "p5_radius".to_string(),
+                gtao_debug_mode: 30, // Screenspace radius
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         // ============================================================
         // PHASE 6: Raw GTAO Output (before denoise)
         // ============================================================
-        .with_capture("p6_gtao_raw", DebugCapture {
-            name: "p6_gtao_raw".to_string(),
-            gtao_debug_mode: 50,      // Raw GTAO before denoise
-            lighting_debug_mode: 5,
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
-
+        .with_capture(
+            "p6_gtao_raw",
+            DebugCapture {
+                name: "p6_gtao_raw".to_string(),
+                gtao_debug_mode: 50, // Raw GTAO before denoise
+                lighting_debug_mode: 5,
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         // ============================================================
         // PHASE 7: Denoised GTAO Output
         // ============================================================
-        .with_capture("p7_ao_denoised", DebugCapture {
-            name: "p7_ao_denoised".to_string(),
-            gtao_debug_mode: 0,       // Normal GTAO (denoised)
-            lighting_debug_mode: 5,   // View as grayscale
-            denoise_debug_mode: 0,
-            wait_frames: 5,
-        })
+        .with_capture(
+            "p7_ao_denoised",
+            DebugCapture {
+                name: "p7_ao_denoised".to_string(),
+                gtao_debug_mode: 0,     // Normal GTAO (denoised)
+                lighting_debug_mode: 5, // View as grayscale
+                denoise_debug_mode: 0,
+                wait_frames: 5,
+            },
+        )
         .with_capture("p7_denoise_diff", DebugCapture::denoise_debug(4))
-
         // ============================================================
         // PHASE 8: Final Composited Render
         // ============================================================
         .with_capture("p8_render", DebugCapture::default());
 
-    println!("Capturing {} debug screenshots to screenshots/gtao_test/", debug_config.captures.len());
+    println!(
+        "Capturing {} debug screenshots to screenshots/gtao_test/",
+        debug_config.captures.len()
+    );
     println!();
 
     // Camera positioned to see all test geometries
@@ -173,7 +201,7 @@ fn main() {
         .with_world_file(world_path)
         .with_resolution(1024, 768)
         .with_deferred(true)
-        .without_deferred_bloom()  // Disable bloom for clean debug output
+        .without_deferred_bloom() // Disable bloom for clean debug output
         .with_clear_color(Color::srgb(0.1, 0.1, 0.15))
         .with_camera_angle(35.0, 25.0)
         .with_zoom(0.7)

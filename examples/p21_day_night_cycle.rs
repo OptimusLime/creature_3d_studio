@@ -53,13 +53,13 @@ fn main() {
 /// Based on test_darkworld.lua but built programmatically.
 fn build_dark_world(world: &mut VoxelWorld) {
     // Colors
-    let obsidian = Voxel::solid(20, 15, 25);        // Dark purple-black rock
-    let dark_stone = Voxel::solid(35, 30, 40);      // Slightly lighter purple stone
-    let dark_metal = Voxel::solid(45, 40, 50);      // For ruins
-    
+    let obsidian = Voxel::solid(20, 15, 25); // Dark purple-black rock
+    let dark_stone = Voxel::solid(35, 30, 40); // Slightly lighter purple stone
+    let dark_metal = Voxel::solid(45, 40, 50); // For ruins
+
     // Emissive crystals (using Voxel::new for custom emission values)
     let purple_crystal = Voxel::new(120, 40, 220, 220);
-    let orange_crystal = Voxel::emissive(255, 100, 20);  // Full emission (255)
+    let orange_crystal = Voxel::emissive(255, 100, 20); // Full emission (255)
     let cyan_crystal = Voxel::new(50, 220, 255, 240);
     let pink_crystal = Voxel::new(255, 100, 150, 230);
 
@@ -68,9 +68,13 @@ fn build_dark_world(world: &mut VoxelWorld) {
         for z in 0..24 {
             let height_noise = ((x as f32 * 0.3).sin() * (z as f32 * 0.4).cos() + 0.5) as i32;
             let base_y = height_noise.max(0);
-            
-            let color = if (x + z) % 7 == 0 { dark_stone } else { obsidian };
-            
+
+            let color = if (x + z) % 7 == 0 {
+                dark_stone
+            } else {
+                obsidian
+            };
+
             for y in 0..=base_y {
                 world.set_voxel(x, y, z, color);
             }

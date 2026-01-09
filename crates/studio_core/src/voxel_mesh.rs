@@ -416,6 +416,102 @@ pub fn build_world_meshes_with_options(world: &VoxelWorld, use_greedy: bool) -> 
         .collect()
 }
 
+// ============================================================================
+// VoxelLayers merged chunk building
+// ============================================================================
+
+use crate::voxel_layer::VoxelLayers;
+
+/// Build a single VoxelChunk by merging all visible layers at this world chunk position.
+/// Higher priority layers override lower ones.
+///
+/// # Arguments
+/// * `layers` - The VoxelLayers resource containing all layers
+/// * `world_chunk_pos` - World-space chunk position to build
+///
+/// # Returns
+/// Some(VoxelChunk) if any layer has voxels in this chunk, None if empty.
+pub fn build_merged_chunk(layers: &VoxelLayers, world_chunk_pos: ChunkPos) -> Option<VoxelChunk> {
+    let mut merged = VoxelChunk::new();
+    let mut has_voxels = false;
+
+    let world_origin = world_chunk_pos.world_origin();
+
+    // Iterate layers lowest priority first (so higher overwrites)
+    for layer in layers.iter_by_priority() {
+        if !layer.visible {
+            continue;
+        }
+
+        // Convert world chunk origin to layer-local coordinates
+        let local_origin = layer.world_to_local(bevy::prelude::IVec3::new(
+            world_origin.0,
+            world_origin.1,
+            world_origin.2,
+        ));
+
+        // Iterate all positions in this chunk
+        for lx in 0..CHUNK_SIZE {
+            for ly in 0..CHUNK_SIZE {
+                for lz in 0..CHUNK_SIZE {
+                    // Layer-local world position for this voxel
+                    let layer_x = local_origin.x + lx as i32;
+                    let layer_y = local_origin.y + ly as i32;
+                    let layer_z = local_origin.z + lz as i32;
+
+                    if let Some(voxel) = layer.world.get_voxel(layer_x, layer_y, layer_z) {
+                        // Higher priority layers are iterated later, so they overwrite
+                        merged.set(lx, ly, lz, voxel);
+                        has_voxels = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if has_voxels {
+        Some(merged)
+    } else {
+        None
+    }
+}
+
+/// Build a mesh from merged layers at a world chunk position.
+///
+/// # Arguments
+/// * `layers` - The VoxelLayers resource
+/// * `world_chunk_pos` - World-space chunk position
+/// * `use_greedy` - Whether to use greedy meshing
+///
+/// # Returns
+/// Some(ChunkMesh) if chunk has voxels, None if empty.
+pub fn build_merged_chunk_mesh(
+    layers: &VoxelLayers,
+    world_chunk_pos: ChunkPos,
+    use_greedy: bool,
+) -> Option<ChunkMesh> {
+    let merged = build_merged_chunk(layers, world_chunk_pos)?;
+
+    let mesh = if use_greedy {
+        build_chunk_mesh_greedy(&merged)
+    } else {
+        build_chunk_mesh(&merged)
+    };
+
+    let half = CHUNK_SIZE as f32 / 2.0;
+    let world_offset = [
+        world_chunk_pos.x as f32 * CHUNK_SIZE as f32 + half,
+        world_chunk_pos.y as f32 * CHUNK_SIZE as f32 + half,
+        world_chunk_pos.z as f32 * CHUNK_SIZE as f32 + half,
+    ];
+
+    Some(ChunkMesh {
+        chunk_pos: world_chunk_pos,
+        mesh,
+        world_offset,
+    })
+}
+
 /// Build a mesh for a single chunk at a specific position.
 ///
 /// Convenience function when you only need to update one chunk.
@@ -2319,5 +2415,145 @@ mod tests {
                 .is_some());
             assert!(chunk_mesh.mesh.attribute(ATTRIBUTE_VOXEL_AO).is_some());
         }
+    }
+
+    // ========================================================================
+    // Phase 2: VoxelLayers merged chunk tests
+    // ========================================================================
+
+    #[test]
+    fn test_merged_chunk_priority() {
+        let mut layers = VoxelLayers::new();
+
+        // Terrain layer (priority 0): red voxel at (5,5,5)
+        layers
+            .get_mut("terrain")
+            .unwrap()
+            .set_voxel(5, 5, 5, Voxel::solid(255, 0, 0));
+
+        // Generated layer (priority 10): blue voxel at same position
+        layers
+            .get_mut("generated")
+            .unwrap()
+            .set_voxel(5, 5, 5, Voxel::solid(0, 0, 255));
+
+        // Build merged chunk at (0,0,0)
+        let merged = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0)).unwrap();
+
+        // Merged result should be blue (higher priority wins)
+        let voxel = merged.get(5, 5, 5).unwrap();
+        assert_eq!(voxel.color, [0, 0, 255]);
+    }
+
+    #[test]
+    fn test_merged_chunk_offset() {
+        let mut layers = VoxelLayers::new();
+
+        // Generated layer offset at (100, 0, 0)
+        let gen = layers.get_mut("generated").unwrap();
+        gen.offset = bevy::prelude::IVec3::new(100, 0, 0);
+        gen.set_voxel(5, 5, 5, Voxel::solid(0, 255, 0)); // Local coords
+
+        // Should NOT appear in chunk (0,0,0) since offset moves it to chunk (3,0,0)
+        let merged_origin = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0));
+        assert!(
+            merged_origin.is_none() || merged_origin.unwrap().get(5, 5, 5).is_none(),
+            "Voxel should not appear at origin chunk"
+        );
+
+        // World position 105 is in chunk 3 (105 / 32 = 3)
+        let merged_offset = build_merged_chunk(&layers, ChunkPos::new(3, 0, 0));
+        assert!(
+            merged_offset.is_some(),
+            "Voxel should appear in offset chunk"
+        );
+
+        // At world pos (105, 5, 5), local chunk pos is (105 % 32, 5, 5) = (9, 5, 5)
+        let chunk = merged_offset.unwrap();
+        assert!(
+            chunk.get(9, 5, 5).is_some(),
+            "Voxel should be at local position (9, 5, 5) in chunk 3"
+        );
+    }
+
+    #[test]
+    fn test_build_merged_chunk_combines_layers() {
+        let mut layers = VoxelLayers::new();
+
+        // Terrain: voxel at (0,0,0)
+        layers
+            .get_mut("terrain")
+            .unwrap()
+            .set_voxel(0, 0, 0, Voxel::solid(255, 0, 0));
+
+        // Generated: voxel at (1,0,0)
+        layers
+            .get_mut("generated")
+            .unwrap()
+            .set_voxel(1, 0, 0, Voxel::solid(0, 255, 0));
+
+        let merged = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0)).unwrap();
+
+        // Both voxels should be present
+        assert!(merged.get(0, 0, 0).is_some(), "Terrain voxel should exist");
+        assert!(
+            merged.get(1, 0, 0).is_some(),
+            "Generated voxel should exist"
+        );
+    }
+
+    #[test]
+    fn test_build_merged_chunk_mesh() {
+        let mut layers = VoxelLayers::new();
+
+        // Add a voxel
+        layers
+            .get_mut("terrain")
+            .unwrap()
+            .set_voxel(16, 16, 16, Voxel::solid(255, 0, 0));
+
+        let chunk_mesh = build_merged_chunk_mesh(&layers, ChunkPos::new(0, 0, 0), false);
+        assert!(chunk_mesh.is_some());
+
+        let mesh = chunk_mesh.unwrap();
+        assert_eq!(mesh.chunk_pos, ChunkPos::new(0, 0, 0));
+
+        // Single voxel should produce 24 vertices
+        let positions = mesh.mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap();
+        assert_eq!(positions.len(), 24);
+    }
+
+    #[test]
+    fn test_build_merged_chunk_empty_returns_none() {
+        let layers = VoxelLayers::new();
+
+        // No voxels in any layer
+        let merged = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0));
+        assert!(merged.is_none());
+
+        let mesh = build_merged_chunk_mesh(&layers, ChunkPos::new(0, 0, 0), false);
+        assert!(mesh.is_none());
+    }
+
+    #[test]
+    fn test_merged_chunk_invisible_layer_excluded() {
+        let mut layers = VoxelLayers::new();
+
+        // Add voxel to generated layer
+        layers
+            .get_mut("generated")
+            .unwrap()
+            .set_voxel(5, 5, 5, Voxel::solid(0, 255, 0));
+
+        // Layer is visible - should produce chunk
+        let merged_visible = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0));
+        assert!(merged_visible.is_some());
+
+        // Hide the layer
+        layers.get_mut("generated").unwrap().visible = false;
+
+        // Should not produce chunk (layer hidden)
+        let merged_hidden = build_merged_chunk(&layers, ChunkPos::new(0, 0, 0));
+        assert!(merged_hidden.is_none());
     }
 }

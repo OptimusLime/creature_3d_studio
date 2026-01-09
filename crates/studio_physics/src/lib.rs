@@ -12,8 +12,8 @@
 //! This decouples UI (including Lua scripts) from direct physics manipulation.
 
 use bevy::prelude::*;
-use rapier3d::prelude as rapier;
 use rapier::nalgebra::Vector3;
+use rapier3d::prelude as rapier;
 
 /// Commands that can modify the physics scene.
 /// Queued by UI (Lua or Rust) and applied by the physics system.
@@ -62,13 +62,17 @@ impl Plugin for PhysicsPlugin {
             .add_message::<SpawnCubeEvent>()
             .add_message::<ClearBodiesEvent>()
             .add_systems(Startup, setup_physics_scene)
-            .add_systems(Update, (
-                apply_scene_commands,
-                handle_spawn_cube,
-                handle_clear_bodies,
-                step_physics,
-                sync_transforms,
-            ).chain());
+            .add_systems(
+                Update,
+                (
+                    apply_scene_commands,
+                    handle_spawn_cube,
+                    handle_clear_bodies,
+                    step_physics,
+                    sync_transforms,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -166,11 +170,8 @@ fn setup_physics_scene(
     let ground_body = rapier::RigidBodyBuilder::fixed().translation(Vector3::new(0.0, -0.5, 0.0));
     let ground_handle = p.rigid_body_set.insert(ground_body);
     let ground_collider = rapier::ColliderBuilder::cuboid(10.0, 0.5, 10.0);
-    p.collider_set.insert_with_parent(
-        ground_collider,
-        ground_handle,
-        &mut p.rigid_body_set,
-    );
+    p.collider_set
+        .insert_with_parent(ground_collider, ground_handle, &mut p.rigid_body_set);
 
     // Spawn ground visual
     commands.spawn((
@@ -220,11 +221,12 @@ fn handle_spawn_cube(
         let p = physics.as_mut();
 
         // Create physics body
-        let body = rapier::RigidBodyBuilder::dynamic()
-            .translation(Vector3::new(pos.x, pos.y, pos.z));
+        let body =
+            rapier::RigidBodyBuilder::dynamic().translation(Vector3::new(pos.x, pos.y, pos.z));
         let handle = p.rigid_body_set.insert(body);
         let collider = rapier::ColliderBuilder::cuboid(0.5, 0.5, 0.5);
-        p.collider_set.insert_with_parent(collider, handle, &mut p.rigid_body_set);
+        p.collider_set
+            .insert_with_parent(collider, handle, &mut p.rigid_body_set);
 
         // Spawn visual entity
         commands.spawn((
@@ -299,9 +301,9 @@ mod tests {
     fn command_queue_spawn_cube() {
         let mut queue = CommandQueue::default();
         let pos = Vec3::new(1.0, 2.0, 3.0);
-        
+
         queue.spawn_cube(pos);
-        
+
         let commands = queue.drain();
         assert_eq!(commands.len(), 1);
         match &commands[0] {
@@ -313,9 +315,9 @@ mod tests {
     #[test]
     fn command_queue_clear() {
         let mut queue = CommandQueue::default();
-        
+
         queue.clear();
-        
+
         let commands = queue.drain();
         assert_eq!(commands.len(), 1);
         assert!(matches!(commands[0], SceneCommand::ClearBodies));
@@ -324,12 +326,12 @@ mod tests {
     #[test]
     fn command_queue_multiple_commands() {
         let mut queue = CommandQueue::default();
-        
+
         queue.spawn_cube(Vec3::new(0.0, 5.0, 0.0));
         queue.spawn_cube(Vec3::new(1.0, 5.0, 0.0));
         queue.clear();
         queue.spawn_cube(Vec3::new(2.0, 5.0, 0.0));
-        
+
         let commands = queue.drain();
         assert_eq!(commands.len(), 4);
         assert!(matches!(commands[0], SceneCommand::SpawnCube(_)));
@@ -342,17 +344,17 @@ mod tests {
     fn command_queue_drain_empties_queue() {
         let mut queue = CommandQueue::default();
         queue.spawn_cube(Vec3::ZERO);
-        
+
         let _ = queue.drain();
         let commands = queue.drain();
-        
+
         assert!(commands.is_empty());
     }
 
     #[test]
     fn physics_state_default() {
         let state = PhysicsState::default();
-        
+
         assert_eq!(state.dynamic_body_count(), 0);
         assert_eq!(state.gravity.y, -9.81);
     }
@@ -360,17 +362,17 @@ mod tests {
     #[test]
     fn physics_state_dynamic_body_count() {
         let mut state = PhysicsState::new();
-        
+
         // Add a dynamic body
         let body = rapier::RigidBodyBuilder::dynamic();
         state.rigid_body_set.insert(body);
-        
+
         assert_eq!(state.dynamic_body_count(), 1);
-        
+
         // Add a fixed body (should not count)
         let fixed = rapier::RigidBodyBuilder::fixed();
         state.rigid_body_set.insert(fixed);
-        
+
         assert_eq!(state.dynamic_body_count(), 1);
     }
 
@@ -379,7 +381,7 @@ mod tests {
         let cmd = SceneCommand::SpawnCube(Vec3::new(1.0, 2.0, 3.0));
         let debug_str = format!("{:?}", cmd);
         assert!(debug_str.contains("SpawnCube"));
-        
+
         let cmd = SceneCommand::ClearBodies;
         let debug_str = format!("{:?}", cmd);
         assert!(debug_str.contains("ClearBodies"));

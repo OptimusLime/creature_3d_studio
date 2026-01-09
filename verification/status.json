@@ -1,0 +1,807 @@
+{
+  "failed": {
+    "ApartemazemeentsSimple2": {
+      "accuracy": 99.6546875,
+      "reason": "99.65% (221 differ)",
+      "seed": 42
+    },
+    "IslandL17": {
+      "accuracy": 99.87015625,
+      "reason": "99.87% (831 differ)",
+      "seed": 42
+    },
+    "IslandL17b": {
+      "accuracy": 99.2728125,
+      "reason": "99.27% (4654 differ)",
+      "seed": 42
+    },
+    "IslandL18": {
+      "accuracy": 99.86703125,
+      "reason": "99.87% (851 differ)",
+      "seed": 42
+    },
+    "IslandL19": {
+      "accuracy": 99.5609375,
+      "reason": "99.56% (2810 differ)",
+      "seed": 42
+    },
+    "IslandL20": {
+      "accuracy": 99.55859375,
+      "reason": "99.56% (2825 differ)",
+      "seed": 42
+    },
+    "Partitioning": {
+      "accuracy": 98.92868074686257,
+      "reason": "98.93% (105 differ)",
+      "seed": 42
+    },
+    "TestObsL4": {
+      "accuracy": 97.75,
+      "reason": "97.75% (9 differ)",
+      "seed": 42
+    }
+  },
+  "skipped": {},
+  "verified": {
+    "ApartemazemeentsSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ApartemazemeentsSimple3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Apartemazements": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Backtracker": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BacktrackerCycle": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Basic": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicBrickWall": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicDijkstraDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicDijkstraFill": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicDungeonGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BasicPartitioning": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BernoulliPercolation": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedGrowthContraction": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedMazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BiasedVoronoi": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BishopParity": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "BlueNoise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Cave": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CaveContour": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CentralCrawlers": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CentralSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainDungeonMaze": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainMaze": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ChainMazeSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Circuit": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CircuitSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CircuitSimple2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ClosedSurface": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ColoredKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CompleteSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CompleteSAWSmart": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ConnectedCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ConstrainedCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Counting": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Coupling": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CrawlersChase": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "CrossCountry": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Cycles": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DenseSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DiagonalPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Digger": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DijkstraDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DualRetraction": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DungeonGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "DungeonGrowthSimple": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Dwarves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Escher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "EscherSurface": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "EuclideanPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "FindLongCycle": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "FireNoise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Flowers": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Forest": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ForestFire": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ForestFireCA": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GameOfLife": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GrowTo": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Growth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GrowthCompetition": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GrowthContraction": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "GrowthWalk": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "HamiltonianPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "HamiltonianPaths": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Hills": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IrregularMazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IrregularSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Island": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL10": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL11": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL12": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL13": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL14": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL15": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL16": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL17a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL5": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL6": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL7": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL8": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "IslandL9": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Keys": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "KnightPatrol": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Knots2D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Knots3D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Laplace": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "LoopGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "LostCity": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MarchingSquares": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeBacktracker": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeMap": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MazeTrail": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedWalk": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "MultiHeadedWalkDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "NestedGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "NoDeadEnds": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Noise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "NystromDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OddScale": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OddScale3D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OpenCave": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OpenCave3D": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OrganicMechanic": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "OrientedEscher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PaintCompetition": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ParallelGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "ParallelMazeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Percolation": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PeriodicEscher": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PillarsOfEternity": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Push": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PutColoredLs": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "PutLs": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "RainbowGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "RegularPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "RegularSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "RegularSAWRestart": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "River": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SAWRestart": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SelectLargeCaves": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SelectLongKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SelfAvoidingWalk": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Sewers": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SewersSimple1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAW": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5b": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5c": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5d": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5e": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5f": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5g": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL5h": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6a": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6b": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6c": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6d": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6e": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6f": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6g": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL6h": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmartSAWL7": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmarterDigger": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SmoothTrail": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SnellLaw": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SoftPath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StochasticVoronoi": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StormySnellLaw": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StrangeDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StrangeGrowth": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "StrangeNoise": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "SubmergedKnots": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Surface": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestCrawlL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestKnotsL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestKnotsL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL3": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestObsL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestOneSteps": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL4": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestSubmergedL5": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestUnionAll1": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TestUnionAll2": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Tetris": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Texture": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TileDungeon": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "TilePath": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Trail": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "Voronoi": {
+      "accuracy": 100.0,
+      "seed": 42
+    },
+    "WolfBasedApproach": {
+      "accuracy": 100.0,
+      "seed": 42
+    }
+  }
+}

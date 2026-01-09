@@ -45,7 +45,8 @@ fn print_face_culling_stats() {
         let max = 24;
         println!(
             "Single voxel:     {:4} vertices (max: {:4}, reduction: {:5.1}%)",
-            vertices, max,
+            vertices,
+            max,
             (1.0 - vertices as f64 / max as f64) * 100.0
         );
     }
@@ -65,7 +66,8 @@ fn print_face_culling_stats() {
         let max = 8 * 24;
         println!(
             "2x2x2 cube:       {:4} vertices (max: {:4}, reduction: {:5.1}%)",
-            vertices, max,
+            vertices,
+            max,
             (1.0 - vertices as f64 / max as f64) * 100.0
         );
     }
@@ -86,9 +88,14 @@ fn print_face_culling_stats() {
         let expected = 6 * 64 * 4; // 6 faces * 64 surface quads * 4 verts
         println!(
             "8x8x8 cube:       {:4} vertices (max: {:5}, reduction: {:5.1}%)",
-            vertices, max,
+            vertices,
+            max,
             (1.0 - vertices as f64 / max as f64) * 100.0
         );
-        println!("                  Expected: {} vertices ({} surface faces)", expected, 6 * 64);
+        println!(
+            "                  Expected: {} vertices ({} surface faces)",
+            expected,
+            6 * 64
+        );
     }
 }

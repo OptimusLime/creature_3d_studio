@@ -44,11 +44,11 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.102, 0.039, 0.180)))
         .insert_resource(FrameCount(0))
         .insert_resource(ChunkStreamingConfig {
-            load_radius: 6,  // Larger radius to load more chunks
+            load_radius: 6, // Larger radius to load more chunks
             unload_radius: 8,
-            max_loads_per_frame: 4,  // Faster loading for screenshot
+            max_loads_per_frame: 4, // Faster loading for screenshot
             max_unloads_per_frame: 4,
-            use_greedy_meshing: true,  // Re-enabled: SSAO fixes the vertex AO interpolation bug
+            use_greedy_meshing: true, // Re-enabled: SSAO fixes the vertex AO interpolation bug
             y_range: Some((-1, 1)),
         })
         .add_systems(Startup, setup)
@@ -169,11 +169,11 @@ fn setup(mut commands: Commands, mut materials: ResMut<Assets<VoxelMaterial>>) {
         for cz in 0..8 {
             let pillar_x = cx * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
             let pillar_z = cz * CHUNK_SIZE as i32 + CHUNK_SIZE as i32 / 2;
-            
+
             // Color matches the chunk's hue
             let hue = ((cx + cz * 8) as f32 / 64.0) * 360.0;
             let (r, g, b) = hue_to_rgb(hue);
-            
+
             commands.spawn((
                 DeferredPointLight {
                     color: Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0),

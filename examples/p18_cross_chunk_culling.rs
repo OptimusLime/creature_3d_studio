@@ -11,7 +11,7 @@
 use bevy::prelude::*;
 use studio_core::{
     build_world_meshes_cross_chunk_with_options, build_world_meshes_with_options, Voxel,
-    VoxelWorldApp, VoxelWorld,
+    VoxelWorld, VoxelWorldApp,
 };
 
 fn main() {

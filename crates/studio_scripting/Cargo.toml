@@ -9,4 +9,5 @@ bevy_mod_imgui.workspace = true
 mlua.workspace = true
 notify = "6"
 studio_physics = { path = "../studio_physics" }
+studio_core = { path = "../studio_core" }
 rand = "0.8"
