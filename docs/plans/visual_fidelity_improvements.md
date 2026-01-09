@@ -35,186 +35,258 @@ The goal is to make screenshots and videos visually compelling enough that someo
 
 ## Phases
 
-### Phase 1: Procedural Sky Dome with Gradient
+### Phase 0: Visual Verification Test Harness
 
-**Outcome:** A procedural sky renders behind all geometry, showing a smooth gradient from horizon color to zenith color that integrates with the day/night cycle.
+**Outcome:** A dedicated test example (`p31_visual_fidelity_test.rs`) that automatically captures screenshots from multiple camera angles, providing easy verification for all subsequent phases.
 
 **Verification:** 
-1. Run `cargo run --example p30_markov_kinematic_animated`
-2. Look upward - see smooth gradient sky (not flat fog color)
-3. Horizon shows warm/muted color blending into fog
-4. Zenith shows darker/cooler color
-5. Colors change appropriately with day/night cycle time (if enabled)
+```bash
+cargo run --example p31_visual_fidelity_test
+# Exits automatically after capturing screenshots
+ls screenshots/visual_fidelity_test/
+# Shows: sky_up.png, sky_horizon.png, building_front.png, building_aerial.png, terrain_distance.png
+```
+
+**Tasks:**
+1. Create `examples/p31_visual_fidelity_test.rs`:
+   - Uses `DebugScreenshotConfig` with multiple captures
+   - Each capture has a specific camera position/angle
+   - Captures: looking up (sky), looking at horizon (sky+terrain), building close-up, aerial view, distant terrain
+   - Auto-exits after all screenshots captured
+
+2. Create `VisualTestCapture` helper in test example:
+   - Struct holding camera position, look_at target, and capture name
+   - System that sequences through captures, repositioning camera between shots
+
+3. Define standard test scene:
+   - Platform terrain (existing)
+   - Pre-generated building at known position (or generate with fixed seed)
+   - Known camera positions for each shot type
+
+4. Verify harness works:
+   - Run example, confirm 5 screenshots appear in `screenshots/visual_fidelity_test/`
+   - Screenshots show different angles of same scene
+
+**Why Phase 0 First:**
+All subsequent phases add visual features. Without automated screenshot capture from known angles, verification requires manual "run, walk around, look up, observe" - which is slow and error-prone. This harness makes verification trivial: run test, look at screenshots.
+
+---
+
+### Phase 1: Sky Dome Pipeline (Facade)
+
+**Outcome:** Sky dome shader runs in the deferred pipeline, outputting a constant color (purple) where there's no geometry. This proves the pipeline works before adding complexity.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/sky_up.png
+# Should show solid purple (not fog color) where sky is visible
+```
 
 **Tasks:**
 1. Create `crates/studio_core/src/deferred/sky_dome.rs`:
-   - `SkyDomeConfig` resource with `horizon_color`, `zenith_color`, `horizon_blend_height`
-   - Integration point with `DayNightColorState` for dynamic colors
-   
+   - `SkyDomeConfig` resource (for now: just `enabled: bool`)
+   - Minimal config, no gradient yet
+
 2. Create `crates/studio_core/assets/shaders/sky_dome.wgsl`:
-   - Full-screen quad shader
-   - Sample view direction from screen UV + inverse projection
-   - Blend between horizon and zenith based on vertical angle
-   - Output to screen where depth = max (no geometry)
+   - Full-screen pass shader
+   - Returns constant `vec4(0.2, 0.1, 0.3, 1.0)` (purple) where depth > 999.0
+   - Returns previous color otherwise (passthrough)
 
 3. Create `crates/studio_core/src/deferred/sky_dome_node.rs`:
-   - Render graph node that runs after lighting pass
-   - Only renders where depth buffer shows "sky" (depth > 999.0)
-   - Reads from `SkyDomeConfig` uniform
+   - Render graph node running after lighting pass
+   - Binds depth texture and output texture
+   - Runs sky_dome.wgsl
 
-4. Integrate into deferred pipeline in `crates/studio_core/src/deferred/plugin.rs`:
-   - Add sky dome node to render graph after lighting
-   - Register `SkyDomeConfig` resource
+4. Integrate in `crates/studio_core/src/deferred/plugin.rs`:
+   - Add node to render graph
+   - Register resource
 
-5. Update `examples/p30_markov_kinematic_animated.rs`:
-   - Add `SkyDomeConfig` with dark fantasy colors
+5. Update test example to enable sky dome
 
-### Phase 2: Dual Moon Rendering in Sky
+**Key Principle:** Get the pipeline working with trivial output first. Constant purple sky proves: shader loads, node runs, depth test works, output appears.
 
-**Outcome:** Both moons from the day/night cycle are visible in the sky as glowing discs with horizon tinting effects.
+### Phase 2: Sky Gradient (Complexify Sky Dome)
+
+**Outcome:** Sky shows smooth gradient from horizon to zenith instead of constant color.
 
 **Verification:**
-1. Run example with day/night cycle enabled
-2. Look toward each moon's computed position - see glowing disc
-3. Purple moon appears purple-tinted, orange moon appears orange-tinted
-4. Moons near horizon show color shift (more saturated/warm)
-5. Moons fade/disappear when below horizon (set_height)
-6. Moon positions match shadow light directions
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/sky_up.png - darker zenith color
+# Check screenshots/visual_fidelity_test/sky_horizon.png - warmer horizon color blending to terrain
+```
 
 **Tasks:**
-1. Extend `sky_dome.wgsl`:
-   - Add uniforms for moon1/moon2: direction, color, size, intensity
-   - Render moon as smooth disc with glow falloff
-   - Apply horizon color shift based on moon altitude
-   - Blend moon into sky gradient
+1. Add uniforms to `sky_dome.wgsl`:
+   - `horizon_color: vec3<f32>`
+   - `zenith_color: vec3<f32>`
+   - `horizon_blend_power: f32`
 
-2. Extend `SkyDomeConfig` in `sky_dome.rs`:
-   - Moon rendering parameters (size, glow_falloff)
-   - Link to `DualMoonConfig` for position/color data
+2. Update shader to compute view direction from UV + inverse projection:
+   - Calculate vertical angle from view direction
+   - Blend horizon_color → zenith_color based on angle
 
-3. Update `sky_dome_node.rs`:
-   - Pass moon uniforms from day/night cycle state
-   - Calculate moon screen positions from world directions
+3. Update `SkyDomeConfig` with gradient parameters
 
-4. Create test: Look at sky during cycle, verify moons track correctly
+4. Update test to use dark fantasy gradient colors
 
-### Phase 3: Mystery Palette for Generated Content
+---
+
+### Phase 3: Moon Rendering in Sky
+
+**Outcome:** Both moons visible as glowing discs at their computed positions.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/sky_horizon.png
+# Moons visible as glowing discs (if above horizon at test time)
+# Moon colors match configured colors (purple/orange)
+```
+
+**Tasks:**
+1. Add moon uniforms to `sky_dome.wgsl`:
+   - `moon1_direction: vec3<f32>`, `moon1_color: vec3<f32>`, `moon1_size: f32`
+   - `moon2_direction: vec3<f32>`, `moon2_color: vec3<f32>`, `moon2_size: f32`
+
+2. Render moons as smooth discs:
+   - Calculate angle between view direction and moon direction
+   - Draw disc with soft falloff glow
+   - Skip if moon below horizon (direction.y < 0)
+
+3. Update `SkyDomeConfig` and node to pass moon data from day/night cycle
+
+4. Add test capture with camera pointed at known moon position
+
+---
+
+### Phase 4: Moon Horizon Effects
+
+**Outcome:** Moons near horizon show atmospheric color shift (warmer/more saturated).
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Compare moon color at zenith vs near horizon in different test captures
+# Horizon moon should appear more saturated/warm
+```
+
+**Tasks:**
+1. Add horizon tinting to moon rendering in shader:
+   - Blend moon color toward horizon_color based on moon altitude
+   - Increase saturation near horizon
+
+2. Add `horizon_tint_strength` parameter to config
+
+3. Update test to capture moon at different altitudes (may need day/night cycle time control)
+
+### Phase 5: Mystery Palette for Generated Content
 
 **Outcome:** Generated buildings use a cohesive dark fantasy palette instead of bright primary colors. Windows emit subtle glow rather than harsh red.
 
 **Verification:**
-1. Generate a building with G key
-2. Building colors are muted: dark stone grays, deep purples, weathered browns
-3. Window emission is subtle amber/cyan glow, not bright red
-4. Overall building "fits" the mysterious atmosphere
-5. Building stands out from gray terrain through subtle color, not harsh contrast
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/building_front.png
+# Building should show: muted stone grays, subtle amber window glow
+# Compare to baseline screenshot (saved before this phase) - colors should be distinctly different
+```
 
 **Tasks:**
-1. Create `crates/studio_core/src/markov_junior/palette_presets.rs`:
-   - `MysteryPalette` preset with dark fantasy colors
+1. Add `mystery_palette()` to `crates/studio_core/src/markov_junior/render.rs`:
    - Color mapping: 
      - `A` (building) -> dark gray-purple stone (#3a3540)
      - `R` (windows) -> deep amber (#8b5a00) with emission ~80
      - `F` (columns) -> weathered dark bronze (#4a4035)
      - `E` (grass) -> dark moss (#2a3a25)
      - `B` (empty) -> transparent/air
-   - Document color choices in code comments
 
-2. Update `RenderPalette` in `crates/studio_core/src/markov_junior/render.rs`:
-   - Add `mystery_palette()` constructor
-   - Ensure emission values are subtle (60-100 range, not 130-255)
+2. Update test example to use `mystery_palette()`
 
-3. Update `examples/p30_markov_kinematic_animated.rs`:
-   - Use new mystery palette instead of default with red emission
-   - Verify colors look cohesive
+3. Save baseline screenshot BEFORE this phase for comparison
 
-4. Take comparison screenshots: before/after palette change
+---
 
-### Phase 4: Configurable Voxel Scale
+### Phase 6: Configurable Voxel Scale
 
-**Outcome:** Voxel size is configurable, allowing buildings to appear smaller relative to the character (target: character ~10-15 voxels tall).
+**Outcome:** Voxel size is configurable via `VoxelScaleConfig`. Buildings appear smaller relative to world.
 
 **Verification:**
-1. Run example with voxel scale = 0.5
-2. Buildings appear half the previous size
-3. Character (if rendered) is ~10 voxels tall visually
-4. Collision detection still works correctly
-5. Chunk boundaries render correctly at new scale
+```bash
+cargo run --example p31_visual_fidelity_test -- --scale=0.5
+# Check screenshots - building should appear half the size compared to scale=1.0
+# Run collision test: cargo test voxel_scale_collision -- should pass
+```
 
 **Tasks:**
 1. Add `VoxelScaleConfig` resource to `crates/studio_core/src/voxel.rs`:
    - `scale: f32` (default 1.0)
-   - Global scale applied to all voxel positions
 
 2. Update `crates/studio_core/src/voxel_mesh.rs`:
    - `build_merged_chunk_mesh` multiplies positions by scale
-   - Chunk offset calculations account for scale
 
-3. Update collision detection in `crates/studio_core/src/voxel_collision.rs`:
-   - World-to-voxel coordinate conversion accounts for scale
-   - Voxel-to-world conversion accounts for scale
+3. Update collision in `crates/studio_core/src/voxel_collision.rs`:
+   - Coordinate conversions account for scale
 
-4. Update `crates/studio_core/src/voxel_layer.rs`:
-   - Layer offsets multiply by scale
+4. Add `--scale` CLI argument to test example
 
-5. Update example to use scale = 0.5:
-   - Verify building size is reasonable
-   - Adjust camera distance defaults if needed
+5. Add unit test for scaled collision detection
 
-6. Test: Walk around building, verify no collision glitches
+---
 
-### Phase 5: Extended Terrain with Height Variation
+### Phase 7: Extended Terrain with Height Variation
 
 **Outcome:** Terrain extends to the horizon with gentle rolling hills, providing visual depth and scale.
 
 **Verification:**
-1. Run example and look toward horizon
-2. Terrain visible all the way to fog fade-out
-3. Ground has subtle height variation (not flat)
-4. Performance acceptable (< 5ms frame time increase)
-5. Gray/muted terrain colors convey "bleak default world"
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/terrain_distance.png
+# Terrain should extend to fog fade-out (not abrupt edge)
+# Ground should show subtle height variation (rolling hills, not flat)
+```
 
 **Tasks:**
-1. Update `build_terrain()` in `examples/p30_markov_kinematic_animated.rs`:
-   - Expand terrain to 400x400 (or larger based on fog distance)
-   - Add simplex noise height variation (amplitude ~5 voxels)
-   - Use dark gray stone palette for bleak aesthetic
+1. Add simple noise function to `crates/studio_core/src/noise.rs`:
+   - 2D value noise or simplex noise
+   - `noise_2d(x: f32, z: f32, scale: f32) -> f32` returning 0.0-1.0
 
-2. Add simple noise function to `crates/studio_core/src/noise.rs`:
-   - Basic 2D simplex or value noise
-   - Sufficient for gentle terrain undulation
+2. Update `build_terrain()` in test example:
+   - Expand to 400x400
+   - Apply noise for height variation (amplitude ~5 voxels)
+   - Use dark gray stone (#2a2a2a) for bleak aesthetic
 
-3. Optimize terrain generation:
-   - Only generate terrain within fog_end distance
-   - Consider chunk-based generation for larger areas
+3. Adjust fog_end to match terrain extent
 
-4. Adjust fog to match terrain extent:
-   - `fog_end` should be slightly beyond visible terrain edge
+4. Verify performance: terrain generation should complete < 1 second
 
-5. Take screenshot showing terrain extending to horizon
+---
 
-### Phase 6: Atmospheric Polish
+### Phase 8: Height-Based Fog
 
-**Outcome:** Height-based fog creates depth, terrain and sky blend naturally at horizon.
+**Outcome:** Fog is denser near ground level, creating atmospheric depth. Buildings emerge from mist.
 
 **Verification:**
-1. Fog is denser near ground level, fades upward
-2. Looking at horizon shows smooth terrain-to-sky transition
-3. Tall structures (buildings) partially emerge from ground fog
-4. Overall atmosphere feels cohesive and mysterious
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check screenshots/visual_fidelity_test/building_aerial.png
+# Building base should be partially obscured by ground fog
+# Building top should be clearer
+# Horizon should show smooth terrain-to-sky transition
+```
 
 **Tasks:**
 1. Update `deferred_lighting.wgsl`:
-   - Add height-fog component: `fog_factor *= exp(-height * height_fog_density)`
-   - Blend height fog with distance fog
+   - Add `height_fog_density` and `height_fog_base` uniforms
+   - Compute height fog: `height_fog = exp(-(world_pos.y - base) * density)`
+   - Combine with distance fog: `final_fog = max(distance_fog, height_fog)`
 
-2. Add height fog parameters to `DeferredLightingConfig`:
-   - `height_fog_density: f32`
-   - `height_fog_base: f32` (ground level)
+2. Add parameters to `DeferredLightingConfig`:
+   - `height_fog_density: f32` (default 0.05)
+   - `height_fog_base: f32` (default 0.0)
 
-3. Tune fog parameters for mystery aesthetic:
-   - Ground-hugging mist
-   - Clear views upward toward moons/sky
+3. Tune parameters in test example for mysterious atmosphere
 
 4. Update example with tuned fog values
 
@@ -244,8 +316,7 @@ crates/studio_core/src/
 │   ├── lighting.rs          # MODIFIED: Add height fog params
 │   └── plugin.rs            # MODIFIED: Register sky dome node
 ├── markov_junior/
-│   ├── render.rs            # MODIFIED: Add mystery_palette()
-│   └── palette_presets.rs   # NEW: Palette preset definitions
+│   └── render.rs            # MODIFIED: Add mystery_palette()
 ├── voxel.rs                 # MODIFIED: Add VoxelScaleConfig
 ├── voxel_mesh.rs            # MODIFIED: Apply voxel scale
 ├── voxel_collision.rs       # MODIFIED: Scale-aware collision
@@ -255,21 +326,42 @@ crates/studio_core/assets/shaders/
 └── sky_dome.wgsl            # NEW: Procedural sky shader
 
 examples/
+├── p31_visual_fidelity_test.rs  # NEW: Automated visual verification test
 └── p30_markov_kinematic_animated.rs  # MODIFIED: Use new visuals
+
+screenshots/
+└── visual_fidelity_test/    # Output from p31 test
+    ├── sky_up.png
+    ├── sky_horizon.png
+    ├── building_front.png
+    ├── building_aerial.png
+    └── terrain_distance.png
 ```
 
 ---
 
 ## How to Review
 
-1. **Phase 1**: Run example, look up - verify gradient sky appears
-2. **Phase 2**: Enable day/night, look for moons - verify they render and track correctly
-3. **Phase 3**: Generate building - verify muted mysterious colors, subtle glow
-4. **Phase 4**: Observe building scale - verify it feels appropriately sized
-5. **Phase 5**: Look at horizon - verify extended terrain with height variation
-6. **Phase 6**: Observe fog - verify height-based atmospheric effect
+**All verification is automated via the test harness.**
 
-Each phase can be verified independently by running the example and observing specific visual elements.
+For each phase:
+```bash
+cargo run --example p31_visual_fidelity_test
+ls screenshots/visual_fidelity_test/
+# Open screenshots and verify expected visual changes
+```
+
+| Phase | Screenshot to Check | What to Look For |
+|-------|---------------------|------------------|
+| 0 | All 5 screenshots exist | Harness works |
+| 1 | `sky_up.png` | Solid purple sky (not fog) |
+| 2 | `sky_up.png` | Gradient: darker zenith, warmer horizon |
+| 3 | `sky_horizon.png` | Moon discs visible with glow |
+| 4 | `sky_horizon.png` | Moon color shifts near horizon |
+| 5 | `building_front.png` | Muted colors, subtle amber glow |
+| 6 | `building_front.png` | Building appears smaller |
+| 7 | `terrain_distance.png` | Rolling hills to horizon |
+| 8 | `building_aerial.png` | Ground fog obscures base |
 
 ---
 
