@@ -55,6 +55,8 @@ use super::shadow_node::{
     prepare_directional_shadow_uniforms, prepare_shadow_mesh_bind_groups, Moon1ShadowPassNode,
     Moon2ShadowPassNode,
 };
+use super::sky_dome::SkyDomeConfig;
+use super::sky_dome_node::{init_sky_dome_pipeline, SkyDomeNode};
 use crate::debug_screenshot::DebugModes;
 
 /// Plugin that enables deferred rendering for voxels.
@@ -84,6 +86,7 @@ impl Plugin for DeferredRenderingPlugin {
         app.init_resource::<MoonConfig>();
         app.init_resource::<GtaoConfig>();
         app.init_resource::<DebugModes>();
+        app.init_resource::<SkyDomeConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -97,6 +100,9 @@ impl Plugin for DeferredRenderingPlugin {
 
         // Extract BloomConfig resource to render world (for enabling/disabling bloom)
         app.add_plugins(ExtractResourcePlugin::<BloomConfig>::default());
+
+        // Extract SkyDomeConfig resource to render world (for enabling/disabling sky dome)
+        app.add_plugins(ExtractResourcePlugin::<SkyDomeConfig>::default());
 
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);
@@ -153,6 +159,7 @@ impl Plugin for DeferredRenderingPlugin {
                 init_gtao_noise_texture.in_set(RenderSystems::Prepare),
                 init_depth_prefilter_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_denoise_pipeline.in_set(RenderSystems::Prepare),
+                init_sky_dome_pipeline.in_set(RenderSystems::Prepare),
             ),
         );
 
@@ -287,7 +294,12 @@ impl Plugin for DeferredRenderingPlugin {
                 DeferredLabel::LightingPass,
             )
             // Bloom pass node
-            .add_render_graph_node::<ViewNodeRunner<BloomNode>>(Core3d, DeferredLabel::BloomPass);
+            .add_render_graph_node::<ViewNodeRunner<BloomNode>>(Core3d, DeferredLabel::BloomPass)
+            // Sky dome pass node (after bloom, before transparent)
+            .add_render_graph_node::<ViewNodeRunner<SkyDomeNode>>(
+                Core3d,
+                DeferredLabel::SkyDomePass,
+            );
 
         // Define render graph edges (execution order)
         // Shadow passes run first, then G-buffer, then connect to MainOpaquePass
@@ -323,6 +335,7 @@ impl Plugin for DeferredRenderingPlugin {
                 Node3d::MainOpaquePass,
                 DeferredLabel::LightingPass,
                 DeferredLabel::BloomPass,
+                DeferredLabel::SkyDomePass,
                 Node3d::MainTransparentPass,
             ),
         );
