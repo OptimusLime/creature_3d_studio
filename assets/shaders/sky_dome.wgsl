@@ -80,7 +80,7 @@ fn get_world_ray_direction(uv: vec2<f32>) -> vec3<f32> {
 }
 
 // Convert world-space direction to spherical UV coordinates
-// This maps the sky dome onto the cloud texture using equirectangular projection
+// This maps the sky dome (hemisphere) onto the cloud texture
 fn direction_to_spherical_uv(dir: vec3<f32>) -> vec2<f32> {
     // Spherical coordinates:
     // theta (azimuth) = atan2(z, x) -> maps to U [0, 1]
@@ -91,7 +91,12 @@ fn direction_to_spherical_uv(dir: vec3<f32>) -> vec2<f32> {
     
     // Map to [0, 1] UV space
     let u = (theta + PI) / (2.0 * PI);  // [0, 1]
-    let v = (phi + PI * 0.5) / PI;       // [0, 1] - 0 = bottom (nadir), 1 = top (zenith)
+    
+    // HEMISPHERE mapping: only use upper half (horizon to zenith)
+    // phi goes from 0 (horizon) to PI/2 (zenith)
+    // Clamp negative elevations (below horizon) to horizon
+    let phi_clamped = max(phi, 0.0);  // [0, PI/2]
+    let v = phi_clamped / (PI * 0.5);  // [0, 1] - 0 = horizon, 1 = zenith
     
     return vec2<f32>(u, v);
 }
