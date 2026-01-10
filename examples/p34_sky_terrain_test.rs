@@ -406,12 +406,13 @@ fn time_control_system(
 ) {
     let mut changed = false;
 
-    if keyboard.pressed(KeyCode::KeyQ) {
-        time_control.time_of_day -= time.delta_secs() * 0.1;
-        changed = true;
-    }
-    if keyboard.pressed(KeyCode::KeyE) {
-        time_control.time_of_day += time.delta_secs() * 0.1;
+    // T key advances time of day (hold Shift+T to reverse)
+    if keyboard.pressed(KeyCode::KeyT) {
+        if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
+            time_control.time_of_day -= time.delta_secs() * 0.1;
+        } else {
+            time_control.time_of_day += time.delta_secs() * 0.1;
+        }
         changed = true;
     }
 

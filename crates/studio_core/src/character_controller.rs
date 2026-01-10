@@ -69,8 +69,9 @@ impl Default for CharacterControllerConfig {
             turn_speed: 2.0,
             pitch_speed: 1.5,
             zoom_speed: 10.0,
-            min_pitch: -1.2,
-            max_pitch: 1.2,
+            // Allow looking almost straight up (-PI/2) and straight down (+PI/2)
+            min_pitch: -1.5, // ~86 degrees up
+            max_pitch: 1.5,  // ~86 degrees down
             min_distance: 5.0,
             max_distance: 50.0,
         }
@@ -176,7 +177,7 @@ fn character_input_system(
         player.yaw += config.turn_speed * dt;
     }
 
-    // Up/Down arrows tilt the CAMERA (pitch)
+    // Up/Down arrows tilt the CAMERA (pitch) - normal speed
     if keyboard.pressed(KeyCode::ArrowUp) {
         camera.pitch =
             (camera.pitch - config.pitch_speed * dt).clamp(config.min_pitch, config.max_pitch);
@@ -184,6 +185,17 @@ fn character_input_system(
     if keyboard.pressed(KeyCode::ArrowDown) {
         camera.pitch =
             (camera.pitch + config.pitch_speed * dt).clamp(config.min_pitch, config.max_pitch);
+    }
+
+    // I/K for fast free-look pitch (2x speed for quickly looking at sky)
+    let fast_pitch_speed = config.pitch_speed * 2.0;
+    if keyboard.pressed(KeyCode::KeyI) {
+        camera.pitch =
+            (camera.pitch - fast_pitch_speed * dt).clamp(config.min_pitch, config.max_pitch);
+    }
+    if keyboard.pressed(KeyCode::KeyK) {
+        camera.pitch =
+            (camera.pitch + fast_pitch_speed * dt).clamp(config.min_pitch, config.max_pitch);
     }
 
     // Q/E adjust camera distance
