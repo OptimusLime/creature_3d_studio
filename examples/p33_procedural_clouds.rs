@@ -28,7 +28,7 @@ const PERSISTENCE: f32 = 0.5;
 const BASE_FREQUENCY: f32 = 3.0; // Lower = larger cloud formations
 
 // Cloud density control
-const CLOUD_THRESHOLD: f32 = 0.55; // Higher = sparser clouds (lower = more dense)
+const CLOUD_THRESHOLD: f32 = 0.48; // Higher = sparser clouds (lower = more dense)
 const EDGE_SOFTNESS: f32 = 0.06; // Narrow transition = defined cloud edges
 
 // Domain warping for organic shapes

@@ -101,6 +101,113 @@ fn direction_to_spherical_uv(dir: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(u, v);
 }
 
+// ============================================================================
+// CLOUD LIGHTING FUNCTIONS
+// Implements physically-inspired cloud shading with dual moon support
+// ============================================================================
+
+// Phase 3: Rayleigh scattering approximation (blue sky, colored horizon)
+fn rayleigh_scatter(elevation: f32, time_of_day: f32) -> vec3<f32> {
+    // Rayleigh scattering causes blue light to scatter more
+    // At horizon (low elevation), path length is longer = more scattering = warmer colors
+    // At zenith (high elevation), path length is shorter = more blue
+    let scatter_strength = 1.0 - elevation;
+    
+    // Night time has much less scattering (no sun)
+    let night_factor = 1.0 - abs(time_of_day - 0.5) * 2.0; // 0 at noon, 1 at midnight
+    let scatter_amount = scatter_strength * (1.0 - night_factor * 0.8);
+    
+    // Wavelength-dependent scattering (blue scatters most)
+    return vec3<f32>(0.05, 0.1, 0.2) * scatter_amount;
+}
+
+// Phase 3: Mie scattering (forward scatter / halo around light source)
+fn mie_scatter(ray_dir: vec3<f32>, light_dir: vec3<f32>, light_color: vec3<f32>, intensity: f32) -> vec3<f32> {
+    // Mie scattering creates a bright halo around the light source
+    // Strongest when looking toward the light
+    let cos_angle = max(dot(ray_dir, light_dir), 0.0);
+    
+    // Henyey-Greenstein phase function approximation
+    // g = 0.76 gives forward-peaked scattering typical of atmospheric aerosols
+    let g = 0.76;
+    let g2 = g * g;
+    let phase = (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * cos_angle, 1.5);
+    
+    return light_color * phase * intensity * 0.05;
+}
+
+// Phase 2: Calculate moon contribution to cloud lighting
+fn moon_cloud_lighting(ray_dir: vec3<f32>, moon_dir: vec3<f32>, moon_color: vec3<f32>, moon_intensity: f32) -> vec3<f32> {
+    // Moon is above horizon if y > 0
+    let moon_visible = step(0.0, moon_dir.y);
+    
+    // How much this cloud patch faces the moon (diffuse-like term)
+    // Using ray_dir as surface normal approximation
+    let facing = max(dot(ray_dir, moon_dir), 0.0);
+    
+    // Softer falloff for more natural look
+    let diffuse = pow(facing, 0.5) * 0.4 + 0.1; // Ambient + directional
+    
+    return moon_color * moon_intensity * diffuse * moon_visible;
+}
+
+// Phase 4: Cloud density affects brightness (silver lining effect)
+fn cloud_edge_glow(cloud_alpha: f32, moon1_contrib: vec3<f32>, moon2_contrib: vec3<f32>) -> f32 {
+    // Thin cloud edges (low alpha) catch more light = brighter
+    // Thick cloud centers (high alpha) are darker
+    let edge_factor = 1.0 - smoothstep(0.2, 0.7, cloud_alpha);
+    
+    // More pronounced effect when moon is bright
+    let moon_brightness = length(moon1_contrib) + length(moon2_contrib);
+    let glow_strength = 0.3 + edge_factor * 0.7 * min(moon_brightness, 1.0);
+    
+    return glow_strength;
+}
+
+// Main cloud color calculation combining all phases
+fn calculate_cloud_color(
+    ray_dir: vec3<f32>,
+    sky_gradient: vec3<f32>,
+    cloud_alpha: f32,
+    elevation: f32
+) -> vec3<f32> {
+    let time_of_day = sky.params.w;
+    
+    // === Phase 1: Base cloud color from sky gradient ===
+    // Clouds pick up ambient sky color (darker at night)
+    let ambient_cloud = sky_gradient * 0.3;
+    
+    // === Phase 2: Moon lighting (both moons) ===
+    let moon1_dir = normalize(sky.moon1_direction.xyz);
+    let moon1_col = sky.moon1_color.rgb;
+    let moon1_intensity = sky.moon1_color.a; // glow_intensity doubles as light intensity
+    
+    let moon2_dir = normalize(sky.moon2_direction.xyz);
+    let moon2_col = sky.moon2_color.rgb;
+    let moon2_intensity = sky.moon2_color.a;
+    
+    let moon1_light = moon_cloud_lighting(ray_dir, moon1_dir, moon1_col, moon1_intensity);
+    let moon2_light = moon_cloud_lighting(ray_dir, moon2_dir, moon2_col, moon2_intensity);
+    
+    // === Phase 3: Atmospheric scattering ===
+    let rayleigh = rayleigh_scatter(elevation, time_of_day);
+    let mie1 = mie_scatter(ray_dir, moon1_dir, moon1_col, moon1_intensity);
+    let mie2 = mie_scatter(ray_dir, moon2_dir, moon2_col, moon2_intensity);
+    
+    // === Phase 4: Edge glow / silver lining ===
+    let edge_brightness = cloud_edge_glow(cloud_alpha, moon1_light, moon2_light);
+    
+    // === Combine all contributions ===
+    var cloud_color = ambient_cloud;
+    cloud_color += moon1_light + moon2_light;           // Moon illumination
+    cloud_color += rayleigh * 0.2;                       // Atmospheric tint
+    cloud_color += (mie1 + mie2) * cloud_alpha;         // Forward scatter on dense clouds
+    cloud_color *= edge_brightness;                      // Silver lining effect
+    
+    // Clamp to prevent over-bright
+    return clamp(cloud_color, vec3<f32>(0.0), vec3<f32>(1.5));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scene_color = textureSample(scene_texture, scene_sampler, in.uv);
@@ -129,8 +236,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let cloud_sample = textureSample(cloud_texture, cloud_sampler, cloud_uv);
         let cloud_alpha = cloud_sample.a;
         
-        // Blend clouds over gradient
-        let cloud_color = vec3<f32>(1.0, 1.0, 1.0); // White clouds
+        // Calculate physically-based cloud color using all 4 phases
+        let cloud_color = calculate_cloud_color(ray_dir, gradient, cloud_alpha, elevation);
+        
+        // Blend clouds over sky gradient based on cloud density
         let sky_color = mix(gradient, cloud_color, cloud_alpha);
         
         return vec4<f32>(sky_color, 1.0);
