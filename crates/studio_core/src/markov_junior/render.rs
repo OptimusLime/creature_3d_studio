@@ -229,19 +229,21 @@ pub fn pico8_colors() -> Vec<[u8; 4]> {
 /// * `grid` - The grid to render (must have mz=1)
 /// * `colors` - Color palette mapping value index to RGBA
 /// * `pixel_size` - Size of each cell in pixels (1 = 1:1, 4 = 4x4 per cell)
+/// * `background` - Background color to fill (default: opaque dark gray)
 ///
 /// # Returns
 /// RGBA image buffer
-pub fn render_2d(grid: &MjGrid, colors: &[[u8; 4]], pixel_size: u32) -> RgbaImage {
+pub fn render_2d(
+    grid: &MjGrid,
+    colors: &[[u8; 4]],
+    pixel_size: u32,
+    background: Option<[u8; 4]>,
+) -> RgbaImage {
     let width = (grid.mx as u32) * pixel_size;
     let height = (grid.my as u32) * pixel_size;
+    let bg = background.unwrap_or(BACKGROUND);
 
-    let mut img: RgbaImage = ImageBuffer::new(width, height);
-
-    // Fill with background
-    for pixel in img.pixels_mut() {
-        *pixel = Rgba(BACKGROUND);
-    }
+    let mut img: RgbaImage = ImageBuffer::from_pixel(width, height, Rgba(bg));
 
     // Draw each cell
     for y in 0..grid.my {
@@ -454,7 +456,7 @@ pub fn render_to_png(grid: &MjGrid, path: &Path, pixel_size: u32) -> Result<(), 
     // Use grid-aware colors that respect character->color mapping
     let colors = colors_for_grid(grid);
     let img = if grid.mz == 1 {
-        render_2d(grid, &colors, pixel_size)
+        render_2d(grid, &colors, pixel_size, None)
     } else {
         render_3d_isometric(grid, &colors, pixel_size)
     };
@@ -469,7 +471,7 @@ pub fn render_to_png_with_colors(
     colors: &[[u8; 4]],
 ) -> Result<(), image::ImageError> {
     let img = if grid.mz == 1 {
-        render_2d(grid, colors, pixel_size)
+        render_2d(grid, colors, pixel_size, None)
     } else {
         render_3d_isometric(grid, colors, pixel_size)
     };
@@ -503,7 +505,7 @@ mod tests {
         grid.set(2, 3, 0, 1); // down
 
         let colors = default_colors();
-        let img = render_2d(&grid, &colors, 10);
+        let img = render_2d(&grid, &colors, 10, None);
 
         assert_eq!(img.width(), 50);
         assert_eq!(img.height(), 50);
@@ -1018,7 +1020,7 @@ mod tests {
             // Save our output
             let our_path = out_dir.join(format!("{}_ours.png", config.name));
             let colors = colors_for_grid(grid);
-            let img = render_2d(grid, &colors, 2); // pixel_size=2 for reasonable file size
+            let img = render_2d(grid, &colors, 2, None); // pixel_size=2 for reasonable file size
             if let Err(e) = save_png(&img, &our_path) {
                 println!("FAILED TO SAVE: {}", e);
                 results.push((config.name.to_string(), steps, nonzero, false));
@@ -1218,7 +1220,7 @@ mod tests {
         {
             let grid = model.grid();
             let colors = colors_for_grid(grid);
-            let img = render_2d(grid, &colors, 4);
+            let img = render_2d(grid, &colors, 4, None);
             let path = out_dir.join(format!("river_{:04}.png", screenshot_count));
             save_png(&img, &path).unwrap();
             println!(
@@ -1242,7 +1244,7 @@ mod tests {
             if should_save {
                 let grid = model.grid();
                 let colors = colors_for_grid(grid);
-                let img = render_2d(grid, &colors, 4);
+                let img = render_2d(grid, &colors, 4, None);
                 let path = out_dir.join(format!("river_{:04}.png", screenshot_count));
                 save_png(&img, &path).unwrap();
 
@@ -1273,7 +1275,7 @@ mod tests {
         {
             let grid = model.grid();
             let colors = colors_for_grid(grid);
-            let img = render_2d(grid, &colors, 4);
+            let img = render_2d(grid, &colors, 4, None);
             let path = out_dir.join("river_final.png");
             save_png(&img, &path).unwrap();
 
@@ -1946,7 +1948,7 @@ mod tests {
                     &out_dir.join(format!("{}{}.png", name, status_suffix)),
                 )
             } else {
-                let img = render_2d(grid, &colors, 2);
+                let img = render_2d(grid, &colors, 2, None);
                 save_png(
                     &img,
                     &out_dir.join(format!("{}{}.png", name, status_suffix)),

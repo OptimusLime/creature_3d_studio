@@ -38,7 +38,7 @@ fn main() {
         [255, 255, 255, 180], // 1: white with 70% opacity
     ];
 
-    let img = render_2d(&grid, &colors, 1);
+    let img = render_2d(&grid, &colors, 1, Some([0, 0, 0, 0]));
 
     let path = Path::new("assets/textures/clouds_placeholder.png");
     save_png(&img, path).expect("Failed to save image");

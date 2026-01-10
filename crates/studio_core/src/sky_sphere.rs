@@ -13,7 +13,8 @@ use bevy::{
     pbr::{Material, MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     render::render_resource::{
-        AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+        AsBindGroup, CompareFunction, Face, RenderPipelineDescriptor, ShaderType,
+        SpecializedMeshPipelineError,
     },
     shader::ShaderRef,
 };
@@ -106,6 +107,17 @@ impl Material for SkySphereMaterial {
             Mesh::ATTRIBUTE_UV_0.at_shader_location(2),
         ])?;
         descriptor.vertex.buffers = vec![vertex_layout];
+
+        // Render inside faces (we're inside the sphere looking out)
+        descriptor.primitive.cull_mode = Some(Face::Front);
+
+        // Sky renders at max depth - only draws where nothing else has been drawn
+        // Use GreaterEqual so sky only renders where depth buffer is at max (1.0 = far plane)
+        if let Some(ref mut depth_stencil) = descriptor.depth_stencil {
+            depth_stencil.depth_write_enabled = false;
+            depth_stencil.depth_compare = CompareFunction::GreaterEqual;
+        }
+
         Ok(())
     }
 }

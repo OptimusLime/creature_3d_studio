@@ -89,7 +89,7 @@ impl CaptureState {
     fn new() -> Self {
         Self {
             frames_waited: 0,
-            wait_frames: 10, // Wait 10 frames for scene to settle
+            wait_frames: 60, // Wait 60 frames for scene AND textures to load
             capture_pending: false,
             frames_after_capture: 0,
             complete: false,

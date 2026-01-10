@@ -3,7 +3,7 @@
 ## Branch Information
 - **Branch:** `feature/visual-fidelity-improvements`
 - **Base:** `main`
-- **Status:** Phase 0 complete, Phase 1 in progress
+- **Status:** Phases 0-3 complete, Phase 4 next
 
 ---
 
@@ -27,217 +27,164 @@ This is the implementation plan with 9 phases (0-8). Each phase has:
 - **Verification**: How to prove it's done (must be simple bash commands + screenshot checks)
 - **Tasks**: Specific file paths and changes
 
-### 3. Deferred Rendering Architecture
-**Directory:** `crates/studio_core/src/deferred/`
-
-Key files to understand:
-- `plugin.rs` - How render graph nodes are registered and ordered
-- `labels.rs` - Render graph node labels
-- `lighting_node.rs` - Example of a fullscreen pass node (model for sky dome)
-- `bloom_node.rs` - Another post-process node example
-- `lighting.rs` - DeferredLightingConfig resource pattern
-
-### 4. Day/Night Cycle System
-**File:** `crates/studio_core/src/day_night.rs`
-
-The sky dome needs to integrate with this for moon positions and colors.
-- `MoonCycleConfig` - Per-moon orbital parameters
-- `DayNightCycle` - Main cycle resource
-- `DayNightColorState` - Current interpolated colors
-
 ---
 
 ## Current State
 
-### Completed: Phase 0 - Visual Verification Test Harness
+### Completed Phases
 
-**File created:** `examples/p31_visual_fidelity_test.rs`
+#### Phase 0: Visual Verification Test Harness
+**File:** `examples/p31_visual_fidelity_test.rs`
 
-This test harness:
-- Captures 5 screenshots from different camera angles
-- Auto-exits after capture
+Test harness captures screenshots from multiple camera angles with time-of-day control:
 - Output: `screenshots/visual_fidelity_test/`
-  - `sky_up.png` - Looking straight up
-  - `sky_horizon.png` - Looking at horizon
-  - `building_front.png` - Front view of building area
-  - `building_aerial.png` - Top-down aerial view
-  - `terrain_distance.png` - Distant terrain view
+- Captures: `sky_up.png`, `sky_horizon.png`, `moon_time_00.png`, `moon_time_25.png`, `building_front.png`, `building_aerial.png`, `terrain_distance.png`
+- Each capture can specify `time_of_day: Option<f32>` to position moons
+
+#### Phase 1: Sky Dome Pipeline (Facade)
+- Created `sky_dome.rs`, `sky_dome_node.rs`, `sky_dome.wgsl`
+- Constant purple sky where depth > 999.0 (no geometry)
+- Render graph: `BloomPass -> SkyDomePass -> MainTransparentPass`
+
+#### Phase 2: Sky Gradient
+- Horizon-to-zenith gradient based on view direction
+- Uses inverse view-projection matrix to reconstruct view direction from UV
+- `SkyDomeConfig`: `horizon_color`, `zenith_color`, `horizon_blend_power`
+
+#### Phase 3: Moon Rendering with Time-of-Day Control
+- Dual moons (purple and orange) with configurable appearance
+- `time_of_day` parameter (0.0-1.0) controls moon orbital positions
+- `MoonAppearance`: size, color, glow_intensity, glow_falloff
+- Moon disc rendering with soft glow falloff
+- Horizon fade effect dims moons near horizon
 
 **Verification:**
 ```bash
 cargo run --example p31_visual_fidelity_test
-ls screenshots/visual_fidelity_test/
-# Should show 5 PNG files
-```
-
-### In Progress: Phase 1 - Sky Dome Pipeline (Facade)
-
-**Goal:** Get a sky dome shader running in the deferred pipeline that outputs constant purple where depth > 999.0 (no geometry).
-
-**Files to create:**
-1. `crates/studio_core/src/deferred/sky_dome.rs` - Config resource
-2. `assets/shaders/sky_dome.wgsl` - Fullscreen shader
-3. `crates/studio_core/src/deferred/sky_dome_node.rs` - Render graph node
-
-**Key insight:** The sky dome should run AFTER bloom pass, filling in sky color where there's no geometry. Current order ends with:
-```
-LightingPass -> BloomPass -> MainTransparentPass
-```
-Sky dome should go:
-```
-LightingPass -> BloomPass -> SkyDomePass -> MainTransparentPass
+# Check screenshots/visual_fidelity_test/
+# - sky_up.png: dark zenith
+# - sky_horizon.png: gradient with moon glow
+# - moon_time_00.png: moons at time 0.0
+# - moon_time_25.png: moons at time 0.25 (different position)
 ```
 
 ---
 
-## Remaining Phases (Summary)
+## Next Phase: Phase 4 - Moon Horizon Effects
 
-| Phase | Description | Key Change |
-|-------|-------------|------------|
-| 1 | Sky Dome Pipeline (Facade) | Constant purple sky |
-| 2 | Sky Gradient | Horizon-to-zenith color blend |
-| 3 | Moon Rendering | Glowing moon discs in sky |
-| 4 | Moon Horizon Effects | Color shift near horizon |
-| 5 | Mystery Palette | Dark fantasy building colors |
-| 6 | Voxel Scale | Configurable voxel size |
-| 7 | Extended Terrain | Rolling hills to horizon |
-| 8 | Height Fog | Ground-hugging atmospheric fog |
+**Goal:** Moons near horizon show atmospheric color shift (warmer/more saturated).
+
+**Tasks:**
+1. Add horizon tinting to moon rendering in `sky_dome.wgsl`:
+   - Blend moon color toward horizon_color based on moon altitude
+   - Increase saturation near horizon
+2. Add `horizon_tint_strength` parameter to `SkyDomeConfig`
+3. Update test to capture moon at different altitudes
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Compare moon color at zenith vs near horizon
+# Horizon moon should appear more saturated/warm
+```
+
+---
+
+## Remaining Phases
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 0 | Test Harness | DONE |
+| 1 | Sky Dome Pipeline (Facade) | DONE |
+| 2 | Sky Gradient | DONE |
+| 3 | Moon Rendering | DONE |
+| 4 | Moon Horizon Effects | **NEXT** |
+| 5 | Mystery Palette | Pending |
+| 6 | Voxel Scale | Pending |
+| 7 | Extended Terrain | Pending |
+| 8 | Height Fog | Pending |
+
+---
+
+## Key Files
+
+### Sky Dome Implementation
+- `crates/studio_core/src/deferred/sky_dome.rs` - `SkyDomeConfig`, `MoonAppearance`
+- `crates/studio_core/src/deferred/sky_dome_node.rs` - `SkyDomeNode`, `SkyDomeUniform`, `MoonOrbit`
+- `assets/shaders/sky_dome.wgsl` - Gradient + moon rendering shader
+
+### Integration Points
+- `crates/studio_core/src/deferred/plugin.rs` - Node registration, render graph edges
+- `crates/studio_core/src/deferred/labels.rs` - `DeferredLabel::SkyDomePass`
+- `crates/studio_core/src/deferred/mod.rs` - Module exports
+
+### Day/Night Cycle (Reference)
+- `crates/studio_core/src/day_night.rs` - `MoonCycleConfig` orbital math (copied into `sky_dome_node.rs`)
 
 ---
 
 ## Key Code Patterns
 
-### Render Graph Node Pattern
-From `lighting_node.rs`:
+### SkyDomeConfig (Main App Resource)
 ```rust
-#[derive(Default)]
-pub struct LightingPassNode;
-
-impl ViewNode for LightingPassNode {
-    type ViewQuery = (/* components needed from view */);
-
-    fn run<'w>(
-        &self,
-        _graph: &mut RenderGraphContext,
-        render_context: &mut RenderContext<'w>,
-        query_item: QueryItem<'w, '_, Self::ViewQuery>,
-        world: &'w World,
-    ) -> Result<(), NodeRunError> {
-        // Get pipeline from cache
-        // Create bind groups
-        // Run render pass
-        Ok(())
-    }
+#[derive(Resource, Clone, Debug, ExtractResource)]
+pub struct SkyDomeConfig {
+    pub enabled: bool,
+    pub horizon_color: Color,
+    pub zenith_color: Color,
+    pub horizon_blend_power: f32,
+    pub time_of_day: f32,  // 0.0-1.0 controls moon positions
+    pub moon1: MoonAppearance,
+    pub moon2: MoonAppearance,
+    pub moons_enabled: bool,
 }
 ```
 
-### Pipeline Initialization Pattern
-From `lighting_node.rs`:
+### SkyDomeUniform (GPU Struct)
 ```rust
-pub fn init_lighting_pipeline(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    pipeline_cache: Res<PipelineCache>,
-    asset_server: Res<AssetServer>,
-) {
-    // Load shader
-    let shader = asset_server.load("shaders/deferred_lighting.wgsl");
-    
-    // Create bind group layouts
-    // Queue pipeline creation
-    // Insert pipeline resource
+#[repr(C)]
+pub struct SkyDomeUniform {
+    pub inv_view_proj: [[f32; 4]; 4],
+    pub horizon_color: [f32; 4],
+    pub zenith_color: [f32; 4],
+    pub params: [f32; 4],  // x=blend_power, y=moons_enabled
+    pub moon1_direction: [f32; 4],  // xyz=dir, w=size
+    pub moon1_color: [f32; 4],      // rgb=color, a=glow_intensity
+    pub moon1_params: [f32; 4],     // x=glow_falloff
+    pub moon2_direction: [f32; 4],
+    pub moon2_color: [f32; 4],
+    pub moon2_params: [f32; 4],
 }
 ```
 
-### Registering Node in Plugin
-From `plugin.rs`:
+### Moon Orbital Calculation
 ```rust
-render_app
-    .add_render_graph_node::<ViewNodeRunner<BloomNode>>(
-        Core3d, 
-        DeferredLabel::BloomPass
-    );
-
-render_app.add_render_graph_edges(
-    Core3d,
-    (
-        DeferredLabel::LightingPass,
-        DeferredLabel::BloomPass,
-        Node3d::MainTransparentPass,
-    ),
-);
+// From sky_dome_node.rs - matches day_night.rs logic
+fn calculate_direction(&self, cycle_time: f32) -> Vec3 {
+    let moon_time = (cycle_time / self.period + self.phase_offset).fract();
+    let angle = moon_time * TAU;
+    let incline_rad = self.inclination.to_radians();
+    let x = angle.cos();
+    let y_base = angle.sin();
+    let y = y_base * incline_rad.cos();
+    let z = y_base * incline_rad.sin();
+    Vec3::new(x, y, z).normalize()
+}
 ```
 
----
-
-## Shader Location
-
-Shaders are loaded via asset server from `assets/shaders/`. Example:
+### Test Harness Time Control
 ```rust
-let shader = asset_server.load("shaders/deferred_lighting.wgsl");
-```
-
-The sky dome shader should be at: `assets/shaders/sky_dome.wgsl`
-
----
-
-## Verification Table
-
-All verification uses the test harness:
-```bash
-cargo run --example p31_visual_fidelity_test
-```
-
-| Phase | Screenshot | What to Look For |
-|-------|------------|------------------|
-| 0 | All 5 exist | Harness works |
-| 1 | `sky_up.png` | Solid purple (not fog color) |
-| 2 | `sky_up.png` | Gradient: darker zenith, warmer horizon |
-| 3 | `sky_horizon.png` | Moon discs visible with glow |
-| 4 | `sky_horizon.png` | Moon color shifts near horizon |
-| 5 | `building_front.png` | Muted colors, subtle amber glow |
-| 6 | `building_front.png` | Building appears smaller |
-| 7 | `terrain_distance.png` | Rolling hills to horizon |
-| 8 | `building_aerial.png` | Ground fog obscures base |
-
----
-
-## Common Pitfalls
-
-1. **Don't use manual verification** - Always use the test harness
-2. **Build facade first** - Constant purple sky proves pipeline works before adding gradient
-3. **Check render graph order** - Sky dome must run after bloom, before transparent
-4. **Shaders load async** - Pipeline may not be ready on first frame; handle gracefully
-5. **ViewNode needs ViewTarget** - To write to the screen, query `ViewTarget`
-
----
-
-## File Structure (What to Create)
-
-```
-crates/studio_core/
-├── src/deferred/
-│   ├── sky_dome.rs          # NEW: SkyDomeConfig resource
-│   ├── sky_dome_node.rs     # NEW: Render graph node
-│   ├── labels.rs            # MODIFY: Add SkyDomePass label
-│   ├── plugin.rs            # MODIFY: Register node and edges
-│   └── mod.rs               # MODIFY: Export new modules
-
-assets/shaders/
-└── sky_dome.wgsl            # NEW: Sky dome shader
+CapturePosition {
+    name: "moon_time_00",
+    position: Vec3::new(0.0, 5.0, 0.0),
+    look_at: Vec3::new(1.0, 0.5, 0.0),
+    time_of_day: Some(0.0),  // Set sky_config.time_of_day before capture
+}
 ```
 
 ---
 
-## Dependencies
-
-- Bevy 0.17
-- Existing deferred rendering pipeline
-- Day/night cycle system (for moon data in later phases)
-
----
-
-## Quick Start Commands
+## Verification Commands
 
 ```bash
 # Build and run test harness
@@ -252,12 +199,32 @@ cargo build --example p31_visual_fidelity_test
 
 ---
 
-## Contact/Context
+## Git History
 
-This work is part of improving visual fidelity for the MarkovJunior procedural generation demo. The goal is to make screenshots compelling enough that viewers understand "this is something interesting" rather than "this is a programmer's test scene."
+```
+b09f9ad feat(p31): add dual moon rendering with time-of-day control (Phase 3)
+9e2d156 feat(p31): add sky gradient from horizon to zenith (Phase 2)
+11da607 feat(p31): implement sky dome pipeline facade (Phase 1)
+0fa057e feat(p31): add visual fidelity test harness (Phase 0)
+```
 
-Key visual goals:
-- Procedural sky with dual moons
+---
+
+## Common Pitfalls
+
+1. **Non-filterable textures**: G-buffer position is `Rgba32Float` - use `NonFiltering` sampler
+2. **Shader async loading**: Pipeline may not be ready on first frame; check before drawing
+3. **ExtractResource derive**: Config resources need `#[derive(ExtractResource)]` for render world
+4. **Linear color space**: Convert `Color` to linear with `.to_linear()` before passing to shader
+5. **Render graph order**: Sky dome runs after bloom, before transparent
+
+---
+
+## Visual Goals (Reminder)
+
+The end goal is screenshots that look compelling:
+- Procedural sky with dual moons (purple + orange)
 - Dark fantasy / mysterious aesthetic
+- Time-of-day control for positioning moons in screenshots
 - Buildings that don't look oversized
 - Terrain extending to misty horizon

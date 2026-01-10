@@ -365,13 +365,120 @@ ls screenshots/visual_fidelity_test/
 
 ---
 
-## Future Work (Out of Scope)
+## SEUS-Inspired Sky Enhancements (Phases 9-14)
 
-These items are noted for future consideration but NOT part of this PR:
+**See `docs/plans/seus_sky_techniques.md` for complete execution plan with code.**
 
-- **Volumetric fog/god rays**: Would enhance atmosphere but requires shadow map sampling
-- **Stars in night sky**: Procedural star field when moons are below horizon
-- **Cloud layer**: Animated cloud shadows
+### Critical Context: Dual-Moon World
+
+**There is no sun. There is no daytime.** This world has two moons that orbit independently:
+- Purple moon: period 1.0, inclination 30°
+- Orange moon: period 0.8, inclination 15°
+
+Both moons are visible simultaneously. The sky is always night. The current `sky_dome.wgsl` is wrong - it has sun-based code that must be deleted and replaced.
+
+### Phases (Highest Impact First)
+
+| Phase | Technique | Impact | Outcome |
+|-------|-----------|--------|---------|
+| 9 | Dual-Moon SEUS Rendering | HIGHEST | Two visible moon discs via ray-sphere intersection, orbital motion |
+| 10 | Moon-Lit Sky Gradient | HIGH | Sky color from moon positions, delete sun gradients |
+| 11 | ACES Tonemapping | MEDIUM | Bright moons retain color |
+| 12 | Star Twinkle | MEDIUM | Stars flicker over time |
+| 13 | Fog/Horizon Integration | MEDIUM | Terrain fades into sky |
+| 14 | Two-Layer Clouds | MEDIUM | Procedural clouds tinted by moon colors |
+
+### Phase 9: Dual-Moon SEUS Rendering
+
+**Outcome:** Both moons render as visible 3D spheres with surface detail, moving through the sky over time.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check: purple_moon.png - solid purple disc with surface texture
+# Check: orange_moon.png - solid orange disc with surface texture  
+# Check: dual_moons_sky.png - BOTH moons visible simultaneously
+# Capture at multiple cycle times - moons at different positions
+```
+
+**Files Changed:**
+- `assets/shaders/sky_dome.wgsl`: Replace `render_moon()` with SEUS ray-sphere method
+- Delete `render_sun()`, `SunOrbit`, all sun uniforms
+
+### Phase 10: Moon-Lit Sky Gradient
+
+**Outcome:** Sky gradient responds to moon positions and colors, not sun.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check: sky has subtle tint toward whichever moon is higher
+```
+
+**Files Changed:**
+- `assets/shaders/sky_dome.wgsl`: Delete `day_sky_gradient()`, `twilight_gradient()`, replace with moon-based gradient
+
+### Phase 11: ACES Tonemapping
+
+**Outcome:** Moons retain vibrant color even when bright.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check: purple_moon.png - bright but purple, not washed white
+```
+
+**Files Changed:**
+- `assets/shaders/sky_dome.wgsl`: Replace lines 500-504 with ACES function
+
+### Phase 12: Star Twinkle Animation
+
+**Outcome:** Stars flicker subtly over time.
+
+**Verification:**
+```bash
+# Run test at two different times, compare star brightnesses
+```
+
+**Files Changed:**
+- `assets/shaders/sky_dome.wgsl`: Add time modulation to star brightness
+
+### Phase 13: Fog/Horizon Integration
+
+**Outcome:** No hard edge between terrain and sky.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check: terrain_moon.png - smooth blend at horizon
+```
+
+**Files Changed:**
+- `crates/studio_core/src/deferred/lighting.rs`: Match fog to sky horizon
+- `assets/shaders/sky_dome.wgsl`: Apply horizon fade
+
+### Phase 14: Two-Layer Clouds
+
+**Outcome:** Procedural clouds tinted by moon colors.
+
+**Verification:**
+```bash
+cargo run --example p31_visual_fidelity_test
+# Check: clouds visible, colored by moon light
+```
+
+**Files Changed:**
+- `assets/shaders/sky_dome.wgsl`: Add `compute_clouds()` using moon colors
+
+---
+
+## Future Work (Out of Scope for Initial PR)
+
+These items are noted for future consideration:
+
+- **Full volumetric clouds**: Ray-marched 3D cloud volumes
+- **Screen-space reflections**: For water and glossy surfaces
+- **God rays/volumetric lighting**: Light shafts through clouds
 - **Biome-based terrain colors**: Different areas with different palettes
 - **Chunk streaming for infinite terrain**: On-demand terrain generation
 - **Multiple generator support**: 5-10 concurrent MarkovJunior generators
