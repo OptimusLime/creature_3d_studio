@@ -14,6 +14,7 @@
 use bevy::prelude::*;
 
 pub mod benchmark;
+pub mod character_controller;
 pub mod chunk_streaming;
 pub mod creature_script;
 pub mod day_night;
@@ -25,6 +26,7 @@ pub mod physics_math;
 pub mod scene_utils;
 pub mod screenshot;
 pub mod screenshot_sequence;
+pub mod sky_sphere;
 pub mod voxel;
 pub mod voxel_collision;
 pub mod voxel_collision_gpu;
@@ -36,6 +38,9 @@ pub mod voxel_world_plugin;
 pub mod world_io;
 
 pub use benchmark::{BenchmarkConfig, BenchmarkPlugin, BenchmarkResult, BenchmarkStats};
+pub use character_controller::{
+    CharacterControllerConfig, CharacterControllerPlugin, PlayerCharacter, ThirdPersonCamera,
+};
 pub use chunk_streaming::{
     chunk_streaming_system, load_all_chunks_in_radius, world_pos_to_chunk, ChunkEntity,
     ChunkManager, ChunkMaterialHandle, ChunkStreamingConfig, ChunkStreamingPlugin, StreamingStats,
@@ -72,6 +77,7 @@ pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
 pub use screenshot_sequence::{
     capture_screenshot_sequence, ScreenshotSequence, ScreenshotSequencePlugin, SequenceState,
 };
+pub use sky_sphere::{SkySphere, SkySphereConfig, SkySphereMaterial, SkySpherePlugin};
 pub use voxel::{
     extract_clustered_emissive_lights, extract_emissive_lights, world_to_local, BorderDirection,
     BorderSlice, ChunkBorders, ChunkPos, EmissiveLight, Voxel, VoxelChunk, VoxelWorld, CHUNK_SIZE,
