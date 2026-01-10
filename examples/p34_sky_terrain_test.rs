@@ -15,11 +15,12 @@
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use studio_core::deferred::SkyDomeConfig;
 use studio_core::{
     CharacterControllerConfig, CharacterControllerPlugin, DeferredLightingConfig,
-    DeferredRenderable, PlayerCharacter, SkySphereConfig, SkySpherePlugin, TerrainOccupancy,
-    ThirdPersonCamera, Voxel, VoxelMaterial, VoxelWorld, VoxelWorldApp, WorldSource,
-    ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
+    DeferredRenderable, PlayerCharacter, TerrainOccupancy, ThirdPersonCamera, Voxel, VoxelMaterial,
+    VoxelWorld, VoxelWorldApp, WorldSource, ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR,
+    ATTRIBUTE_VOXEL_EMISSION,
 };
 
 const OUTPUT_DIR: &str = "screenshots/sky_terrain";
@@ -61,14 +62,12 @@ fn main() {
             fog_color: Color::srgb(0.05, 0.03, 0.08),
             ..Default::default()
         })
-        .with_resource(SkySphereConfig {
-            radius: 900.0,
-            cloud_texture_path: Some("textures/generated/mj_clouds_001.png".to_string()),
-            time_of_day: 0.35, // Mid-morning
+        // Sky dome config for deferred pipeline
+        .with_resource(SkyDomeConfig {
             enabled: true,
-        })
-        .with_plugin(|app| {
-            app.add_plugins(SkySpherePlugin);
+            time_of_day: 0.35, // Mid-morning
+            cloud_texture_path: Some("textures/generated/mj_clouds_001.png".to_string()),
+            ..Default::default()
         })
         .with_resource(occupancy)
         .with_resource(CharacterControllerConfig {
@@ -403,7 +402,7 @@ fn time_control_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut time_control: ResMut<TimeControl>,
-    mut sky_config: ResMut<SkySphereConfig>,
+    mut sky_config: ResMut<SkyDomeConfig>,
 ) {
     let mut changed = false;
 
