@@ -16,6 +16,7 @@
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use std::f32::consts::TAU;
 use std::path::Path;
 use studio_core::deferred::SkyDomeConfig;
 use studio_core::markov_junior::render::RenderPalette;
@@ -123,6 +124,51 @@ struct CapturePosition {
     look_at: Vec3,
     /// Optional time of day override (0.0-1.0) for moon positioning
     time_of_day: Option<f32>,
+    /// If true, look_at is computed from moon1 direction at time_of_day
+    track_moon1: bool,
+    /// If true, look_at is computed from moon2 direction at time_of_day
+    track_moon2: bool,
+}
+
+/// Calculate moon direction using same orbital math as sky_dome_node.rs
+/// Orbit keeps moons above horizon for visual impact
+/// MUST MATCH sky_dome_node.rs MoonOrbit::calculate_direction exactly!
+fn calculate_moon_direction(
+    period: f32,
+    phase_offset: f32,
+    inclination: f32,
+    min_altitude: f32,
+    cycle_time: f32,
+) -> Vec3 {
+    let moon_time = (cycle_time / period + phase_offset).fract();
+    let angle = moon_time * TAU;
+    let incline_rad = inclination.to_radians();
+
+    // Orbit in XZ plane (horizontal), with varying altitude
+    let x = angle.cos();
+    let z = angle.sin() * incline_rad.sin();
+
+    // Altitude varies smoothly, always above min_altitude
+    // MUST match sky_dome_node.rs: altitude_range = 0.8 - min_altitude
+    let altitude_range = 0.8 - min_altitude;
+    let raw_altitude = angle.sin(); // -1 to 1
+    let y = min_altitude + (raw_altitude + 1.0) * 0.5 * altitude_range;
+
+    Vec3::new(x, y, z).normalize()
+}
+
+/// Get purple moon direction at given time
+/// MUST MATCH sky_dome_node.rs MoonOrbit::purple()
+fn moon1_direction(time: f32) -> Vec3 {
+    // period=1.0, phase_offset=0.0, inclination=25.0, min_altitude=0.15
+    calculate_moon_direction(1.0, 0.0, 25.0, 0.15, time)
+}
+
+/// Get orange moon direction at given time
+/// MUST MATCH sky_dome_node.rs MoonOrbit::orange()
+fn moon2_direction(time: f32) -> Vec3 {
+    // period=0.7, phase_offset=0.35, inclination=15.0, min_altitude=0.1
+    calculate_moon_direction(0.7, 0.35, 15.0, 0.1, time)
 }
 
 /// State machine for the capture sequence.
@@ -139,56 +185,61 @@ struct CaptureState {
 impl CaptureState {
     fn new() -> Self {
         // Define all the camera positions for our test captures
+        // Numbered for clear ordering and reference
         let captures = vec![
+            // 01: Purple moon - tracking camera looks directly at moon1
             CapturePosition {
-                name: "sky_up",
-                // Looking straight up from ground level
+                name: "01_purple_moon",
                 position: Vec3::new(0.0, 5.0, 0.0),
-                look_at: Vec3::new(0.0, 100.0, 0.0),
-                time_of_day: Some(0.15), // Moons visible above
+                look_at: Vec3::ZERO,
+                time_of_day: Some(0.15),
+                track_moon1: true,
+                track_moon2: false,
             },
+            // 02: Orange moon - tracking camera looks directly at moon2
             CapturePosition {
-                name: "sky_horizon",
-                // Looking at horizon from elevated position
-                position: Vec3::new(0.0, 30.0, -60.0),
-                look_at: Vec3::new(0.0, 20.0, 100.0),
-                time_of_day: Some(0.15), // Moons near horizon
-            },
-            // Moon position verification captures
-            CapturePosition {
-                name: "moon_time_00",
-                // Looking at sky at time 0.0 - moons at starting position
+                name: "02_orange_moon",
                 position: Vec3::new(0.0, 5.0, 0.0),
-                look_at: Vec3::new(1.0, 0.5, 0.0), // Looking toward +X horizon
+                look_at: Vec3::ZERO,
                 time_of_day: Some(0.0),
+                track_moon1: false,
+                track_moon2: true,
             },
+            // 03: Dual moons - looking straight up at zenith
             CapturePosition {
-                name: "moon_time_25",
-                // Looking at sky at time 0.25 - moons at quarter position
+                name: "03_dual_moons",
                 position: Vec3::new(0.0, 5.0, 0.0),
-                look_at: Vec3::new(0.0, 1.0, 1.0), // Looking toward +Z/up
+                look_at: Vec3::new(0.0, 100.0, 0.0), // Look straight UP (point above camera)
                 time_of_day: Some(0.25),
+                track_moon1: false,
+                track_moon2: false,
             },
+            // 04: Sky gradient - look at horizon to see gradient
             CapturePosition {
-                name: "building_front",
-                // Close front view of building area
-                position: Vec3::new(30.0, 20.0, 30.0),
-                look_at: Vec3::new(0.0, 15.0, 0.0),
-                time_of_day: None, // Keep default
+                name: "04_sky_gradient",
+                position: Vec3::new(0.0, 5.0, 0.0),
+                look_at: Vec3::new(1.0, 0.2, 0.0), // Look toward horizon
+                time_of_day: Some(0.5),
+                track_moon1: false,
+                track_moon2: false,
             },
+            // 05: Building scene with sky
             CapturePosition {
-                name: "building_aerial",
-                // Top-down aerial view
-                position: Vec3::new(0.0, 80.0, 0.0),
-                look_at: Vec3::new(0.0, 0.0, 0.1),
-                time_of_day: None,
+                name: "05_building_scene",
+                position: Vec3::new(40.0, 25.0, 40.0),
+                look_at: Vec3::new(0.0, 20.0, 0.0),
+                time_of_day: Some(0.15),
+                track_moon1: false,
+                track_moon2: false,
             },
+            // 06: Terrain with moon in background
             CapturePosition {
-                name: "terrain_distance",
-                // Looking at distant terrain/horizon
-                position: Vec3::new(-30.0, 15.0, -30.0),
-                look_at: Vec3::new(50.0, 5.0, 50.0),
-                time_of_day: None,
+                name: "06_terrain_moon",
+                position: Vec3::new(0.0, 15.0, -50.0),
+                look_at: Vec3::new(0.0, 30.0, 50.0),
+                time_of_day: Some(0.12),
+                track_moon1: false,
+                track_moon2: false,
             },
         ];
 
@@ -290,19 +341,30 @@ fn capture_sequence_system(
 
     // If we just started a new capture, position the camera and set time
     if state.frames_waited == 0 && !state.capture_pending {
+        // Set time of day first (needed for moon direction calculation)
+        let time = capture.time_of_day.unwrap_or(0.2);
+        sky_config.time_of_day = time;
+
+        // Compute look_at target
+        let look_at = if capture.track_moon1 {
+            let moon_dir = moon1_direction(time);
+            println!("Moon1 direction at t={}: {:?}", time, moon_dir);
+            capture.position + moon_dir * 100.0
+        } else if capture.track_moon2 {
+            let moon_dir = moon2_direction(time);
+            println!("Moon2 direction at t={}: {:?}", time, moon_dir);
+            capture.position + moon_dir * 100.0
+        } else {
+            capture.look_at
+        };
+
         // Position camera for this capture
         for mut transform in camera_query.iter_mut() {
             transform.translation = capture.position;
-            transform.look_at(capture.look_at, Vec3::Y);
+            transform.look_at(look_at, Vec3::Y);
         }
 
-        // Set time of day if specified
-        if let Some(time) = capture.time_of_day {
-            sky_config.time_of_day = time;
-            println!("Positioning camera for: {} (time={})", capture.name, time);
-        } else {
-            println!("Positioning camera for: {}", capture.name);
-        }
+        println!("Positioning camera for: {} (time={})", capture.name, time);
     }
 
     // Wait for scene to settle

@@ -1,12 +1,14 @@
-//! Sky dome configuration for procedural sky rendering.
+//! Sky dome configuration for SEUS-style atmospheric scattering.
 //!
 //! This module defines the configuration resource for the sky dome pass,
-//! which renders a procedural sky where no geometry exists (depth > 999.0).
+//! which renders a procedural sky with physically-based atmospheric scattering
+//! inspired by Sonic Ether's Unbelievable Shaders (SEUS).
 //!
-//! ## Phases
-//! - Phase 1: Constant purple output (facade)
-//! - Phase 2: Horizon-to-zenith gradient
-//! - Phase 3: Moon rendering with time-of-day control
+//! ## Features
+//! - Rayleigh/Mie scattering for realistic sky colors
+//! - Dynamic sun with corona and proper horizon reddening
+//! - Dual moon system with ray-traced sphere rendering
+//! - Procedural starfield with twilight fade
 
 use bevy::prelude::*;
 use bevy::render::extract_resource::ExtractResource;
@@ -14,45 +16,81 @@ use bevy::render::extract_resource::ExtractResource;
 /// Configuration for a moon in the sky dome.
 #[derive(Clone, Debug)]
 pub struct MoonAppearance {
-    /// Angular size of the moon disc in radians (0.02 ~ 1 degree)
+    /// Angular size of the moon disc in radians
+    /// Game moons should be HUGE for visual impact:
+    /// - 0.3 radians = ~17 degrees (impressive)
+    /// - 0.5 radians = ~29 degrees (massive, dramatic)
+    /// - Earth's moon is only 0.009 radians (~0.5 degrees) - boring!
     pub size: f32,
-    /// Core color of the moon
+    /// Core color of the moon (bright, saturated)
     pub color: Color,
-    /// Glow intensity (0.0 = no glow, 1.0 = strong glow)
+    /// Glow intensity (1.0+ for dramatic effect)
     pub glow_intensity: f32,
-    /// Glow falloff (higher = sharper edge, lower = softer glow)
+    /// Glow falloff (lower = softer, more atmospheric glow)
     pub glow_falloff: f32,
+    /// Limb darkening strength (0.0 = uniform, 1.0 = dark edges)
+    pub limb_darkening: f32,
+    /// Surface detail intensity (procedural crater/texture noise)
+    pub surface_detail: f32,
 }
 
 impl Default for MoonAppearance {
     fn default() -> Self {
         Self {
-            size: 0.05, // ~3 degrees
+            size: 0.35, // ~20 degrees - dramatic!
             color: Color::WHITE,
-            glow_intensity: 0.5,
-            glow_falloff: 3.0,
+            glow_intensity: 1.2,
+            glow_falloff: 1.5,
+            limb_darkening: 0.4,
+            surface_detail: 0.3,
         }
     }
 }
 
 impl MoonAppearance {
-    /// Purple moon preset
+    /// Purple moon preset - HUGE and dramatic
     pub fn purple() -> Self {
         Self {
-            size: 0.08,                        // Larger disc (~4.5 degrees)
-            color: Color::srgb(0.7, 0.4, 1.0), // Brighter purple
-            glow_intensity: 0.8,               // More glow
-            glow_falloff: 2.0,                 // Softer falloff
+            size: 0.30,                        // ~17 degrees - large but not overwhelming
+            color: Color::srgb(0.9, 0.4, 1.0), // Vivid magenta-purple
+            glow_intensity: 1.0,               // Noticeable glow
+            glow_falloff: 1.5,                 // Soft glow falloff
+            limb_darkening: 0.6,               // Pronounced 3D effect
+            surface_detail: 0.4,               // Visible surface features
         }
     }
 
-    /// Orange moon preset
+    /// Orange moon preset - warm companion
     pub fn orange() -> Self {
         Self {
-            size: 0.06,                        // Larger disc (~3.4 degrees)
-            color: Color::srgb(1.0, 0.6, 0.2), // Brighter orange
-            glow_intensity: 0.7,               // More glow
-            glow_falloff: 2.5,                 // Softer falloff
+            size: 0.22,                        // ~12 degrees
+            color: Color::srgb(1.0, 0.6, 0.2), // Warm amber-orange
+            glow_intensity: 0.8,
+            glow_falloff: 1.6,
+            limb_darkening: 0.5,
+            surface_detail: 0.35,
+        }
+    }
+}
+
+/// Configuration for the sun in the sky dome.
+#[derive(Clone, Debug)]
+pub struct SunAppearance {
+    /// Angular size of the sun disc in radians (Earth's sun is ~0.009)
+    /// For fantasy settings, 0.02-0.05 creates a more dramatic sun
+    pub size: f32,
+    /// Sun color (typically warm white to yellow)
+    pub color: Color,
+    /// Sun intensity (controls brightness and corona strength)
+    pub intensity: f32,
+}
+
+impl Default for SunAppearance {
+    fn default() -> Self {
+        Self {
+            size: 0.03,                          // ~1.7 degrees - slightly larger than real
+            color: Color::srgb(1.0, 0.95, 0.85), // Warm white
+            intensity: 1.0,
         }
     }
 }
@@ -60,28 +98,30 @@ impl MoonAppearance {
 /// Configuration for the sky dome rendering pass.
 ///
 /// Controls the appearance of the procedural sky rendered behind all geometry.
-/// The sky dome runs after bloom and before transparent passes.
+/// Uses SEUS-style atmospheric scattering for realistic sky colors.
 #[derive(Resource, Clone, Debug, ExtractResource)]
 pub struct SkyDomeConfig {
     /// Whether sky dome rendering is enabled.
     /// When disabled, sky pixels show the fog color from the lighting pass.
     pub enabled: bool,
 
-    /// Color at the horizon (warm, slightly lighter)
+    /// Color at the horizon (used as base tint, atmospheric scattering adds detail)
     pub horizon_color: Color,
 
-    /// Color at the zenith (cool, darker)
+    /// Color at the zenith (used as base tint)
     pub zenith_color: Color,
 
     /// Controls the gradient blend curve.
     /// Higher values = sharper transition near horizon.
-    /// 1.0 = linear, 2.0 = quadratic (more sky color visible)
     pub horizon_blend_power: f32,
 
-    /// Time of day for moon positioning (0.0 - 1.0).
-    /// This controls where the moons appear in the sky.
-    /// 0.0/1.0 = cycle start, 0.25 = quarter, 0.5 = half, etc.
+    /// Time of day (0.0 - 1.0).
+    /// Controls sun/moon positions and sky coloring.
+    /// 0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
     pub time_of_day: f32,
+
+    /// Sun appearance settings
+    pub sun: SunAppearance,
 
     /// Moon 1 (purple) appearance settings
     pub moon1: MoonAppearance,
@@ -97,19 +137,61 @@ impl Default for SkyDomeConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            // Dark fantasy palette - mysterious night sky
-            // Horizon: warmer purple with slight orange tint
-            horizon_color: Color::srgb(0.25, 0.12, 0.30),
-            // Zenith: deep dark purple, almost black
-            zenith_color: Color::srgb(0.08, 0.04, 0.12),
-            // Quadratic blend for more zenith color at top
-            horizon_blend_power: 2.0,
-            // Default time - moons visible
-            time_of_day: 0.15,
-            // Moon appearances
+            // These colors are used as base tints; atmospheric scattering adds detail
+            horizon_color: Color::srgb(0.1, 0.05, 0.15),
+            zenith_color: Color::srgb(0.02, 0.01, 0.03),
+            horizon_blend_power: 1.5,
+            // Default: night time with moons visible
+            time_of_day: 0.1,
+            sun: SunAppearance::default(),
             moon1: MoonAppearance::purple(),
             moon2: MoonAppearance::orange(),
             moons_enabled: true,
+        }
+    }
+}
+
+impl SkyDomeConfig {
+    /// Create a midnight configuration (deep night, moons high)
+    pub fn midnight() -> Self {
+        Self {
+            time_of_day: 0.0,
+            ..Default::default()
+        }
+    }
+
+    /// Create a sunrise configuration (golden hour, stars fading)
+    pub fn sunrise() -> Self {
+        Self {
+            time_of_day: 0.25,
+            sun: SunAppearance {
+                intensity: 0.8,
+                color: Color::srgb(1.0, 0.8, 0.5),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Create a noon configuration (bright day, no stars)
+    pub fn noon() -> Self {
+        Self {
+            time_of_day: 0.5,
+            moons_enabled: false, // Moons not visible during day
+            ..Default::default()
+        }
+    }
+
+    /// Create a sunset configuration (golden hour)
+    pub fn sunset() -> Self {
+        Self {
+            time_of_day: 0.75,
+            sun: SunAppearance {
+                intensity: 0.9,
+                color: Color::srgb(1.0, 0.6, 0.3),
+                ..Default::default()
+            },
+            ..Default::default()
         }
     }
 }
@@ -124,6 +206,12 @@ impl SkyDomeConfig {
     /// Enable or disable moons
     pub fn with_moons(mut self, enabled: bool) -> Self {
         self.moons_enabled = enabled;
+        self
+    }
+
+    /// Set sun intensity
+    pub fn with_sun_intensity(mut self, intensity: f32) -> Self {
+        self.sun.intensity = intensity;
         self
     }
 }

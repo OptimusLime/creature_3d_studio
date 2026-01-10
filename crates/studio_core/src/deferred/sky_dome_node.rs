@@ -36,65 +36,91 @@ pub struct SkyDomeUniform {
     pub horizon_color: [f32; 4],
     /// Zenith color (rgb, a unused)
     pub zenith_color: [f32; 4],
-    /// x = blend_power, y = moons_enabled, zw = unused
+    /// x = blend_power, y = moons_enabled, z = sun_intensity, w = time_of_day
     pub params: [f32; 4],
+    /// Sun: xyz = direction, w = angular_size
+    pub sun_direction: [f32; 4],
+    /// Sun: rgb = color, a = unused
+    pub sun_color: [f32; 4],
     /// Moon 1: xyz = direction, w = size
     pub moon1_direction: [f32; 4],
     /// Moon 1: rgb = color, a = glow_intensity
     pub moon1_color: [f32; 4],
-    /// Moon 1: x = glow_falloff, yzw = unused
+    /// Moon 1: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     pub moon1_params: [f32; 4],
     /// Moon 2: xyz = direction, w = size
     pub moon2_direction: [f32; 4],
     /// Moon 2: rgb = color, a = glow_intensity
     pub moon2_color: [f32; 4],
-    /// Moon 2: x = glow_falloff, yzw = unused
+    /// Moon 2: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     pub moon2_params: [f32; 4],
 }
 
-/// Moon orbital configuration (matches day_night.rs MoonCycleConfig logic)
+/// Sun orbital configuration.
+/// Simple east-west arc based on time of day.
+struct SunOrbit;
+
+impl SunOrbit {
+    /// Calculate sun direction from time of day.
+    /// 0.0 = midnight (below horizon), 0.25 = sunrise (east), 0.5 = noon (zenith), 0.75 = sunset (west)
+    fn calculate_direction(time_of_day: f32) -> Vec3 {
+        // Convert time to angle: 0.0 = -PI/2 (nadir), 0.5 = PI/2 (zenith)
+        let angle = (time_of_day - 0.25) * TAU;
+
+        // Sun moves in XY plane (east to west arc)
+        let x = angle.cos();
+        let y = angle.sin();
+        let z = 0.0; // No tilt for simplicity
+
+        Vec3::new(x, y, z).normalize()
+    }
+}
+
+/// Moon orbital configuration for dramatic sky rendering.
+/// Designed to keep moons visible above the horizon for visual impact.
 struct MoonOrbit {
     period: f32,
     phase_offset: f32,
     inclination: f32,
+    /// Minimum altitude (radians) - moons won't go below this
+    min_altitude: f32,
 }
 
 impl MoonOrbit {
-    /// Purple moon orbit (from day_night.rs)
+    /// Purple moon orbit - large, slow, high arc
     fn purple() -> Self {
         Self {
             period: 1.0,
             phase_offset: 0.0,
-            inclination: 30.0,
+            inclination: 25.0,
+            min_altitude: 0.15,
         }
     }
 
-    /// Orange moon orbit (from day_night.rs)
+    /// Orange moon orbit - faster, different phase, lower arc
     fn orange() -> Self {
         Self {
-            period: 0.8,
-            phase_offset: 0.5,
+            period: 0.7,
+            phase_offset: 0.35,
             inclination: 15.0,
+            min_altitude: 0.1,
         }
     }
 
     /// Calculate moon direction at a given cycle time.
     /// Returns normalized direction TO the moon (for rendering, not lighting).
     fn calculate_direction(&self, cycle_time: f32) -> Vec3 {
-        // Adjust time by period and phase offset
         let moon_time = (cycle_time / self.period + self.phase_offset).fract();
-
-        // Convert to radians for orbital position
         let angle = moon_time * TAU;
-
-        // Calculate position on inclined orbit
         let incline_rad = self.inclination.to_radians();
 
-        // Basic circular orbit in XY plane, then tilt around X axis
         let x = angle.cos();
-        let y_base = angle.sin();
-        let y = y_base * incline_rad.cos();
-        let z = y_base * incline_rad.sin();
+        let z = angle.sin() * incline_rad.sin();
+
+        // Altitude varies smoothly, always above min_altitude
+        let altitude_range = 0.8 - self.min_altitude;
+        let raw_altitude = angle.sin();
+        let y = self.min_altitude + (raw_altitude + 1.0) * 0.5 * altitude_range;
 
         Vec3::new(x, y, z).normalize()
     }
@@ -155,6 +181,10 @@ impl ViewNode for SkyDomeNode {
         let horizon_linear = config.horizon_color.to_linear();
         let zenith_linear = config.zenith_color.to_linear();
 
+        // Compute sun position from time_of_day
+        let sun_dir = SunOrbit::calculate_direction(config.time_of_day);
+        let sun_color_linear = config.sun.color.to_linear();
+
         // Compute moon positions from time_of_day
         let moon1_orbit = MoonOrbit::purple();
         let moon2_orbit = MoonOrbit::orange();
@@ -183,8 +213,15 @@ impl ViewNode for SkyDomeNode {
             params: [
                 config.horizon_blend_power,
                 if config.moons_enabled { 1.0 } else { 0.0 },
-                0.0,
-                0.0,
+                config.sun.intensity,
+                config.time_of_day,
+            ],
+            sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, config.sun.size],
+            sun_color: [
+                sun_color_linear.red,
+                sun_color_linear.green,
+                sun_color_linear.blue,
+                1.0,
             ],
             moon1_direction: [moon1_dir.x, moon1_dir.y, moon1_dir.z, config.moon1.size],
             moon1_color: [
@@ -193,7 +230,12 @@ impl ViewNode for SkyDomeNode {
                 moon1_color_linear.blue,
                 config.moon1.glow_intensity,
             ],
-            moon1_params: [config.moon1.glow_falloff, 0.0, 0.0, 0.0],
+            moon1_params: [
+                config.moon1.glow_falloff,
+                config.moon1.limb_darkening,
+                config.moon1.surface_detail,
+                0.0,
+            ],
             moon2_direction: [moon2_dir.x, moon2_dir.y, moon2_dir.z, config.moon2.size],
             moon2_color: [
                 moon2_color_linear.red,
@@ -201,7 +243,12 @@ impl ViewNode for SkyDomeNode {
                 moon2_color_linear.blue,
                 config.moon2.glow_intensity,
             ],
-            moon2_params: [config.moon2.glow_falloff, 0.0, 0.0, 0.0],
+            moon2_params: [
+                config.moon2.glow_falloff,
+                config.moon2.limb_darkening,
+                config.moon2.surface_detail,
+                0.0,
+            ],
         };
 
         // Create uniform buffer

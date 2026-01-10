@@ -17,25 +17,30 @@
 @group(0) @binding(3) var position_sampler: sampler;
 
 // Sky dome uniforms (bind group 1)
+// MUST match SkyDomeUniform in sky_dome_node.rs exactly!
 struct SkyDomeUniforms {
     // Inverse view-projection matrix for reconstructing view direction
     inv_view_proj: mat4x4<f32>,
     // Gradient colors (vec4 for alignment, only rgb used)
     horizon_color: vec4<f32>,
     zenith_color: vec4<f32>,
-    // x = blend_power, y = moons_enabled (0 or 1), zw = unused
+    // x = blend_power, y = moons_enabled, z = sun_intensity, w = time_of_day
     params: vec4<f32>,
+    // Sun: xyz = direction (normalized), w = angular_size
+    sun_direction: vec4<f32>,
+    // Sun: rgb = color, a = unused
+    sun_color: vec4<f32>,
     // Moon 1: xyz = direction (normalized), w = size (radians)
     moon1_direction: vec4<f32>,
     // Moon 1: rgb = color, a = glow_intensity
     moon1_color: vec4<f32>,
-    // Moon 1: x = glow_falloff, yzw = unused
+    // Moon 1: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     moon1_params: vec4<f32>,
     // Moon 2: xyz = direction (normalized), w = size (radians)
     moon2_direction: vec4<f32>,
     // Moon 2: rgb = color, a = glow_intensity
     moon2_color: vec4<f32>,
-    // Moon 2: x = glow_falloff, yzw = unused
+    // Moon 2: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     moon2_params: vec4<f32>,
 }
 @group(1) @binding(0) var<uniform> sky: SkyDomeUniforms;
@@ -114,54 +119,43 @@ fn render_moon(
     let cos_angle = dot(view_dir, moon_dir);
     let angle = acos(clamp(cos_angle, -1.0, 1.0));
     
-    // Moon disc - sharp edge
-    let disc_factor = 1.0 - smoothstep(moon_size * 0.8, moon_size, angle);
-    
-    // Glow - soft falloff around moon
-    let glow_size = moon_size * 3.0; // Glow extends 3x moon size
-    let glow_factor = exp(-pow(angle / glow_size, glow_falloff)) * glow_intensity;
-    
-    // Combine disc and glow
-    let total_factor = disc_factor + glow_factor * (1.0 - disc_factor);
+    var result = vec3<f32>(0.0);
     
     // Apply horizon fade - moons near horizon are dimmer
     let horizon_fade = smoothstep(-0.05, 0.2, moon_dir.y);
     
-    return moon_color * total_factor * horizon_fade;
+    // Moon DISC - solid bright circle
+    // This should be clearly visible as a distinct shape
+    if angle < moon_size {
+        // Inside the moon disc
+        let t = angle / moon_size;  // 0 at center, 1 at edge
+        let edge_softness = 1.0 - smoothstep(0.85, 1.0, t);
+        
+        // Disc is BRIGHT - the actual moon surface
+        result = moon_color * edge_softness * 1.5 * horizon_fade;
+    } else {
+        // GLOW - soft halo OUTSIDE the disc only
+        let glow_size = moon_size * 2.5;
+        if angle < glow_size {
+            let glow_t = (angle - moon_size) / (glow_size - moon_size);
+            let glow_factor = exp(-glow_t * glow_t * 2.0) * glow_intensity * 0.3;
+            result = moon_color * glow_factor * horizon_fade;
+        }
+    }
+    
+    return result;
 }
 
 // Compute full sky color including gradient and moons
 fn compute_sky_color(view_dir: vec3<f32>) -> vec3<f32> {
-    // Start with gradient
-    var sky_color = compute_sky_gradient(view_dir);
-    
-    // Add moons if enabled
-    let moons_enabled = sky.params.y > 0.5;
-    if moons_enabled {
-        // Moon 1
-        let moon1_contrib = render_moon(
-            view_dir,
-            sky.moon1_direction.xyz,
-            sky.moon1_direction.w,
-            sky.moon1_color.rgb,
-            sky.moon1_color.a,
-            sky.moon1_params.x,
-        );
-        sky_color += moon1_contrib;
-        
-        // Moon 2
-        let moon2_contrib = render_moon(
-            view_dir,
-            sky.moon2_direction.xyz,
-            sky.moon2_direction.w,
-            sky.moon2_color.rgb,
-            sky.moon2_color.a,
-            sky.moon2_params.x,
-        );
-        sky_color += moon2_contrib;
-    }
-    
-    return sky_color;
+    // DEBUG: Output view_dir.y as brightness to verify view direction reconstruction
+    // If looking UP (zenith), view_dir.y should be ~1.0 (BRIGHT)
+    // If looking at HORIZON, view_dir.y should be ~0.0 (DARK)
+    // If looking DOWN, view_dir.y should be negative (BLACK)
+    //
+    // This tests Hypothesis 1: Is view_dir correct?
+    let debug_y = clamp(view_dir.y, 0.0, 1.0);
+    return vec3<f32>(debug_y, debug_y, debug_y);  // Grayscale based on vertical look direction
 }
 
 @fragment
