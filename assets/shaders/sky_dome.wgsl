@@ -15,6 +15,12 @@
 @group(0) @binding(4) var cloud_texture: texture_2d<f32>;
 @group(0) @binding(5) var cloud_sampler: sampler;
 
+// Moon textures (MarkovJunior-generated)
+@group(0) @binding(6) var moon1_texture: texture_2d<f32>;
+@group(0) @binding(7) var moon1_sampler: sampler;
+@group(0) @binding(8) var moon2_texture: texture_2d<f32>;
+@group(0) @binding(9) var moon2_sampler: sampler;
+
 // Sky dome uniforms (bind group 1)
 // MUST match SkyDomeUniform in sky_dome_node.rs exactly!
 struct SkyDomeUniforms {
@@ -210,19 +216,18 @@ fn calculate_cloud_color(
 
 // ============================================================================
 // MOON RENDERING
-// Renders stylized moon discs with procedural surface detail
+// Renders stylized moons using MarkovJunior-generated textures
 // ============================================================================
 
-// Render a single moon disc
-fn render_moon(
+// Sample moon texture and apply coloring
+fn sample_moon_texture(
     ray_dir: vec3<f32>,
     moon_dir: vec3<f32>,
-    moon_color: vec3<f32>,
     moon_size: f32,
+    moon_color: vec3<f32>,
     glow_intensity: f32,
     glow_falloff: f32,
-    limb_darkening: f32,
-    surface_detail: f32,
+    is_moon1: bool,
 ) -> vec4<f32> {
     // Moon only visible if above horizon
     if moon_dir.y < -0.1 {
@@ -233,101 +238,103 @@ fn render_moon(
     let cos_angle = dot(ray_dir, moon_dir);
     let angle = acos(clamp(cos_angle, -1.0, 1.0));
     
-    // Moon disc (solid core)
-    let disc_radius = moon_size; // Angular size in radians
-    let disc_edge_softness = disc_radius * 0.05;
+    let disc_radius = moon_size;
     
     var moon_alpha = 0.0;
     var moon_col = vec3<f32>(0.0);
     
-    if angle < disc_radius + disc_edge_softness * 3.0 {
-        // Inside or near moon disc
-        var disc_factor = smoothstep(disc_radius + disc_edge_softness, disc_radius - disc_edge_softness, angle);
+    // Inside moon disc - sample texture
+    if angle < disc_radius {
+        // Calculate UV coordinates on the moon disc
+        // Project ray onto plane perpendicular to moon direction
+        let to_ray = ray_dir - moon_dir * cos_angle;
+        let dist_from_center = length(to_ray);
         
-        // Limb darkening: edges of moon are darker
-        let center_dist = angle / disc_radius;
-        let limb = 1.0 - pow(center_dist, 2.0) * limb_darkening;
+        // Create local coordinate system on moon surface
+        let up = vec3<f32>(0.0, 1.0, 0.0);
+        let right = normalize(cross(up, moon_dir));
+        let local_up = normalize(cross(moon_dir, right));
         
-        // Surface detail: procedural noise for craters/texture
-        let detail_uv = vec2<f32>(
-            atan2(ray_dir.z - moon_dir.z, ray_dir.x - moon_dir.x),
-            asin(clamp(ray_dir.y - moon_dir.y, -1.0, 1.0))
-        );
-        let surface_noise = fract(sin(dot(detail_uv, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-        let detail_factor = 1.0 - surface_noise * surface_detail * 0.3;
+        // Project to get UV (-1 to 1 range)
+        let local_x = dot(to_ray, right) / disc_radius;
+        let local_y = dot(to_ray, local_up) / disc_radius;
         
-        // Shattered effect: add dark cracks
-        let crack_noise = fract(sin(dot(detail_uv * 3.0, vec2<f32>(39.346, 11.135))) * 93754.534);
-        let crack_factor = select(1.0, 0.6, crack_noise < 0.08);
+        // Map to texture UV (0 to 1 range, centered)
+        let uv = vec2<f32>(local_x * 0.5 + 0.5, local_y * 0.5 + 0.5);
         
-        // Fragment effect: scattered pieces
-        let fragment_noise = fract(sin(dot(detail_uv * 5.0, vec2<f32>(73.156, 29.947))) * 47382.645);
-        let is_fragment_gap = fragment_noise < 0.05 && center_dist > 0.3;
-        
-        if is_fragment_gap {
-            disc_factor *= 0.0; // Gap in the moon
+        // Sample the appropriate moon texture
+        var tex_sample: vec4<f32>;
+        if is_moon1 {
+            tex_sample = textureSample(moon1_texture, moon1_sampler, uv);
+        } else {
+            tex_sample = textureSample(moon2_texture, moon2_sampler, uv);
         }
         
-        moon_col = moon_color * limb * detail_factor * crack_factor;
-        moon_alpha = disc_factor;
+        // Apply moon color tint to texture
+        // Texture has RGBA where RGB is moon surface color, A is opacity
+        moon_col = tex_sample.rgb * moon_color;
+        moon_alpha = tex_sample.a;
+        
+        // Soft edge at disc boundary
+        let edge_softness = disc_radius * 0.05;
+        let edge_factor = smoothstep(disc_radius, disc_radius - edge_softness, angle);
+        moon_alpha *= edge_factor;
     }
     
-    // Glow around moon (always visible, even through thin clouds)
-    let glow_radius = disc_radius * 3.0;
-    if angle < glow_radius {
-        let glow_factor = smoothstep(glow_radius, disc_radius, angle);
-        let glow = pow(glow_factor, glow_falloff) * glow_intensity;
+    // Glow around moon
+    let glow_radius = disc_radius * 2.5;
+    if angle < glow_radius && angle > disc_radius * 0.8 {
+        let glow_t = (angle - disc_radius * 0.8) / (glow_radius - disc_radius * 0.8);
+        let glow = pow(1.0 - glow_t, glow_falloff) * glow_intensity;
         
-        // Glow color is slightly brighter/more saturated
-        let glow_col = moon_color * 1.2;
+        // Glow uses moon color
+        let glow_col = moon_color * 0.8;
         
-        // Add glow behind moon disc
-        moon_col = mix(glow_col * glow, moon_col, moon_alpha);
-        moon_alpha = max(moon_alpha, glow * 0.5);
+        // Blend glow behind moon disc
+        if moon_alpha < 0.5 {
+            moon_col = mix(moon_col, glow_col * glow, 1.0 - moon_alpha);
+            moon_alpha = max(moon_alpha, glow * 0.4);
+        }
     }
     
     return vec4<f32>(moon_col, moon_alpha);
 }
 
-// Render both moons
+// Render both moons using textures
 fn render_moons(ray_dir: vec3<f32>) -> vec4<f32> {
     let moons_enabled = sky.params.y;
     if moons_enabled < 0.5 {
         return vec4<f32>(0.0);
     }
     
-    // Moon 1 (purple)
+    // Moon 1 (purple) - using texture
     let moon1_dir = normalize(sky.moon1_direction.xyz);
     let moon1_size = sky.moon1_direction.w;
     let moon1_col = sky.moon1_color.rgb;
     let moon1_glow = sky.moon1_color.a;
     let moon1_falloff = sky.moon1_params.x;
-    let moon1_limb = sky.moon1_params.y;
-    let moon1_detail = sky.moon1_params.z;
     
-    let moon1 = render_moon(
-        ray_dir, moon1_dir, moon1_col, moon1_size,
-        moon1_glow, moon1_falloff, moon1_limb, moon1_detail
+    let moon1 = sample_moon_texture(
+        ray_dir, moon1_dir, moon1_size, moon1_col,
+        moon1_glow, moon1_falloff, true
     );
     
-    // Moon 2 (orange)
+    // Moon 2 (orange) - using texture
     let moon2_dir = normalize(sky.moon2_direction.xyz);
     let moon2_size = sky.moon2_direction.w;
     let moon2_col = sky.moon2_color.rgb;
     let moon2_glow = sky.moon2_color.a;
     let moon2_falloff = sky.moon2_params.x;
-    let moon2_limb = sky.moon2_params.y;
-    let moon2_detail = sky.moon2_params.z;
     
-    let moon2 = render_moon(
-        ray_dir, moon2_dir, moon2_col, moon2_size,
-        moon2_glow, moon2_falloff, moon2_limb, moon2_detail
+    let moon2 = sample_moon_texture(
+        ray_dir, moon2_dir, moon2_size, moon2_col,
+        moon2_glow, moon2_falloff, false
     );
     
-    // Composite moons (additive for glow, alpha blend for discs)
+    // Composite moons (alpha blend)
     var result = moon1;
     result = vec4<f32>(
-        result.rgb + moon2.rgb * (1.0 - result.a * 0.5),
+        mix(result.rgb, moon2.rgb, moon2.a * (1.0 - result.a * 0.3)),
         max(result.a, moon2.a)
     );
     

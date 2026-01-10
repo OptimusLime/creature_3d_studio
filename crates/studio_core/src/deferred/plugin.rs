@@ -57,8 +57,8 @@ use super::shadow_node::{
 };
 use super::sky_dome::SkyDomeConfig;
 use super::sky_dome_node::{
-    extract_cloud_texture, init_fallback_cloud_texture, init_sky_dome_pipeline, load_cloud_texture,
-    SkyDomeNode,
+    extract_cloud_texture, extract_moon_textures, init_fallback_cloud_texture,
+    init_sky_dome_pipeline, load_cloud_texture, load_moon_textures, SkyDomeNode,
 };
 use crate::debug_screenshot::DebugModes;
 
@@ -110,11 +110,12 @@ impl Plugin for DeferredRenderingPlugin {
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);
 
-        // Initialize cloud texture handle resource (empty initially)
+        // Initialize cloud and moon texture handle resources (empty initially)
         app.init_resource::<super::sky_dome_node::CloudTextureHandle>();
+        app.init_resource::<super::sky_dome_node::MoonTextureHandles>();
 
-        // Load cloud texture in main world (runs in PreUpdate so it's ready before extraction)
-        app.add_systems(PreUpdate, load_cloud_texture);
+        // Load cloud and moon textures in main world (runs in PreUpdate so they're ready before extraction)
+        app.add_systems(PreUpdate, (load_cloud_texture, load_moon_textures));
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -144,8 +145,11 @@ impl Plugin for DeferredRenderingPlugin {
                 extract_terrain_occupancy_system,
             ),
         );
-        // Cloud texture extraction (separate to avoid tuple limit)
-        render_app.add_systems(ExtractSchedule, extract_cloud_texture);
+        // Cloud and moon texture extraction (separate to avoid tuple limit)
+        render_app.add_systems(
+            ExtractSchedule,
+            (extract_cloud_texture, extract_moon_textures),
+        );
 
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources

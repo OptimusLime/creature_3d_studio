@@ -41,6 +41,15 @@ pub struct CloudTextureHandle {
     pub loaded_path: Option<String>,
 }
 
+/// Handle to moon textures in the main world.
+#[derive(Resource, Default)]
+pub struct MoonTextureHandles {
+    pub moon1_handle: Option<Handle<Image>>,
+    pub moon1_loaded_path: Option<String>,
+    pub moon2_handle: Option<Handle<Image>>,
+    pub moon2_loaded_path: Option<String>,
+}
+
 /// System that loads the cloud texture based on SkyDomeConfig.
 /// Runs in PreUpdate in the main world.
 pub fn load_cloud_texture(
@@ -68,6 +77,51 @@ pub fn load_cloud_texture(
     }
 }
 
+/// System that loads moon textures based on SkyDomeConfig.
+pub fn load_moon_textures(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut moon_handles: ResMut<MoonTextureHandles>,
+) {
+    // Moon 1
+    let needs_load_moon1 = match (&config.moon1_texture_path, &moon_handles.moon1_loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load_moon1 {
+        if let Some(path) = &config.moon1_texture_path {
+            info!("Loading moon1 texture: {}", path);
+            moon_handles.moon1_handle = Some(asset_server.load(path.clone()));
+            moon_handles.moon1_loaded_path = Some(path.clone());
+        } else {
+            moon_handles.moon1_handle = None;
+            moon_handles.moon1_loaded_path = None;
+        }
+    }
+
+    // Moon 2
+    let needs_load_moon2 = match (&config.moon2_texture_path, &moon_handles.moon2_loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load_moon2 {
+        if let Some(path) = &config.moon2_texture_path {
+            info!("Loading moon2 texture: {}", path);
+            moon_handles.moon2_handle = Some(asset_server.load(path.clone()));
+            moon_handles.moon2_loaded_path = Some(path.clone());
+        } else {
+            moon_handles.moon2_handle = None;
+            moon_handles.moon2_loaded_path = None;
+        }
+    }
+}
+
 // ============================================================================
 // Cloud Texture Extraction (Main World -> Render World)
 // ============================================================================
@@ -78,6 +132,13 @@ pub struct ExtractedCloudTexture {
     pub handle: Option<Handle<Image>>,
 }
 
+/// Extracted moon texture handles for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedMoonTextures {
+    pub moon1_handle: Option<Handle<Image>>,
+    pub moon2_handle: Option<Handle<Image>>,
+}
+
 /// Extract cloud texture handle to render world.
 /// Runs in ExtractSchedule.
 pub fn extract_cloud_texture(
@@ -86,6 +147,21 @@ pub fn extract_cloud_texture(
 ) {
     let handle = cloud_handle.as_ref().and_then(|h| h.handle.clone());
     commands.insert_resource(ExtractedCloudTexture { handle });
+}
+
+/// Extract moon texture handles to render world.
+pub fn extract_moon_textures(
+    moon_handles: Extract<Option<Res<MoonTextureHandles>>>,
+    mut commands: Commands,
+) {
+    let (moon1, moon2) = moon_handles
+        .as_ref()
+        .map(|h| (h.moon1_handle.clone(), h.moon2_handle.clone()))
+        .unwrap_or((None, None));
+    commands.insert_resource(ExtractedMoonTextures {
+        moon1_handle: moon1,
+        moon2_handle: moon2,
+    });
 }
 
 // ============================================================================
@@ -289,9 +365,10 @@ impl ViewNode for SkyDomeNode {
             return Ok(());
         };
 
-        // Get cloud texture view (from extracted handle or fallback)
+        // Get texture views (from extracted handles or fallback)
         let gpu_images = world.resource::<RenderAssets<GpuImage>>();
         let extracted_cloud = world.get_resource::<ExtractedCloudTexture>();
+        let extracted_moons = world.get_resource::<ExtractedMoonTextures>();
         let fallback_cloud = world.get_resource::<FallbackCloudTexture>();
 
         // Try to get actual cloud texture, fall back to white texture
@@ -303,6 +380,26 @@ impl ViewNode for SkyDomeNode {
 
         let Some(cloud_texture_view) = cloud_texture_view else {
             // Neither cloud texture nor fallback ready - skip rendering
+            return Ok(());
+        };
+
+        // Get moon texture views (fall back to cloud fallback if not loaded)
+        let moon1_texture_view = extracted_moons
+            .and_then(|e| e.moon1_handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let moon2_texture_view = extracted_moons
+            .and_then(|e| e.moon2_handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let Some(moon1_texture_view) = moon1_texture_view else {
+            return Ok(());
+        };
+        let Some(moon2_texture_view) = moon2_texture_view else {
             return Ok(());
         };
 
@@ -402,7 +499,7 @@ impl ViewNode for SkyDomeNode {
                     usage: BufferUsages::UNIFORM,
                 });
 
-        // Create bind group for scene texture + G-buffer position + cloud texture (group 0)
+        // Create bind group for scene texture + G-buffer position + cloud texture + moon textures (group 0)
         let textures_bind_group = render_context.render_device().create_bind_group(
             Some("sky_dome_textures_bind_group"),
             &sky_pipeline.textures_layout,
@@ -430,6 +527,22 @@ impl ViewNode for SkyDomeNode {
                 BindGroupEntry {
                     binding: 5,
                     resource: BindingResource::Sampler(&sky_pipeline.cloud_sampler),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: BindingResource::TextureView(moon1_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: BindingResource::Sampler(&sky_pipeline.moon_sampler),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: BindingResource::TextureView(moon2_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: BindingResource::Sampler(&sky_pipeline.moon_sampler),
                 },
             ],
         );
@@ -485,6 +598,8 @@ pub struct SkyDomePipeline {
     pub position_sampler: Sampler,
     /// Linear filtering sampler for cloud texture
     pub cloud_sampler: Sampler,
+    /// Linear filtering sampler for moon textures
+    pub moon_sampler: Sampler,
 }
 
 /// System to initialize the sky dome pipeline.
@@ -565,6 +680,42 @@ pub fn init_sky_dome_pipeline(
                 ty: BindingType::Sampler(SamplerBindingType::Filtering),
                 count: None,
             },
+            // Moon 1 texture
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Moon 1 sampler
+            BindGroupLayoutEntry {
+                binding: 7,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Moon 2 texture
+            BindGroupLayoutEntry {
+                binding: 8,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Moon 2 sampler
+            BindGroupLayoutEntry {
+                binding: 9,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     );
 
@@ -607,6 +758,14 @@ pub fn init_sky_dome_pipeline(
         ..default()
     });
 
+    // Create moon sampler (linear filtering for moon textures)
+    let moon_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_moon_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
+
     // Load shader
     let shader = asset_server.load("shaders/sky_dome.wgsl");
 
@@ -644,5 +803,6 @@ pub fn init_sky_dome_pipeline(
         scene_sampler,
         position_sampler,
         cloud_sampler,
+        moon_sampler,
     });
 }

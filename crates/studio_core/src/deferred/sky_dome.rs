@@ -136,6 +136,14 @@ pub struct SkyDomeConfig {
     /// If None, uses procedural placeholder pattern.
     /// Set to "textures/generated/mj_clouds_001.png" to use MJ-generated clouds.
     pub cloud_texture_path: Option<String>,
+
+    /// Path to moon 1 texture (relative to assets folder).
+    /// If None, uses fallback texture.
+    pub moon1_texture_path: Option<String>,
+
+    /// Path to moon 2 texture (relative to assets folder).
+    /// If None, uses fallback texture.
+    pub moon2_texture_path: Option<String>,
 }
 
 impl Default for SkyDomeConfig {
@@ -154,6 +162,9 @@ impl Default for SkyDomeConfig {
             moons_enabled: true,
             // Default to MJ-generated cloud texture
             cloud_texture_path: Some("textures/generated/mj_clouds_001.png".to_string()),
+            // Default to MJ-generated moon textures
+            moon1_texture_path: Some("textures/generated/mj_moon_purple.png".to_string()),
+            moon2_texture_path: Some("textures/generated/mj_moon_orange.png".to_string()),
         }
     }
 }
