@@ -8,22 +8,145 @@
 use bevy::image::BevyDefault;
 use bevy::prelude::*;
 use bevy::render::{
+    render_asset::RenderAssets,
     render_graph::{NodeRunError, RenderGraphContext, ViewNode},
     render_resource::{
         BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
         BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId,
-        ColorTargetState, ColorWrites, FilterMode, FragmentState, LoadOp, MultisampleState,
-        Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor,
-        RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-        StoreOp, TextureFormat, TextureSampleType, TextureViewDimension, VertexState,
+        ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp,
+        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
+        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+        SamplerDescriptor, ShaderStages, StoreOp, TextureDescriptor, TextureDimension,
+        TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension, VertexState,
     },
-    renderer::{RenderContext, RenderDevice},
+    renderer::{RenderContext, RenderDevice, RenderQueue},
+    texture::GpuImage,
     view::{ExtractedView, ViewTarget},
+    Extract,
 };
 use std::f32::consts::TAU;
 
 use super::gbuffer::ViewGBufferTextures;
 use super::sky_dome::SkyDomeConfig;
+
+// ============================================================================
+// Cloud Texture Loading (Main World)
+// ============================================================================
+
+/// Handle to the cloud texture in the main world.
+/// This resource holds the texture handle loaded from the configured path.
+#[derive(Resource, Default)]
+pub struct CloudTextureHandle {
+    pub handle: Option<Handle<Image>>,
+    pub loaded_path: Option<String>,
+}
+
+/// System that loads the cloud texture based on SkyDomeConfig.
+/// Runs in PreUpdate in the main world.
+pub fn load_cloud_texture(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut cloud_handle: ResMut<CloudTextureHandle>,
+) {
+    // Check if we need to load or reload
+    let needs_load = match (&config.cloud_texture_path, &cloud_handle.loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true, // Clear if path removed
+        (None, None) => false,
+    };
+
+    if needs_load {
+        if let Some(path) = &config.cloud_texture_path {
+            info!("Loading cloud texture: {}", path);
+            cloud_handle.handle = Some(asset_server.load(path.clone()));
+            cloud_handle.loaded_path = Some(path.clone());
+        } else {
+            cloud_handle.handle = None;
+            cloud_handle.loaded_path = None;
+        }
+    }
+}
+
+// ============================================================================
+// Cloud Texture Extraction (Main World -> Render World)
+// ============================================================================
+
+/// Extracted cloud texture handle for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedCloudTexture {
+    pub handle: Option<Handle<Image>>,
+}
+
+/// Extract cloud texture handle to render world.
+/// Runs in ExtractSchedule.
+pub fn extract_cloud_texture(
+    cloud_handle: Extract<Option<Res<CloudTextureHandle>>>,
+    mut commands: Commands,
+) {
+    let handle = cloud_handle.as_ref().and_then(|h| h.handle.clone());
+    commands.insert_resource(ExtractedCloudTexture { handle });
+}
+
+// ============================================================================
+// Fallback Cloud Texture (Render World)
+// ============================================================================
+
+/// Fallback white texture for when cloud texture isn't loaded.
+#[derive(Resource)]
+pub struct FallbackCloudTexture {
+    pub texture: bevy::render::render_resource::Texture,
+    pub view: bevy::render::render_resource::TextureView,
+}
+
+/// Initialize a 1x1 white fallback texture for clouds.
+/// This ensures we always have something to bind even if the texture hasn't loaded.
+pub fn init_fallback_cloud_texture(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    existing: Option<Res<FallbackCloudTexture>>,
+) {
+    if existing.is_some() {
+        return;
+    }
+
+    // Create 1x1 white RGBA texture
+    let texture = render_device.create_texture(&TextureDescriptor {
+        label: Some("fallback_cloud_texture"),
+        size: Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8UnormSrgb,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    // Write white pixel (RGBA = 255, 255, 255, 255)
+    render_queue.write_texture(
+        texture.as_image_copy(),
+        &[255u8, 255, 255, 255],
+        bevy::render::render_resource::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: None,
+        },
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let view = texture.create_view(&Default::default());
+
+    commands.insert_resource(FallbackCloudTexture { texture, view });
+}
 
 /// GPU uniform structure for sky dome rendering.
 /// Must match the WGSL struct layout exactly.
@@ -166,12 +289,30 @@ impl ViewNode for SkyDomeNode {
             return Ok(());
         };
 
+        // Get cloud texture view (from extracted handle or fallback)
+        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
+        let extracted_cloud = world.get_resource::<ExtractedCloudTexture>();
+        let fallback_cloud = world.get_resource::<FallbackCloudTexture>();
+
+        // Try to get actual cloud texture, fall back to white texture
+        let cloud_texture_view = extracted_cloud
+            .and_then(|e| e.handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let Some(cloud_texture_view) = cloud_texture_view else {
+            // Neither cloud texture nor fallback ready - skip rendering
+            return Ok(());
+        };
+
         // Use post_process_write to get source (current frame) and destination (output)
         // This swaps the buffers so we read from source and write to destination
         let post_process = view_target.post_process_write();
 
         // Compute inverse view-projection matrix for reconstructing view direction
-        let view_from_world = view.world_from_view.to_matrix().inverse();
+        let world_from_view = view.world_from_view.to_matrix();
+        let view_from_world = world_from_view.inverse();
         let clip_from_world = view
             .clip_from_world
             .unwrap_or(view.clip_from_view * view_from_world);
@@ -261,7 +402,7 @@ impl ViewNode for SkyDomeNode {
                     usage: BufferUsages::UNIFORM,
                 });
 
-        // Create bind group for scene texture + G-buffer position (group 0)
+        // Create bind group for scene texture + G-buffer position + cloud texture (group 0)
         let textures_bind_group = render_context.render_device().create_bind_group(
             Some("sky_dome_textures_bind_group"),
             &sky_pipeline.textures_layout,
@@ -281,6 +422,14 @@ impl ViewNode for SkyDomeNode {
                 BindGroupEntry {
                     binding: 3,
                     resource: BindingResource::Sampler(&sky_pipeline.position_sampler),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::TextureView(cloud_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: BindingResource::Sampler(&sky_pipeline.cloud_sampler),
                 },
             ],
         );
@@ -334,6 +483,8 @@ pub struct SkyDomePipeline {
     pub scene_sampler: Sampler,
     /// Non-filtering sampler for G-buffer position (Rgba32Float not filterable)
     pub position_sampler: Sampler,
+    /// Linear filtering sampler for cloud texture
+    pub cloud_sampler: Sampler,
 }
 
 /// System to initialize the sky dome pipeline.
@@ -355,6 +506,8 @@ pub fn init_sky_dome_pipeline(
     // - binding 1: scene sampler (filtering)
     // - binding 2: G-buffer position texture (for depth check)
     // - binding 3: position sampler (non-filtering, since Rgba32Float)
+    // - binding 4: cloud texture
+    // - binding 5: cloud sampler (filtering)
     let textures_layout = render_device.create_bind_group_layout(
         "sky_dome_textures_layout",
         &[
@@ -394,6 +547,24 @@ pub fn init_sky_dome_pipeline(
                 ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
                 count: None,
             },
+            // Cloud texture (Rgba8UnormSrgb - filterable)
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Cloud sampler (filtering)
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
         ],
     );
 
@@ -425,6 +596,14 @@ pub fn init_sky_dome_pipeline(
         label: Some("sky_dome_position_sampler"),
         mag_filter: FilterMode::Nearest,
         min_filter: FilterMode::Nearest,
+        ..default()
+    });
+
+    // Create cloud sampler (linear filtering for cloud texture)
+    let cloud_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_cloud_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
         ..default()
     });
 
@@ -464,5 +643,6 @@ pub fn init_sky_dome_pipeline(
         uniforms_layout,
         scene_sampler,
         position_sampler,
+        cloud_sampler,
     });
 }

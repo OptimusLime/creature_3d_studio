@@ -131,6 +131,11 @@ pub struct SkyDomeConfig {
 
     /// Whether to render moons
     pub moons_enabled: bool,
+
+    /// Path to cloud texture (relative to assets folder).
+    /// If None, uses procedural placeholder pattern.
+    /// Set to "textures/generated/mj_clouds_001.png" to use MJ-generated clouds.
+    pub cloud_texture_path: Option<String>,
 }
 
 impl Default for SkyDomeConfig {
@@ -147,6 +152,8 @@ impl Default for SkyDomeConfig {
             moon1: MoonAppearance::purple(),
             moon2: MoonAppearance::orange(),
             moons_enabled: true,
+            // Default to MJ-generated cloud texture
+            cloud_texture_path: Some("textures/generated/mj_clouds_001.png".to_string()),
         }
     }
 }
@@ -212,6 +219,12 @@ impl SkyDomeConfig {
     /// Set sun intensity
     pub fn with_sun_intensity(mut self, intensity: f32) -> Self {
         self.sun.intensity = intensity;
+        self
+    }
+
+    /// Set cloud texture path (relative to assets folder)
+    pub fn with_cloud_texture(mut self, path: Option<String>) -> Self {
+        self.cloud_texture_path = path;
         self
     }
 }

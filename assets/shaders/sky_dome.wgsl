@@ -1,8 +1,7 @@
 // Sky Dome Shader
 //
 // Fullscreen pass that renders sky where no geometry exists.
-// Phase 1: Simple UV-based gradient
-// Phase 2+: Will add cloud texture sampling
+// Uses spherical projection for world-space cloud texture sampling.
 
 // Scene texture from previous pass (post-bloom)
 @group(0) @binding(0) var scene_texture: texture_2d<f32>;
@@ -11,6 +10,10 @@
 // G-buffer position texture for depth check
 @group(0) @binding(2) var gPosition: texture_2d<f32>;
 @group(0) @binding(3) var position_sampler: sampler;
+
+// Cloud texture (MarkovJunior-generated or placeholder)
+@group(0) @binding(4) var cloud_texture: texture_2d<f32>;
+@group(0) @binding(5) var cloud_sampler: sampler;
 
 // Sky dome uniforms (bind group 1)
 // MUST match SkyDomeUniform in sky_dome_node.rs exactly!
@@ -38,6 +41,7 @@ struct SkyDomeUniforms {
 @group(1) @binding(0) var<uniform> sky: SkyDomeUniforms;
 
 const SKY_DEPTH_THRESHOLD: f32 = 999.0;
+const PI: f32 = 3.14159265359;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -54,26 +58,42 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     return out;
 }
 
-// Simple hash for procedural patterns
-fn hash(p: vec2<f32>) -> f32 {
-    let h = dot(p, vec2<f32>(127.1, 311.7));
-    return fract(sin(h) * 43758.5453123);
+// Convert screen UV to world-space ray direction
+// Since inv_view_proj has numerical issues with infinite far plane,
+// we use a simpler approach: just unproject a single point at z=0 (far plane in reverse-Z)
+fn get_world_ray_direction(uv: vec2<f32>) -> vec3<f32> {
+    // Convert UV to NDC [-1, 1]
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0);
+    
+    // For infinite reverse-Z, we need to handle the singularity differently
+    // Unproject a point at the far plane (z=0 in reverse-Z, but use small epsilon)
+    let clip_pos = vec4<f32>(ndc.x, ndc.y, 0.0001, 1.0);
+    
+    let world_pos = sky.inv_view_proj * clip_pos;
+    
+    // Perspective divide
+    let world_point = world_pos.xyz / world_pos.w;
+    
+    // Ray direction is from camera to this point
+    // For sky, we just normalize the direction (camera at origin conceptually)
+    return normalize(world_point);
 }
 
-// Procedural cloud pattern (placeholder for texture)
-// Returns alpha value: 0.0 = fully transparent, 1.0 = fully opaque
-fn cloud_pattern(uv: vec2<f32>) -> f32 {
-    // Checkerboard pattern - same as placeholder texture
-    let checker_size = 0.125;  // 1/8 = 32px at 256px texture
-    let checker_x = floor(uv.x / checker_size);
-    let checker_y = floor(uv.y / checker_size);
-    let is_cloud = (i32(checker_x) + i32(checker_y)) % 2 == 0;
+// Convert world-space direction to spherical UV coordinates
+// This maps the sky dome onto the cloud texture using equirectangular projection
+fn direction_to_spherical_uv(dir: vec3<f32>) -> vec2<f32> {
+    // Spherical coordinates:
+    // theta (azimuth) = atan2(z, x) -> maps to U [0, 1]
+    // phi (elevation) = asin(y) -> maps to V [0, 1]
     
-    if is_cloud {
-        return 0.4;  // 40% opacity - gradient clearly visible through clouds
-    } else {
-        return 0.0;  // Fully transparent - shows pure gradient
-    }
+    let theta = atan2(dir.z, dir.x);  // [-PI, PI]
+    let phi = asin(clamp(dir.y, -1.0, 1.0));  // [-PI/2, PI/2]
+    
+    // Map to [0, 1] UV space
+    let u = (theta + PI) / (2.0 * PI);  // [0, 1]
+    let v = (phi + PI * 0.5) / PI;       // [0, 1] - 0 = bottom (nadir), 1 = top (zenith)
+    
+    return vec2<f32>(u, v);
 }
 
 @fragment
@@ -83,20 +103,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let depth = position_sample.w;
     
     if depth > SKY_DEPTH_THRESHOLD {
-        // Layer 0: Base gradient (dramatic colors for visibility)
-        let t = in.uv.y;  // 0 = top, 1 = bottom
-        // Dark blue at top (zenith), orange at bottom (horizon) - very obvious gradient
-        let zenith = vec3<f32>(0.0, 0.0, 0.2);   // Dark blue
-        let horizon = vec3<f32>(0.8, 0.4, 0.1);  // Orange
-        let gradient = mix(zenith, horizon, t);
+        // Get world-space ray direction for this pixel
+        let ray_dir = get_world_ray_direction(in.uv);
         
-        // Layer 1: Cloud overlay (procedural placeholder)
-        // Scale UV for tiling (4x4 tiles across screen)
-        let cloud_uv = in.uv * 4.0;
-        let cloud_alpha = cloud_pattern(cloud_uv);
-        let cloud_color = vec3<f32>(1.0, 1.0, 1.0);  // Pure white clouds
+        // Compute elevation: ray_dir.y goes from -1 (down) to +1 (up)
+        // Map to [0,1]: 0 = horizon, 1 = zenith
+        let elevation = clamp((ray_dir.y + 1.0) * 0.5, 0.0, 1.0);
         
-        // Alpha blend: result = cloud * alpha + gradient * (1 - alpha)
+        // Use config colors for gradient
+        let horizon = sky.horizon_color.rgb;
+        let zenith = sky.zenith_color.rgb;
+        
+        // Apply blend power for sharper/softer horizon transition
+        let blend_power = sky.params.x;
+        let t = pow(elevation, blend_power);
+        let gradient = mix(horizon, zenith, t);
+        
+        // Sample cloud texture using spherical UV mapping
+        let cloud_uv = direction_to_spherical_uv(ray_dir);
+        let cloud_sample = textureSample(cloud_texture, cloud_sampler, cloud_uv);
+        let cloud_alpha = cloud_sample.a;
+        
+        // Blend clouds over gradient
+        let cloud_color = vec3<f32>(1.0, 1.0, 1.0); // White clouds
         let sky_color = mix(gradient, cloud_color, cloud_alpha);
         
         return vec4<f32>(sky_color, 1.0);

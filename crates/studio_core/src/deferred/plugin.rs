@@ -56,7 +56,10 @@ use super::shadow_node::{
     Moon2ShadowPassNode,
 };
 use super::sky_dome::SkyDomeConfig;
-use super::sky_dome_node::{init_sky_dome_pipeline, SkyDomeNode};
+use super::sky_dome_node::{
+    extract_cloud_texture, init_fallback_cloud_texture, init_sky_dome_pipeline, load_cloud_texture,
+    SkyDomeNode,
+};
 use crate::debug_screenshot::DebugModes;
 
 /// Plugin that enables deferred rendering for voxels.
@@ -107,6 +110,12 @@ impl Plugin for DeferredRenderingPlugin {
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);
 
+        // Initialize cloud texture handle resource (empty initially)
+        app.init_resource::<super::sky_dome_node::CloudTextureHandle>();
+
+        // Load cloud texture in main world (runs in PreUpdate so it's ready before extraction)
+        app.add_systems(PreUpdate, load_cloud_texture);
+
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             warn!("RenderApp not found - deferred rendering disabled");
@@ -135,6 +144,8 @@ impl Plugin for DeferredRenderingPlugin {
                 extract_terrain_occupancy_system,
             ),
         );
+        // Cloud texture extraction (separate to avoid tuple limit)
+        render_app.add_systems(ExtractSchedule, extract_cloud_texture);
 
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources
@@ -160,6 +171,7 @@ impl Plugin for DeferredRenderingPlugin {
                 init_depth_prefilter_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_denoise_pipeline.in_set(RenderSystems::Prepare),
                 init_sky_dome_pipeline.in_set(RenderSystems::Prepare),
+                init_fallback_cloud_texture.in_set(RenderSystems::Prepare),
             ),
         );
 
