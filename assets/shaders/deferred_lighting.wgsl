@@ -191,14 +191,17 @@ fn get_debug_mode() -> i32 {
 // ============================================================================
 
 // Calculate moon altitude factor for intensity scaling
-// Returns 0.0 when moon is below horizon, scales up to 1.0 at zenith
+// Returns 0.0 when moon is well below horizon, scales up as moon rises
 // NOTE: moon_dir is direction FROM moon TO scene, so negative Y means moon is ABOVE
 fn moon_altitude_factor(moon_dir: vec3<f32>) -> f32 {
     // moon_dir.y is negative when moon is above horizon (light pointing down)
     // -moon_dir.y gives us: +1 when moon at zenith, -1 when at nadir
     let altitude = -moon_dir.y;
-    // We want: below horizon = 0, at horizon = dim, at zenith = full
-    return smoothstep(-0.1, 0.5, altitude);
+    // Moon lighting should persist until moon disc fully sets below horizon
+    // -0.15 = moon center well below horizon (disc gone)
+    // 0.1 = moon just above horizon (still rising, full intensity)
+    // This keeps lighting effects strong while moon is near/at horizon
+    return smoothstep(-0.15, 0.1, altitude);
 }
 
 // Calculate horizon warmth - color shifts warmer when moon is near horizon
@@ -222,13 +225,15 @@ fn calculate_darkness_factor(moon1_dir_y: f32, moon2_dir_y: f32) -> f32 {
     let moon1_alt = -moon1_dir_y;
     let moon2_alt = -moon2_dir_y;
     
-    // How far below horizon is each moon? (0 if visible, positive if below)
-    let moon1_below = max(0.0, -moon1_alt);
-    let moon2_below = max(0.0, -moon2_alt);
+    // How far below horizon is each moon? 
+    // Use -0.15 as the "gone" threshold (matches moon_altitude_factor)
+    // 0 if still providing light, positive if truly below
+    let moon1_below = max(0.0, -0.15 - moon1_alt);
+    let moon2_below = max(0.0, -0.15 - moon2_alt);
     
-    // Night depth: only deep when BOTH moons are below horizon
+    // Night depth: only deep when BOTH moons are well below horizon
     // Use minimum because we need both to be down for true darkness
-    let night_depth = min(moon1_below, moon2_below) * 2.0;  // 0.5 below = full night
+    let night_depth = min(moon1_below, moon2_below) * 3.0;  // Scale so 0.33 below = full night
     let clamped_depth = clamp(night_depth, 0.0, 1.0);
     
     // Darkness factor: 1.0 = normal brightness, 0.25 = dim but visible
@@ -244,9 +249,10 @@ fn calculate_dynamic_ambient(moon1_dir: vec3<f32>, moon1_color: vec3<f32>,
     let moon1_alt = -moon1_dir.y;
     let moon2_alt = -moon2_dir.y;
     
-    // Contribution based on visibility (altitude above horizon)
-    let moon1_contrib = max(0.0, moon1_alt + 0.1);
-    let moon2_contrib = max(0.0, moon2_alt + 0.1);
+    // Contribution based on visibility - use -0.15 threshold to match altitude_factor
+    // Moons contribute until they're well below horizon
+    let moon1_contrib = max(0.0, moon1_alt + 0.15);
+    let moon2_contrib = max(0.0, moon2_alt + 0.15);
     let total = moon1_contrib + moon2_contrib + 0.001;  // Avoid div by zero
     
     // Blend colors based on relative visibility
@@ -257,12 +263,10 @@ fn calculate_dynamic_ambient(moon1_dir: vec3<f32>, moon1_color: vec3<f32>,
     let ambient_color = blended_color * 0.3 + DARK_AMBIENT_BASE_COLOR;
     
     // Intensity scales with highest visible moon
+    // Use smoothstep for gradual falloff matching moon_altitude_factor
     let max_visible = max(moon1_alt, moon2_alt);
-    let intensity = select(
-        DARK_AMBIENT_BASE_INTENSITY,  // Both below horizon
-        DARK_AMBIENT_BASE_INTENSITY + max(0.0, max_visible) * 0.08,  // Scale with altitude
-        max_visible > -0.1
-    );
+    let visibility = smoothstep(-0.15, 0.1, max_visible);
+    let intensity = DARK_AMBIENT_BASE_INTENSITY + visibility * 0.1;
     
     return ambient_color * intensity;
 }
