@@ -37,10 +37,10 @@ pub struct MoonAppearance {
 impl Default for MoonAppearance {
     fn default() -> Self {
         Self {
-            size: 0.35, // ~20 degrees - dramatic!
+            size: 0.10, // ~6 degrees - fantasy-sized but not overwhelming
             color: Color::WHITE,
-            glow_intensity: 1.2,
-            glow_falloff: 1.5,
+            glow_intensity: 0.2, // Subtle eerie glow
+            glow_falloff: 2.0,
             limb_darkening: 0.4,
             surface_detail: 0.3,
         }
@@ -48,27 +48,27 @@ impl Default for MoonAppearance {
 }
 
 impl MoonAppearance {
-    /// Purple moon preset - HUGE and dramatic
+    /// Purple moon preset - eerie, mystical
     pub fn purple() -> Self {
         Self {
-            size: 0.30,                        // ~17 degrees - large but not overwhelming
-            color: Color::srgb(0.9, 0.4, 1.0), // Vivid magenta-purple
-            glow_intensity: 1.0,               // Noticeable glow
-            glow_falloff: 1.5,                 // Soft glow falloff
-            limb_darkening: 0.6,               // Pronounced 3D effect
-            surface_detail: 0.4,               // Visible surface features
+            size: 0.12,                        // ~7 degrees - noticeable but not overwhelming
+            color: Color::srgb(0.6, 0.3, 0.7), // Muted purple, not garish
+            glow_intensity: 0.25,              // Subtle eerie glow
+            glow_falloff: 2.0,                 // Tighter glow falloff
+            limb_darkening: 0.5,               // Moderate 3D effect
+            surface_detail: 0.3,               // Visible surface features
         }
     }
 
-    /// Orange moon preset - warm companion
+    /// Orange moon preset - warm, smaller companion
     pub fn orange() -> Self {
         Self {
-            size: 0.22,                        // ~12 degrees
-            color: Color::srgb(1.0, 0.6, 0.2), // Warm amber-orange
-            glow_intensity: 0.8,
-            glow_falloff: 1.6,
-            limb_darkening: 0.5,
-            surface_detail: 0.35,
+            size: 0.08,                         // ~5 degrees - smaller secondary moon
+            color: Color::srgb(0.7, 0.45, 0.2), // Muted amber-orange
+            glow_intensity: 0.2,                // Subtle glow
+            glow_falloff: 2.2,                  // Tighter glow
+            limb_darkening: 0.45,
+            surface_detail: 0.25,
         }
     }
 }

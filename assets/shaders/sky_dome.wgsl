@@ -219,7 +219,14 @@ fn calculate_cloud_color(
 // Renders stylized moons using MarkovJunior-generated textures
 // ============================================================================
 
-// Sample moon texture and apply coloring
+// Calculate horizon proximity factor (0 = zenith, 1 = horizon)
+fn horizon_proximity(moon_dir: vec3<f32>) -> f32 {
+    // moon_dir.y is altitude: 1 = zenith, 0 = horizon, -1 = nadir
+    // Convert to horizon proximity: 0 at zenith, 1 at horizon
+    return 1.0 - clamp(moon_dir.y, 0.0, 1.0);
+}
+
+// Sample moon texture and apply coloring with horizon effects
 fn sample_moon_texture(
     ray_dir: vec3<f32>,
     moon_dir: vec3<f32>,
@@ -234,11 +241,30 @@ fn sample_moon_texture(
         return vec4<f32>(0.0);
     }
     
+    // === HORIZON EFFECTS ===
+    let horizon_factor = horizon_proximity(moon_dir);
+    
+    // Scale moon larger near horizon (moon illusion effect) - up to 30% bigger
+    let horizon_scale = 1.0 + horizon_factor * 0.3;
+    let scaled_size = moon_size * horizon_scale;
+    
+    // Increase glow near horizon (atmospheric scattering effect) - up to 2.5x more
+    let horizon_glow_boost = 1.0 + horizon_factor * 1.5;
+    let boosted_glow = glow_intensity * horizon_glow_boost;
+    
+    // Softer glow falloff near horizon (atmosphere disperses light)
+    let horizon_falloff_factor = 1.0 - horizon_factor * 0.4;
+    let adjusted_falloff = glow_falloff * horizon_falloff_factor;
+    
+    // Warm color shift near horizon (atmospheric reddening)
+    let horizon_warmth = horizon_factor * 0.3;
+    let warmed_color = moon_color + vec3<f32>(horizon_warmth * 0.2, horizon_warmth * 0.05, -horizon_warmth * 0.1);
+    
     // Calculate angle between ray and moon direction
     let cos_angle = dot(ray_dir, moon_dir);
     let angle = acos(clamp(cos_angle, -1.0, 1.0));
     
-    let disc_radius = moon_size;
+    let disc_radius = scaled_size;
     
     var moon_alpha = 0.0;
     var moon_col = vec3<f32>(0.0);
@@ -270,9 +296,8 @@ fn sample_moon_texture(
             tex_sample = textureSample(moon2_texture, moon2_sampler, uv);
         }
         
-        // Apply moon color tint to texture
-        // Texture has RGBA where RGB is moon surface color, A is opacity
-        moon_col = tex_sample.rgb * moon_color;
+        // Apply warmed moon color tint to texture
+        moon_col = tex_sample.rgb * warmed_color;
         moon_alpha = tex_sample.a;
         
         // Soft edge at disc boundary
@@ -281,20 +306,29 @@ fn sample_moon_texture(
         moon_alpha *= edge_factor;
     }
     
-    // Glow around moon
-    let glow_radius = disc_radius * 2.5;
+    // Glow around moon - much larger radius near horizon
+    let glow_radius = disc_radius * (2.5 + horizon_factor * 2.0);
     if angle < glow_radius && angle > disc_radius * 0.8 {
         let glow_t = (angle - disc_radius * 0.8) / (glow_radius - disc_radius * 0.8);
-        let glow = pow(1.0 - glow_t, glow_falloff) * glow_intensity;
+        let glow = pow(1.0 - glow_t, adjusted_falloff) * boosted_glow;
         
-        // Glow uses moon color
-        let glow_col = moon_color * 0.8;
+        // Glow uses warmed moon color
+        let glow_col = warmed_color * 0.8;
         
         // Blend glow behind moon disc
         if moon_alpha < 0.5 {
             moon_col = mix(moon_col, glow_col * glow, 1.0 - moon_alpha);
             moon_alpha = max(moon_alpha, glow * 0.4);
         }
+    }
+    
+    // Extra atmospheric bloom near horizon
+    if horizon_factor > 0.5 && angle < glow_radius * 1.5 {
+        let bloom_factor = (horizon_factor - 0.5) * 2.0; // 0-1 in lower half of sky
+        let bloom_t = angle / (glow_radius * 1.5);
+        let bloom = pow(1.0 - bloom_t, 0.8) * bloom_factor * boosted_glow * 0.3;
+        moon_col += warmed_color * bloom;
+        moon_alpha = max(moon_alpha, bloom * 0.2);
     }
     
     return vec4<f32>(moon_col, moon_alpha);

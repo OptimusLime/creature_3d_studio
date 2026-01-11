@@ -275,55 +275,80 @@ impl SunOrbit {
     }
 }
 
-/// Moon orbital configuration - works like sun orbit (rises in east, sets in west).
+/// Moon orbital configuration - creates dramatic tilted orbits.
 ///
 /// Time mapping:
-/// - 0.00 = Rising in east (on horizon)
+/// - 0.00 = Rising (on horizon)
 /// - 0.25 = Zenith (highest point)
-/// - 0.50 = Setting in west (on horizon)
+/// - 0.50 = Setting (on horizon)
 /// - 0.75 = Nadir (below horizon, not visible)
+///
+/// Each moon has its own orbital plane defined by:
+/// - inclination: tilt angle from vertical (degrees)
+/// - azimuth_offset: rotation of orbital plane around vertical axis (degrees)
 struct MoonOrbit {
     /// Orbital inclination in degrees (tilt from vertical plane)
-    /// 0 = moves directly east-west overhead
-    /// 30 = tilted 30 degrees, passes through different part of sky
+    /// 0 = rises east, sets west (like sun)
+    /// 45 = tilted path, rises NE, sets SW (or vice versa)
     inclination: f32,
+    /// Azimuth offset in degrees - rotates the orbital plane
+    /// 0 = rise in east (+X), 90 = rise in south (+Z)
+    azimuth_offset: f32,
 }
 
 impl MoonOrbit {
-    /// Purple moon orbit - slight tilt
+    /// Purple moon orbit - dramatic northward tilt
+    /// Rises in the ENE, arcs high toward NW, sets in WNW
     fn purple() -> Self {
-        Self { inclination: 15.0 }
+        Self {
+            inclination: 35.0,    // Significant tilt toward north
+            azimuth_offset: 20.0, // Slightly offset from due east
+        }
     }
 
-    /// Orange moon orbit - different tilt for variety
+    /// Orange moon orbit - southern arc, different timing feel
+    /// Rises in the ESE, arcs toward SW, sets in WSW
     fn orange() -> Self {
         Self {
-            inclination: -10.0, // Negative = tilted opposite direction
+            inclination: -25.0,    // Tilt toward south (negative)
+            azimuth_offset: -15.0, // Slightly offset the other way
         }
     }
 
     /// Calculate moon direction from orbital time (0.0 - 1.0).
     ///
-    /// This works exactly like sun movement:
-    /// - Rises in east (+X), arcs overhead, sets in west (-X)
-    /// - Y component determines altitude (positive = above horizon)
-    /// - Z component adds orbital tilt/inclination
+    /// Uses proper 3D rotation to create tilted orbital planes:
+    /// 1. Start with basic east-west arc in XY plane
+    /// 2. Rotate around X axis for inclination (tilt north/south)
+    /// 3. Rotate around Y axis for azimuth offset (rotate rise/set points)
     fn calculate_direction(&self, moon_time: f32) -> Vec3 {
         // Convert time to angle: 0.0 = east horizon, 0.25 = zenith, 0.5 = west horizon
-        // Offset by -0.25 so time=0 is on eastern horizon
         let angle = (moon_time - 0.25) * TAU;
+
+        // Base orbit in XY plane (like sun): rises east (+X), arcs up, sets west (-X)
+        let base_x = angle.cos();
+        let base_y = angle.sin();
+        let base_z = 0.0;
+
+        // Apply inclination: rotate around X axis (tilts the orbital plane north/south)
         let incline_rad = self.inclination.to_radians();
+        let cos_inc = incline_rad.cos();
+        let sin_inc = incline_rad.sin();
 
-        // East-west motion (like sun)
-        let x = angle.cos();
+        let tilted_x = base_x;
+        let tilted_y = base_y * cos_inc - base_z * sin_inc;
+        let tilted_z = base_y * sin_inc + base_z * cos_inc;
 
-        // Altitude: sin curve from horizon to zenith to horizon to nadir
-        let y = angle.sin();
+        // Apply azimuth offset: rotate around Y axis (rotates rise/set direction)
+        let azimuth_rad = self.azimuth_offset.to_radians();
+        let cos_az = azimuth_rad.cos();
+        let sin_az = azimuth_rad.sin();
 
-        // Inclination tilts the orbital plane
-        let z = -angle.cos() * incline_rad.sin();
+        let final_x = tilted_x * cos_az + tilted_z * sin_az;
+        let final_y = tilted_y;
+        let final_z = -tilted_x * sin_az + tilted_z * cos_az;
 
-        Vec3::new(x, y, z).normalize()
+        Vec3::new(final_x, final_y, final_z).normalize()
     }
 }
 
