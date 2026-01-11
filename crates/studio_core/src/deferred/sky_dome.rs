@@ -116,9 +116,18 @@ pub struct SkyDomeConfig {
     pub horizon_blend_power: f32,
 
     /// Time of day (0.0 - 1.0).
-    /// Controls sun/moon positions and sky coloring.
+    /// Controls sun position and sky coloring.
     /// 0.0 = midnight, 0.25 = sunrise, 0.5 = noon, 0.75 = sunset
     pub time_of_day: f32,
+
+    /// Moon 1 orbital time (0.0 - 1.0).
+    /// Independent of time_of_day for separate control.
+    /// 0.0 = rising in east, 0.25 = zenith, 0.5 = setting in west, 0.75 = below horizon
+    pub moon1_time: f32,
+
+    /// Moon 2 orbital time (0.0 - 1.0).
+    /// Independent of time_of_day for separate control.
+    pub moon2_time: f32,
 
     /// Sun appearance settings
     pub sun: SunAppearance,
@@ -156,6 +165,9 @@ impl Default for SkyDomeConfig {
             horizon_blend_power: 1.5,
             // Default: night time with moons visible
             time_of_day: 0.1,
+            // Moon orbital times (independent control)
+            moon1_time: 0.25, // Purple moon at zenith
+            moon2_time: 0.15, // Orange moon rising
             sun: SunAppearance::default(),
             moon1: MoonAppearance::purple(),
             moon2: MoonAppearance::orange(),

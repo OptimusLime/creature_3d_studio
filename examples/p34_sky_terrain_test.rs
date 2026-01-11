@@ -7,11 +7,11 @@
 //! Test mode: `cargo run --example p34_sky_terrain_test -- --test`
 //!
 //! Controls:
-//! - WASD: Move
-//! - Space: Jump
-//! - Right-click + Mouse: Look around (including up at sky)
-//! - Q/E: Change time of day
-//! - F12: Take screenshot
+//! - WASD: Move, Space: Jump
+//! - Q/E: Zoom, I/K: Fast pitch (look at sky)
+//! - T: Moon1 (purple) orbit, Y: Moon2 (orange) orbit
+//! - G: Time of day (sun/sky), Shift: reverse direction
+//! - F12: Screenshot
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -30,12 +30,22 @@ fn main() {
     println!("  Phase 34: Sky + Terrain Integration Test");
     println!("==============================================");
     println!();
-    println!("Controls:");
-    println!("  WASD - Move");
+    println!("Movement Controls:");
+    println!("  WASD  - Move");
     println!("  Space - Jump");
-    println!("  Right-click + Mouse - Look (including up at sky!)");
-    println!("  Q/E - Change time of day");
-    println!("  F12 - Take screenshot");
+    println!("  Q/E   - Zoom camera in/out");
+    println!("  I/K   - Fast pitch (look up/down at sky)");
+    println!();
+    println!("Sky Controls:");
+    println!("  T     - Move moon1 (purple) through orbit");
+    println!("  Y     - Move moon2 (orange) through orbit");
+    println!("  G     - Change time of day (sun/sky color)");
+    println!("  Shift - Hold to reverse direction");
+    println!();
+    println!("Moon orbit: 0.0=rising east, 0.25=zenith, 0.5=setting west, 0.75=below horizon");
+    println!();
+    println!("Other:");
+    println!("  F12   - Take screenshot");
     println!();
 
     // Ensure output directory exists
@@ -82,7 +92,11 @@ fn main() {
             min_distance: 5.0,
             max_distance: 50.0,
         })
-        .with_resource(TimeControl { time_of_day: 0.15 })
+        .with_resource(TimeControl {
+            time_of_day: 0.15,
+            moon1_time: 0.25, // Purple moon at zenith
+            moon2_time: 0.15, // Orange moon rising
+        })
         .with_resource(NeedPlayerSpawn)
         .with_plugin(|app| {
             app.add_plugins(CharacterControllerPlugin);
@@ -226,6 +240,8 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
 #[derive(Resource)]
 struct TimeControl {
     time_of_day: f32,
+    moon1_time: f32,
+    moon2_time: f32,
 }
 
 #[derive(Resource)]
@@ -404,21 +420,69 @@ fn time_control_system(
     mut time_control: ResMut<TimeControl>,
     mut sky_config: ResMut<SkyDomeConfig>,
 ) {
-    let mut changed = false;
+    let speed = time.delta_secs() * 0.1;
+    let reverse = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
-    // T key advances time of day (hold Shift+T to reverse)
+    // T key: Control moon1 (purple) orbital time
     if keyboard.pressed(KeyCode::KeyT) {
-        if keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight) {
-            time_control.time_of_day -= time.delta_secs() * 0.1;
+        if reverse {
+            time_control.moon1_time -= speed;
         } else {
-            time_control.time_of_day += time.delta_secs() * 0.1;
+            time_control.moon1_time += speed;
         }
-        changed = true;
+        time_control.moon1_time = time_control.moon1_time.rem_euclid(1.0);
+        sky_config.moon1_time = time_control.moon1_time;
+
+        // Print moon position for debugging
+        let phase = match time_control.moon1_time {
+            t if t < 0.125 => "rising (east)",
+            t if t < 0.375 => "high in sky",
+            t if t < 0.625 => "setting (west)",
+            _ => "below horizon",
+        };
+        println!("Moon1 (purple): {:.2} - {}", time_control.moon1_time, phase);
     }
 
-    if changed {
+    // Y key: Control moon2 (orange) orbital time
+    if keyboard.pressed(KeyCode::KeyY) {
+        if reverse {
+            time_control.moon2_time -= speed;
+        } else {
+            time_control.moon2_time += speed;
+        }
+        time_control.moon2_time = time_control.moon2_time.rem_euclid(1.0);
+        sky_config.moon2_time = time_control.moon2_time;
+
+        let phase = match time_control.moon2_time {
+            t if t < 0.125 => "rising (east)",
+            t if t < 0.375 => "high in sky",
+            t if t < 0.625 => "setting (west)",
+            _ => "below horizon",
+        };
+        println!("Moon2 (orange): {:.2} - {}", time_control.moon2_time, phase);
+    }
+
+    // G key: Control time of day (sun position, sky color)
+    if keyboard.pressed(KeyCode::KeyG) {
+        if reverse {
+            time_control.time_of_day -= speed;
+        } else {
+            time_control.time_of_day += speed;
+        }
         time_control.time_of_day = time_control.time_of_day.rem_euclid(1.0);
         sky_config.time_of_day = time_control.time_of_day;
+
+        let phase = match time_control.time_of_day {
+            t if t < 0.125 => "late night",
+            t if t < 0.25 => "pre-dawn",
+            t if t < 0.375 => "morning",
+            t if t < 0.5 => "midday",
+            t if t < 0.625 => "afternoon",
+            t if t < 0.75 => "evening",
+            t if t < 0.875 => "dusk",
+            _ => "night",
+        };
+        println!("Time of day: {:.2} - {}", time_control.time_of_day, phase);
     }
 }
 

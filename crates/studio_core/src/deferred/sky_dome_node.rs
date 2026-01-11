@@ -275,51 +275,53 @@ impl SunOrbit {
     }
 }
 
-/// Moon orbital configuration for dramatic sky rendering.
-/// Designed to keep moons visible above the horizon for visual impact.
+/// Moon orbital configuration - works like sun orbit (rises in east, sets in west).
+///
+/// Time mapping:
+/// - 0.00 = Rising in east (on horizon)
+/// - 0.25 = Zenith (highest point)
+/// - 0.50 = Setting in west (on horizon)
+/// - 0.75 = Nadir (below horizon, not visible)
 struct MoonOrbit {
-    period: f32,
-    phase_offset: f32,
+    /// Orbital inclination in degrees (tilt from vertical plane)
+    /// 0 = moves directly east-west overhead
+    /// 30 = tilted 30 degrees, passes through different part of sky
     inclination: f32,
-    /// Minimum altitude (radians) - moons won't go below this
-    min_altitude: f32,
 }
 
 impl MoonOrbit {
-    /// Purple moon orbit - large, slow, high arc
+    /// Purple moon orbit - slight tilt
     fn purple() -> Self {
-        Self {
-            period: 1.0,
-            phase_offset: 0.0,
-            inclination: 25.0,
-            min_altitude: 0.15,
-        }
+        Self { inclination: 15.0 }
     }
 
-    /// Orange moon orbit - faster, different phase, lower arc
+    /// Orange moon orbit - different tilt for variety
     fn orange() -> Self {
         Self {
-            period: 0.7,
-            phase_offset: 0.35,
-            inclination: 15.0,
-            min_altitude: 0.1,
+            inclination: -10.0, // Negative = tilted opposite direction
         }
     }
 
-    /// Calculate moon direction at a given cycle time.
-    /// Returns normalized direction TO the moon (for rendering, not lighting).
-    fn calculate_direction(&self, cycle_time: f32) -> Vec3 {
-        let moon_time = (cycle_time / self.period + self.phase_offset).fract();
-        let angle = moon_time * TAU;
+    /// Calculate moon direction from orbital time (0.0 - 1.0).
+    ///
+    /// This works exactly like sun movement:
+    /// - Rises in east (+X), arcs overhead, sets in west (-X)
+    /// - Y component determines altitude (positive = above horizon)
+    /// - Z component adds orbital tilt/inclination
+    fn calculate_direction(&self, moon_time: f32) -> Vec3 {
+        // Convert time to angle: 0.0 = east horizon, 0.25 = zenith, 0.5 = west horizon
+        // Offset by -0.25 so time=0 is on eastern horizon
+        let angle = (moon_time - 0.25) * TAU;
         let incline_rad = self.inclination.to_radians();
 
+        // East-west motion (like sun)
         let x = angle.cos();
-        let z = angle.sin() * incline_rad.sin();
 
-        // Altitude varies smoothly, always above min_altitude
-        let altitude_range = 0.8 - self.min_altitude;
-        let raw_altitude = angle.sin();
-        let y = self.min_altitude + (raw_altitude + 1.0) * 0.5 * altitude_range;
+        // Altitude: sin curve from horizon to zenith to horizon to nadir
+        let y = angle.sin();
+
+        // Inclination tilts the orbital plane
+        let z = -angle.cos() * incline_rad.sin();
 
         Vec3::new(x, y, z).normalize()
     }
@@ -423,11 +425,11 @@ impl ViewNode for SkyDomeNode {
         let sun_dir = SunOrbit::calculate_direction(config.time_of_day);
         let sun_color_linear = config.sun.color.to_linear();
 
-        // Compute moon positions from time_of_day
+        // Compute moon positions from their individual orbital times
         let moon1_orbit = MoonOrbit::purple();
         let moon2_orbit = MoonOrbit::orange();
-        let moon1_dir = moon1_orbit.calculate_direction(config.time_of_day);
-        let moon2_dir = moon2_orbit.calculate_direction(config.time_of_day);
+        let moon1_dir = moon1_orbit.calculate_direction(config.moon1_time);
+        let moon2_dir = moon2_orbit.calculate_direction(config.moon2_time);
 
         // Convert moon colors to linear
         let moon1_color_linear = config.moon1.color.to_linear();
