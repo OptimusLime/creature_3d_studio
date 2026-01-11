@@ -130,8 +130,8 @@ const FILL_INTENSITY: f32 = 0.4;
 // These constants are kept as fallbacks but should not be used
 
 // Dark world ambient - base values, modified by moon positions at runtime
-const DARK_AMBIENT_BASE_COLOR: vec3<f32> = vec3<f32>(0.01, 0.005, 0.02);
-const DARK_AMBIENT_BASE_INTENSITY: f32 = 0.02;  // Very dim base when no moons visible
+const DARK_AMBIENT_BASE_COLOR: vec3<f32> = vec3<f32>(0.02, 0.015, 0.03);
+const DARK_AMBIENT_BASE_INTENSITY: f32 = 0.08;  // Base visibility even when both moons are down
 
 // --- Fog Settings ---
 const FOG_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.03);  // Near black for dark world
@@ -215,7 +215,7 @@ fn horizon_warmth(moon_dir: vec3<f32>, base_color: vec3<f32>) -> vec3<f32> {
 }
 
 // Calculate zenith-darkness: how dark should the scene be based on moon positions
-// Returns 1.0 when at least one moon is visible, drops toward 0.05 when both are below
+// Returns 1.0 when at least one moon is visible, drops toward 0.25 when both are below
 // NOTE: moon_dir.y values passed here - negative Y means moon ABOVE (light pointing down)
 fn calculate_darkness_factor(moon1_dir_y: f32, moon2_dir_y: f32) -> f32 {
     // Convert to altitude (positive = above horizon)
@@ -231,8 +231,9 @@ fn calculate_darkness_factor(moon1_dir_y: f32, moon2_dir_y: f32) -> f32 {
     let night_depth = min(moon1_below, moon2_below) * 2.0;  // 0.5 below = full night
     let clamped_depth = clamp(night_depth, 0.0, 1.0);
     
-    // Darkness factor: 1.0 = normal brightness, 0.05 = nearly black
-    return 1.0 - clamped_depth * 0.95;
+    // Darkness factor: 1.0 = normal brightness, 0.25 = dim but visible
+    // We want enough base visibility to see the terrain even in full darkness
+    return 1.0 - clamped_depth * 0.75;
 }
 
 // Calculate dynamic ambient color based on which moon is more visible
@@ -289,8 +290,12 @@ fn calculate_moon_light(
     let light_dir = normalize(-moon_dir);
     let n_dot_l = max(dot(world_normal, light_dir), 0.0);
     
+    // Scale down intensity slightly - moons should be moody, not blinding
+    // Base intensity comes from MoonConfig (0.5 for moon1, 0.45 for moon2)
+    let scaled_intensity = moon_intensity * 0.7;
+    
     // Combine: color * base_intensity * altitude_scale * N.L * shadow
-    return warmed_color * moon_intensity * alt_factor * n_dot_l * shadow;
+    return warmed_color * scaled_intensity * alt_factor * n_dot_l * shadow;
 }
 
 // Calculate point light contribution at a world position.

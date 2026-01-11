@@ -312,16 +312,18 @@ fn calculate_moon_direction(moon_time: f32, inclination_deg: f32, azimuth_offset
     Vec3::new(final_x, final_y, final_z).normalize()
 }
 
-/// Get moon1 (purple) direction - uses same orbital params as SkyDomeConfig defaults
+/// Get moon1 (purple) direction - uses same orbital params as sky_dome_node.rs MoonOrbit::purple()
 fn moon1_direction_from_time(moon_time: f32) -> Vec3 {
-    // Match sky_dome_node.rs MoonOrbit defaults for moon1
-    calculate_moon_direction(moon_time, 25.0, 15.0)
+    // Must match sky_dome_node.rs MoonOrbit::purple() exactly!
+    // Purple moon: inclination 35.0, azimuth_offset 20.0
+    calculate_moon_direction(moon_time, 35.0, 20.0)
 }
 
-/// Get moon2 (orange) direction - uses same orbital params as SkyDomeConfig defaults
+/// Get moon2 (orange) direction - uses same orbital params as sky_dome_node.rs MoonOrbit::orange()
 fn moon2_direction_from_time(moon_time: f32) -> Vec3 {
-    // Match sky_dome_node.rs MoonOrbit defaults for moon2
-    calculate_moon_direction(moon_time, 15.0, -10.0)
+    // Must match sky_dome_node.rs MoonOrbit::orange() exactly!
+    // Orange moon: inclination -25.0, azimuth_offset -15.0
+    calculate_moon_direction(moon_time, -25.0, -15.0)
 }
 
 // ============================================================================
