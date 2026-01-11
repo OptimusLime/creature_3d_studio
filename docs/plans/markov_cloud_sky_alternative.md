@@ -6,6 +6,27 @@
 
 **Related Documents:**
 - `docs/plans/markov_sky_textures_research.md` - MJ model approaches for clouds, moons, stars
+- `docs/plans/moon_environment_lighting.md` - Moon-position-based terrain lighting (NEW)
+
+---
+
+## Current Progress
+
+**COMPLETED:**
+- Phase 0-4: Test harness, cloud textures, moon textures on dome
+- Phase 4.1: Fixed sky dome world-space sampling
+- Phase 8-9: Moon texture generation, moon layer rendering
+- Phase 10-11: Moon orbital movement, dual moons
+
+**IN PROGRESS:**
+- Moon glow/bloom refinement (tight radius, no cloud bleed)
+- Moon crater texture quality (needs circles-in-circles approach)
+
+**NEXT UP (Environment Lighting - See `moon_environment_lighting.md`):**
+- Phase A: Fix deferred_lighting to use dynamic moon uniforms
+- Phase B: Moon altitude-based intensity scaling
+- Phase C: Zenith-darkness (both moons below = very dark)
+- Phase D: Dynamic ambient from moon colors
 
 ---
 
@@ -627,6 +648,117 @@ cargo run --example p32_markov_sky_test -- --time=0.6
    - Tint clouds based on proximity + moon color
 
 2. Verify: Cloud color varies based on moon position
+
+---
+
+## Environment Lighting Phases (NEW)
+
+**See `docs/plans/moon_environment_lighting.md` for full details.**
+
+These phases address the critical issue that **terrain lighting doesn't respond to moon positions**.
+
+### Phase A: Fix Deferred Lighting Uniforms
+
+**Priority:** HIGHEST - Root cause fix
+
+**Problem:** `deferred_lighting.wgsl` uses hardcoded constants instead of dynamic uniforms.
+
+**Outcome:** Terrain lighting changes when moon T/Y keys are pressed.
+
+**Verification:**
+```bash
+cargo run --example p34_sky_terrain_test
+# Press T - terrain lighting shifts with purple moon position
+# Press Y - terrain lighting shifts with orange moon position
+```
+
+---
+
+### Phase B: Moon Altitude-Based Intensity
+
+**Priority:** HIGH
+
+**Outcome:** Moon light on terrain scales with altitude:
+- Horizon (altitude ~0): dim, warm
+- Zenith (altitude ~1): full brightness
+- Below horizon: no contribution
+
+**Verification:**
+```bash
+cargo run --example p34_sky_terrain_test
+# Moon at horizon = dimmer terrain
+# Moon at zenith = brighter terrain
+```
+
+---
+
+### Phase C: Zenith-Darkness
+
+**Priority:** HIGH
+
+**Outcome:** When BOTH moons are below horizon, terrain becomes nearly black.
+
+**Verification:**
+```bash
+cargo run --example p34_sky_terrain_test
+# Move both moons below horizon (T/Y past 0.5)
+# Terrain should be very dark
+```
+
+---
+
+### Phase D: Dynamic Ambient Color
+
+**Priority:** HIGH
+
+**Outcome:** Ambient light color blends between moon colors based on visibility.
+
+**Verification:**
+```bash
+cargo run --example p34_sky_terrain_test
+# Purple moon high - purple ambient tint
+# Orange moon high - orange ambient tint
+```
+
+---
+
+### Phase E: Dawn/Dusk Horizon Scatter
+
+**Priority:** MEDIUM
+
+**Outcome:** Sky has warm glow toward rising/setting moon.
+
+**Verification:**
+```bash
+cargo run --example p34_sky_terrain_test
+# Moon near horizon - warm glow in sky toward moon
+```
+
+---
+
+### Phase F: Environment LUT (Optional)
+
+**Priority:** LOW - Only if procedural isn't flexible enough
+
+**Outcome:** 2D texture maps moon altitudes to environment parameters for artist control.
+
+---
+
+## Integrated Phase Order
+
+| Order | Phase | Priority | Description |
+|-------|-------|----------|-------------|
+| 1 | **A** | HIGHEST | Fix deferred lighting uniforms |
+| 2 | **B** | HIGH | Moon altitude intensity scaling |
+| 3 | **C** | HIGH | Zenith-darkness |
+| 4 | **D** | HIGH | Dynamic ambient color |
+| 5 | 5 | MEDIUM | UV flow animation |
+| 6 | **E** | MEDIUM | Dawn/dusk scatter |
+| 7 | 7 | MEDIUM | Wind-based flow |
+| 8 | 8 | MEDIUM | Moon texture improvement |
+| 9 | 12 | LOW | Star field |
+| 10 | 13 | MEDIUM | Moon light on clouds |
+| 11 | **F** | LOW | Environment LUT (optional) |
 
 ---
 

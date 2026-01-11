@@ -15,12 +15,13 @@
 
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use std::f32::consts::TAU;
 use studio_core::deferred::SkyDomeConfig;
 use studio_core::{
     CharacterControllerConfig, CharacterControllerPlugin, DeferredLightingConfig,
-    DeferredRenderable, PlayerCharacter, TerrainOccupancy, ThirdPersonCamera, Voxel, VoxelMaterial,
-    VoxelWorld, VoxelWorldApp, WorldSource, ATTRIBUTE_VOXEL_AO, ATTRIBUTE_VOXEL_COLOR,
-    ATTRIBUTE_VOXEL_EMISSION,
+    DeferredRenderable, MoonConfig, PlayerCharacter, TerrainOccupancy, ThirdPersonCamera, Voxel,
+    VoxelMaterial, VoxelWorld, VoxelWorldApp, WorldSource, ATTRIBUTE_VOXEL_AO,
+    ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
 };
 
 const OUTPUT_DIR: &str = "screenshots/sky_terrain";
@@ -40,7 +41,7 @@ fn main() {
     println!("  T     - Move moon1 (purple) through orbit");
     println!("  Y     - Move moon2 (orange) through orbit");
     println!("  G     - Change time of day (sun/sky color)");
-    println!("  Shift - Hold to reverse direction");
+    println!("  R     - Hold to reverse direction (or Shift)");
     println!();
     println!("Moon orbit: 0.0=rising east, 0.25=zenith, 0.5=setting west, 0.75=below horizon");
     println!();
@@ -102,7 +103,7 @@ fn main() {
             app.add_plugins(CharacterControllerPlugin);
         })
         .with_update_systems(|app| {
-            app.add_systems(PostStartup, spawn_player_system);
+            app.add_systems(PostStartup, (spawn_player_system, init_moon_config_system));
             app.add_systems(
                 Update,
                 (
@@ -195,6 +196,44 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
     terrain.set_voxel(0, 41, 0, beacon);
     terrain.set_voxel(0, 42, 0, beacon);
 
+    // Scattered glowing light posts for visibility in the dark world
+    let light_purple = Voxel::emissive(180, 120, 255); // Purple glow
+    let light_orange = Voxel::emissive(255, 160, 80); // Orange glow
+    let light_post = Voxel::solid(50, 45, 55); // Dark stone post
+
+    // Place light posts in a grid pattern across the terrain
+    for gx in -4i32..=4 {
+        for gz in -4i32..=4 {
+            // Skip the center tower area
+            if gx.abs() <= 1 && gz.abs() <= 1 {
+                continue;
+            }
+
+            let lx = gx * 40;
+            let lz = gz * 40;
+
+            // Get ground height at this position
+            let fx = lx as f32;
+            let fz = lz as f32;
+            let hill1 = ((fx * 0.008).sin() * (fz * 0.006).cos()) * 15.0;
+            let hill2 = ((fx * 0.015 + 1.0).cos() * (fz * 0.012 + 2.0).sin()) * 8.0;
+            let ground_y = ground_base + (hill1 + hill2) as i32;
+
+            // Build a small light post (3 blocks tall + light on top)
+            for y in 0..3 {
+                terrain.set_voxel(lx, ground_y + y, lz, light_post);
+            }
+
+            // Alternate purple and orange lights in a checkerboard
+            let light = if (gx + gz) % 2 == 0 {
+                light_purple
+            } else {
+                light_orange
+            };
+            terrain.set_voxel(lx, ground_y + 3, lz, light);
+        }
+    }
+
     // Scattered trees
     let tree_positions = [
         (50, 70),
@@ -234,6 +273,58 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
 }
 
 // ============================================================================
+// Moon Orbit Calculation (matches sky_dome_node.rs)
+// ============================================================================
+
+/// Calculate moon direction from orbital time, matching sky_dome_node.rs MoonOrbit.
+/// Returns direction TO the moon (positive Y = above horizon).
+fn calculate_moon_direction(moon_time: f32, inclination_deg: f32, azimuth_offset_deg: f32) -> Vec3 {
+    // Convert time to angle for orbital position
+    // At time 0.0: moon rising in east, Y=0
+    // At time 0.25: moon at zenith, Y=1
+    // At time 0.5: moon setting in west, Y=0
+    // At time 0.75: moon at nadir, Y=-1
+    let angle = moon_time * TAU;
+
+    // Base orbit: X tracks east-west position, Y tracks altitude
+    let base_x = angle.cos(); // East (+1) -> West (-1) -> East (+1)
+    let base_y = angle.sin(); // Horizon (0) -> Zenith (+1) -> Horizon (0) -> Nadir (-1)
+    let base_z = 0.0;
+
+    // Apply inclination: rotate around X axis (tilts the orbital plane north/south)
+    let incline_rad = inclination_deg.to_radians();
+    let cos_inc = incline_rad.cos();
+    let sin_inc = incline_rad.sin();
+
+    let tilted_x = base_x;
+    let tilted_y = base_y * cos_inc - base_z * sin_inc;
+    let tilted_z = base_y * sin_inc + base_z * cos_inc;
+
+    // Apply azimuth offset: rotate around Y axis (rotates rise/set direction)
+    let azimuth_rad = azimuth_offset_deg.to_radians();
+    let cos_az = azimuth_rad.cos();
+    let sin_az = azimuth_rad.sin();
+
+    let final_x = tilted_x * cos_az + tilted_z * sin_az;
+    let final_y = tilted_y;
+    let final_z = -tilted_x * sin_az + tilted_z * cos_az;
+
+    Vec3::new(final_x, final_y, final_z).normalize()
+}
+
+/// Get moon1 (purple) direction - uses same orbital params as SkyDomeConfig defaults
+fn moon1_direction_from_time(moon_time: f32) -> Vec3 {
+    // Match sky_dome_node.rs MoonOrbit defaults for moon1
+    calculate_moon_direction(moon_time, 25.0, 15.0)
+}
+
+/// Get moon2 (orange) direction - uses same orbital params as SkyDomeConfig defaults
+fn moon2_direction_from_time(moon_time: f32) -> Vec3 {
+    // Match sky_dome_node.rs MoonOrbit defaults for moon2
+    calculate_moon_direction(moon_time, 15.0, -10.0)
+}
+
+// ============================================================================
 // Resources and Components
 // ============================================================================
 
@@ -265,6 +356,22 @@ impl CaptureState {
 // ============================================================================
 // Systems
 // ============================================================================
+
+/// Initialize MoonConfig with directions matching the starting moon times
+fn init_moon_config_system(time_control: Res<TimeControl>, mut moon_config: ResMut<MoonConfig>) {
+    // Set initial moon directions based on starting times
+    // MoonConfig expects direction FROM moon TO scene (negate the TO-moon direction)
+    let dir1 = moon1_direction_from_time(time_control.moon1_time);
+    let dir2 = moon2_direction_from_time(time_control.moon2_time);
+
+    moon_config.moon1_direction = -dir1;
+    moon_config.moon2_direction = -dir2;
+
+    println!(
+        "Initialized MoonConfig: moon1_dir={:?}, moon2_dir={:?}",
+        moon_config.moon1_direction, moon_config.moon2_direction
+    );
+}
 
 fn spawn_player_system(
     mut commands: Commands,
@@ -419,11 +526,18 @@ fn time_control_system(
     time: Res<Time>,
     mut time_control: ResMut<TimeControl>,
     mut sky_config: ResMut<SkyDomeConfig>,
+    mut moon_config: ResMut<MoonConfig>,
 ) {
     let speed = time.delta_secs() * 0.1;
-    let reverse = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
-    // T key: Control moon1 (purple) orbital time
+    // R key toggles reverse mode (alternative to Shift which can be finicky)
+    // Also check Shift keys
+    let reverse = keyboard.pressed(KeyCode::ShiftLeft)
+        || keyboard.pressed(KeyCode::ShiftRight)
+        || keyboard.pressed(KeyCode::KeyR);
+
+    // T key: Control moon1 (purple) orbital time - forward
+    // Shift+T or R+T: reverse
     if keyboard.pressed(KeyCode::KeyT) {
         if reverse {
             time_control.moon1_time -= speed;
@@ -433,6 +547,11 @@ fn time_control_system(
         time_control.moon1_time = time_control.moon1_time.rem_euclid(1.0);
         sky_config.moon1_time = time_control.moon1_time;
 
+        // Update MoonConfig direction for shadow system
+        // MoonConfig expects direction FROM moon TO scene (negate the TO-moon direction)
+        let dir_to_moon = moon1_direction_from_time(time_control.moon1_time);
+        moon_config.moon1_direction = -dir_to_moon;
+
         // Print moon position for debugging
         let phase = match time_control.moon1_time {
             t if t < 0.125 => "rising (east)",
@@ -440,7 +559,16 @@ fn time_control_system(
             t if t < 0.625 => "setting (west)",
             _ => "below horizon",
         };
-        println!("Moon1 (purple): {:.2} - {}", time_control.moon1_time, phase);
+        let dir = if reverse { "<-" } else { "->" };
+        println!(
+            "Moon1 (purple): {:.2} {} {} (dir: {:.2}, {:.2}, {:.2})",
+            time_control.moon1_time,
+            dir,
+            phase,
+            moon_config.moon1_direction.x,
+            moon_config.moon1_direction.y,
+            moon_config.moon1_direction.z
+        );
     }
 
     // Y key: Control moon2 (orange) orbital time
@@ -453,13 +581,26 @@ fn time_control_system(
         time_control.moon2_time = time_control.moon2_time.rem_euclid(1.0);
         sky_config.moon2_time = time_control.moon2_time;
 
+        // Update MoonConfig direction for shadow system
+        let dir_to_moon = moon2_direction_from_time(time_control.moon2_time);
+        moon_config.moon2_direction = -dir_to_moon;
+
         let phase = match time_control.moon2_time {
             t if t < 0.125 => "rising (east)",
             t if t < 0.375 => "high in sky",
             t if t < 0.625 => "setting (west)",
             _ => "below horizon",
         };
-        println!("Moon2 (orange): {:.2} - {}", time_control.moon2_time, phase);
+        let dir = if reverse { "<-" } else { "->" };
+        println!(
+            "Moon2 (orange): {:.2} {} {} (dir: {:.2}, {:.2}, {:.2})",
+            time_control.moon2_time,
+            dir,
+            phase,
+            moon_config.moon2_direction.x,
+            moon_config.moon2_direction.y,
+            moon_config.moon2_direction.z
+        );
     }
 
     // G key: Control time of day (sun position, sky color)

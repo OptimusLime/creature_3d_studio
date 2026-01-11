@@ -48,27 +48,27 @@ impl Default for MoonAppearance {
 }
 
 impl MoonAppearance {
-    /// Purple moon preset - eerie, mystical, emissive
+    /// Purple moon preset - strong emissive bloom like lights
     pub fn purple() -> Self {
         Self {
             size: 0.12,                         // ~7 degrees - noticeable but not overwhelming
-            color: Color::srgb(0.7, 0.5, 0.85), // Soft purple with some brightness
-            glow_intensity: 0.5,                // Moderate emissive glow
-            glow_falloff: 1.8,                  // Softer glow falloff for eerie effect
-            limb_darkening: 0.4,                // Subtle 3D effect
-            surface_detail: 0.3,                // Visible surface features
+            color: Color::srgb(0.8, 0.6, 0.95), // Brighter purple for bloom
+            glow_intensity: 1.2,                // STRONG emissive glow - bloom out!
+            glow_falloff: 1.2,                  // Soft falloff for wide bloom
+            limb_darkening: 0.3,                // Less darkening, more glow
+            surface_detail: 0.2,
         }
     }
 
-    /// Orange moon preset - warm, smaller companion, emissive
+    /// Orange moon preset - warm bloom
     pub fn orange() -> Self {
         Self {
-            size: 0.08,                          // ~5 degrees - smaller secondary moon
-            color: Color::srgb(0.85, 0.6, 0.35), // Warm amber with brightness
-            glow_intensity: 0.45,                // Moderate emissive glow
-            glow_falloff: 1.9,                   // Softer glow
-            limb_darkening: 0.35,
-            surface_detail: 0.25,
+            size: 0.08,                         // ~5 degrees - smaller secondary moon
+            color: Color::srgb(0.95, 0.7, 0.4), // Brighter amber for bloom
+            glow_intensity: 1.0,                // Strong emissive glow
+            glow_falloff: 1.3,                  // Soft falloff for bloom
+            limb_darkening: 0.25,
+            surface_detail: 0.2,
         }
     }
 }

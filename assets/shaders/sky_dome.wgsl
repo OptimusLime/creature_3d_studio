@@ -128,8 +128,10 @@ fn rayleigh_scatter(elevation: f32, time_of_day: f32) -> vec3<f32> {
 }
 
 // Phase 3: Mie scattering (forward scatter / halo around light source)
+// Reduced intensity for subtler sky effect
+// NOTE: In sky_dome.wgsl, light_dir points TO the moon (positive Y = above)
 fn mie_scatter(ray_dir: vec3<f32>, light_dir: vec3<f32>, light_color: vec3<f32>, intensity: f32) -> vec3<f32> {
-    // Mie scattering creates a bright halo around the light source
+    // Mie scattering creates a subtle halo around the light source
     // Strongest when looking toward the light
     let cos_angle = max(dot(ray_dir, light_dir), 0.0);
     
@@ -139,22 +141,27 @@ fn mie_scatter(ray_dir: vec3<f32>, light_dir: vec3<f32>, light_color: vec3<f32>,
     let g2 = g * g;
     let phase = (1.0 - g2) / pow(1.0 + g2 - 2.0 * g * cos_angle, 1.5);
     
-    return light_color * phase * intensity * 0.05;
+    // Subtle color tinting around moon
+    return light_color * phase * 0.02;
 }
 
 // Phase 2: Calculate moon contribution to cloud lighting
+// Focus on COLOR TINTING rather than brightness increase
+// NOTE: In sky_dome.wgsl, moon_dir points TO the moon (positive Y = moon above)
 fn moon_cloud_lighting(ray_dir: vec3<f32>, moon_dir: vec3<f32>, moon_color: vec3<f32>, moon_intensity: f32) -> vec3<f32> {
-    // Moon is above horizon if y > 0
-    let moon_visible = step(0.0, moon_dir.y);
+    // Moon is above horizon if y > 0 (pointing up = moon above)
+    let moon_altitude = moon_dir.y;
+    let moon_visible = smoothstep(-0.1, 0.2, moon_altitude);
     
     // How much this cloud patch faces the moon (diffuse-like term)
     // Using ray_dir as surface normal approximation
     let facing = max(dot(ray_dir, moon_dir), 0.0);
     
-    // Softer falloff for more natural look
-    let diffuse = pow(facing, 0.5) * 0.4 + 0.1; // Ambient + directional
+    // Color tinting - visible but not overpowering
+    // pow(facing, 1.5) gives moderately focused falloff near moon
+    let tint_factor = pow(facing, 1.5) * 0.25 + 0.05;
     
-    return moon_color * moon_intensity * diffuse * moon_visible;
+    return moon_color * tint_factor * moon_visible;
 }
 
 // Phase 4: Cloud density affects brightness (silver lining effect)
@@ -180,8 +187,8 @@ fn calculate_cloud_color(
     let time_of_day = sky.params.w;
     
     // === Phase 1: Base cloud color from sky gradient ===
-    // Clouds pick up ambient sky color (darker at night)
-    let ambient_cloud = sky_gradient * 0.3;
+    // Clouds pick up ambient sky color - visible but moody
+    let ambient_cloud = sky_gradient * 0.5;
     
     // === Phase 2: Moon lighting (both moons) ===
     let moon1_dir = normalize(sky.moon1_direction.xyz);
@@ -204,14 +211,21 @@ fn calculate_cloud_color(
     let edge_brightness = cloud_edge_glow(cloud_alpha, moon1_light, moon2_light);
     
     // === Combine all contributions ===
+    // Base cloud color - visible in darkness
     var cloud_color = ambient_cloud;
-    cloud_color += moon1_light + moon2_light;           // Moon illumination
-    cloud_color += rayleigh * 0.2;                       // Atmospheric tint
-    cloud_color += (mie1 + mie2) * cloud_alpha;         // Forward scatter on dense clouds
-    cloud_color *= edge_brightness;                      // Silver lining effect
     
-    // Clamp to prevent over-bright
-    return clamp(cloud_color, vec3<f32>(0.0), vec3<f32>(1.5));
+    // Add moon color tinting (focused on color, not excessive brightness)
+    cloud_color += moon1_light + moon2_light;
+    
+    // Atmospheric scattering effects
+    cloud_color += rayleigh * 0.15;
+    cloud_color += (mie1 + mie2) * cloud_alpha;
+    
+    // Edge glow / silver lining effect
+    cloud_color *= edge_brightness;
+    
+    // Clamp to reasonable range - moody but visible
+    return clamp(cloud_color, vec3<f32>(0.0), vec3<f32>(1.2));
 }
 
 // ============================================================================
@@ -296,42 +310,40 @@ fn sample_moon_texture(
             tex_sample = textureSample(moon2_texture, moon2_sampler, uv);
         }
         
-        // Apply warmed moon color tint to texture with emissive boost
-        // The moon should appear self-luminous, not just lit
+        // Moon texture is BRIGHT and emissive - the texture itself glows
         let base_color = tex_sample.rgb * warmed_color;
         
-        // Emissive effect: brighten the moon surface, especially lighter areas
+        // Strong emissive on the texture itself - moon surface is self-luminous
         let luminance = dot(tex_sample.rgb, vec3<f32>(0.299, 0.587, 0.114));
-        let emissive_boost = 1.0 + boosted_glow * 0.8 * luminance;
+        let emissive_boost = 1.5 + boosted_glow * 2.0 * luminance;
         moon_col = base_color * emissive_boost;
         
-        // Add subtle inner glow (brighter toward center)
+        // Brighter center for that glowing orb look
         let center_dist = length(vec2<f32>(local_x, local_y));
-        let inner_glow = (1.0 - center_dist) * boosted_glow * 0.3;
+        let inner_glow = pow(1.0 - center_dist, 2.0) * boosted_glow * 0.6;
         moon_col += warmed_color * inner_glow;
         
         moon_alpha = tex_sample.a;
         
-        // Soft edge at disc boundary
-        let edge_softness = disc_radius * 0.08;
+        // Crisp edge - not too soft
+        let edge_softness = disc_radius * 0.06;
         let edge_factor = smoothstep(disc_radius, disc_radius - edge_softness, angle);
         moon_alpha *= edge_factor;
     }
     
-    // Outer glow around moon - eerie atmospheric halo
-    let glow_radius = disc_radius * (3.0 + horizon_factor * 1.5);
-    if angle < glow_radius {
-        let glow_start = disc_radius * 0.9;
-        if angle > glow_start {
-            let glow_t = (angle - glow_start) / (glow_radius - glow_start);
-            let glow = pow(1.0 - glow_t, adjusted_falloff) * boosted_glow;
-            
-            // Glow uses warmed moon color, fades to transparent
-            let glow_col = warmed_color * 0.6;
-            
-            // Blend glow with moon disc
-            moon_col = mix(moon_col, glow_col * glow, (1.0 - moon_alpha) * 0.7);
-            moon_alpha = max(moon_alpha, glow * 0.5);
+    // Tight outer glow - steep falloff, doesn't bleed into clouds
+    let glow_radius = disc_radius * 1.6; // Much tighter radius
+    if angle < glow_radius && angle > disc_radius * 0.95 {
+        let glow_t = (angle - disc_radius * 0.95) / (glow_radius - disc_radius * 0.95);
+        // Steep falloff - pow 3.0 for rapid dropoff
+        let glow = pow(1.0 - glow_t, 3.0) * boosted_glow * 0.5;
+        
+        let glow_col = warmed_color * 0.7;
+        
+        // Only add glow outside the disc, blend gently
+        if moon_alpha < 0.3 {
+            moon_col = mix(moon_col, glow_col * glow, 1.0 - moon_alpha);
+            moon_alpha = max(moon_alpha, glow * 0.3);
         }
     }
     

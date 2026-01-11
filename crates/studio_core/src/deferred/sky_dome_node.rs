@@ -321,13 +321,25 @@ impl MoonOrbit {
     /// 1. Start with basic east-west arc in XY plane
     /// 2. Rotate around X axis for inclination (tilt north/south)
     /// 3. Rotate around Y axis for azimuth offset (rotate rise/set points)
+    ///
+    /// Time mapping:
+    /// - 0.00 = Rising in east (Y=0, X=+1)
+    /// - 0.25 = Zenith (Y=+1, highest point)
+    /// - 0.50 = Setting in west (Y=0, X=-1)
+    /// - 0.75 = Nadir (Y=-1, below horizon)
     fn calculate_direction(&self, moon_time: f32) -> Vec3 {
-        // Convert time to angle: 0.0 = east horizon, 0.25 = zenith, 0.5 = west horizon
-        let angle = (moon_time - 0.25) * TAU;
+        // Convert time to angle for orbital position
+        // At time 0.0: moon rising in east, Y=0
+        // At time 0.25: moon at zenith, Y=1
+        // At time 0.5: moon setting in west, Y=0
+        // At time 0.75: moon at nadir, Y=-1
+        let angle = moon_time * TAU;
 
-        // Base orbit in XY plane (like sun): rises east (+X), arcs up, sets west (-X)
-        let base_x = angle.cos();
-        let base_y = angle.sin();
+        // Base orbit: X tracks east-west position, Y tracks altitude
+        // cos gives: 1 at 0, 0 at π/2, -1 at π, 0 at 3π/2
+        // sin gives: 0 at 0, 1 at π/2, 0 at π, -1 at 3π/2
+        let base_x = angle.cos(); // East (+1) -> West (-1) -> East (+1)
+        let base_y = angle.sin(); // Horizon (0) -> Zenith (+1) -> Horizon (0) -> Nadir (-1)
         let base_z = 0.0;
 
         // Apply inclination: rotate around X axis (tilts the orbital plane north/south)

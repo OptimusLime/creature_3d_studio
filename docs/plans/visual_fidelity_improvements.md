@@ -369,6 +369,31 @@ ls screenshots/visual_fidelity_test/
 
 **See `docs/plans/seus_sky_techniques.md` for complete execution plan with code.**
 
+---
+
+## Moon-Position Environment Lighting (Phases A-F)
+
+**See `docs/plans/moon_environment_lighting.md` for complete execution plan.**
+
+**Problem:** Current terrain lighting doesn't respond to moon positions:
+- No dusk effect when moons near horizon
+- No dawn effect when moons rising  
+- No darkness when both moons below horizon
+
+**Root Cause:** `deferred_lighting.wgsl` uses hardcoded constants instead of dynamic uniforms.
+
+**Key Phases:**
+| Phase | Priority | Description |
+|-------|----------|-------------|
+| A | HIGHEST | Fix deferred_lighting to use dynamic moon uniforms |
+| B | HIGH | Moon altitude-based intensity scaling |
+| C | HIGH | Zenith-darkness (both moons below = very dark) |
+| D | HIGH | Dynamic ambient color from moon positions |
+| E | MEDIUM | Dawn/dusk horizon scatter effects |
+| F | LOW | Environment LUT for artist control (optional) |
+
+---
+
 ### Critical Context: Dual-Moon World
 
 **There is no sun. There is no daytime.** This world has two moons that orbit independently:
