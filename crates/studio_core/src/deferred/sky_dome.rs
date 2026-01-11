@@ -48,26 +48,26 @@ impl Default for MoonAppearance {
 }
 
 impl MoonAppearance {
-    /// Purple moon preset - eerie, mystical
+    /// Purple moon preset - eerie, mystical, emissive
     pub fn purple() -> Self {
         Self {
-            size: 0.12,                        // ~7 degrees - noticeable but not overwhelming
-            color: Color::srgb(0.6, 0.3, 0.7), // Muted purple, not garish
-            glow_intensity: 0.25,              // Subtle eerie glow
-            glow_falloff: 2.0,                 // Tighter glow falloff
-            limb_darkening: 0.5,               // Moderate 3D effect
-            surface_detail: 0.3,               // Visible surface features
+            size: 0.12,                         // ~7 degrees - noticeable but not overwhelming
+            color: Color::srgb(0.7, 0.5, 0.85), // Soft purple with some brightness
+            glow_intensity: 0.5,                // Moderate emissive glow
+            glow_falloff: 1.8,                  // Softer glow falloff for eerie effect
+            limb_darkening: 0.4,                // Subtle 3D effect
+            surface_detail: 0.3,                // Visible surface features
         }
     }
 
-    /// Orange moon preset - warm, smaller companion
+    /// Orange moon preset - warm, smaller companion, emissive
     pub fn orange() -> Self {
         Self {
-            size: 0.08,                         // ~5 degrees - smaller secondary moon
-            color: Color::srgb(0.7, 0.45, 0.2), // Muted amber-orange
-            glow_intensity: 0.2,                // Subtle glow
-            glow_falloff: 2.2,                  // Tighter glow
-            limb_darkening: 0.45,
+            size: 0.08,                          // ~5 degrees - smaller secondary moon
+            color: Color::srgb(0.85, 0.6, 0.35), // Warm amber with brightness
+            glow_intensity: 0.45,                // Moderate emissive glow
+            glow_falloff: 1.9,                   // Softer glow
+            limb_darkening: 0.35,
             surface_detail: 0.25,
         }
     }

@@ -296,39 +296,43 @@ fn sample_moon_texture(
             tex_sample = textureSample(moon2_texture, moon2_sampler, uv);
         }
         
-        // Apply warmed moon color tint to texture
-        moon_col = tex_sample.rgb * warmed_color;
+        // Apply warmed moon color tint to texture with emissive boost
+        // The moon should appear self-luminous, not just lit
+        let base_color = tex_sample.rgb * warmed_color;
+        
+        // Emissive effect: brighten the moon surface, especially lighter areas
+        let luminance = dot(tex_sample.rgb, vec3<f32>(0.299, 0.587, 0.114));
+        let emissive_boost = 1.0 + boosted_glow * 0.8 * luminance;
+        moon_col = base_color * emissive_boost;
+        
+        // Add subtle inner glow (brighter toward center)
+        let center_dist = length(vec2<f32>(local_x, local_y));
+        let inner_glow = (1.0 - center_dist) * boosted_glow * 0.3;
+        moon_col += warmed_color * inner_glow;
+        
         moon_alpha = tex_sample.a;
         
         // Soft edge at disc boundary
-        let edge_softness = disc_radius * 0.05;
+        let edge_softness = disc_radius * 0.08;
         let edge_factor = smoothstep(disc_radius, disc_radius - edge_softness, angle);
         moon_alpha *= edge_factor;
     }
     
-    // Glow around moon - much larger radius near horizon
-    let glow_radius = disc_radius * (2.5 + horizon_factor * 2.0);
-    if angle < glow_radius && angle > disc_radius * 0.8 {
-        let glow_t = (angle - disc_radius * 0.8) / (glow_radius - disc_radius * 0.8);
-        let glow = pow(1.0 - glow_t, adjusted_falloff) * boosted_glow;
-        
-        // Glow uses warmed moon color
-        let glow_col = warmed_color * 0.8;
-        
-        // Blend glow behind moon disc
-        if moon_alpha < 0.5 {
-            moon_col = mix(moon_col, glow_col * glow, 1.0 - moon_alpha);
-            moon_alpha = max(moon_alpha, glow * 0.4);
+    // Outer glow around moon - eerie atmospheric halo
+    let glow_radius = disc_radius * (3.0 + horizon_factor * 1.5);
+    if angle < glow_radius {
+        let glow_start = disc_radius * 0.9;
+        if angle > glow_start {
+            let glow_t = (angle - glow_start) / (glow_radius - glow_start);
+            let glow = pow(1.0 - glow_t, adjusted_falloff) * boosted_glow;
+            
+            // Glow uses warmed moon color, fades to transparent
+            let glow_col = warmed_color * 0.6;
+            
+            // Blend glow with moon disc
+            moon_col = mix(moon_col, glow_col * glow, (1.0 - moon_alpha) * 0.7);
+            moon_alpha = max(moon_alpha, glow * 0.5);
         }
-    }
-    
-    // Extra atmospheric bloom near horizon
-    if horizon_factor > 0.5 && angle < glow_radius * 1.5 {
-        let bloom_factor = (horizon_factor - 0.5) * 2.0; // 0-1 in lower half of sky
-        let bloom_t = angle / (glow_radius * 1.5);
-        let bloom = pow(1.0 - bloom_t, 0.8) * bloom_factor * boosted_glow * 0.3;
-        moon_col += warmed_color * bloom;
-        moon_alpha = max(moon_alpha, bloom * 0.2);
     }
     
     return vec4<f32>(moon_col, moon_alpha);
