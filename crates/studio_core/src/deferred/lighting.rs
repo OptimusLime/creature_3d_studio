@@ -1,9 +1,10 @@
 //! Deferred lighting configuration and resources.
 
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResource;
 
 /// Configuration for deferred lighting.
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, ExtractResource)]
 pub struct DeferredLightingConfig {
     /// Ambient light color and intensity
     pub ambient_color: Color,
@@ -14,10 +15,16 @@ pub struct DeferredLightingConfig {
     pub sun_color: Color,
     pub sun_intensity: f32,
 
-    /// Fog configuration (Bonsai-style)
+    /// Distance fog configuration (Bonsai-style)
     pub fog_color: Color,
     pub fog_start: f32,
     pub fog_end: f32,
+
+    /// Height fog configuration
+    /// Height fog creates ground-hugging mist that buildings emerge from
+    pub height_fog_density: f32,
+    pub height_fog_base: f32,
+    pub height_fog_falloff: f32,
 }
 
 impl Default for DeferredLightingConfig {
@@ -36,6 +43,14 @@ impl Default for DeferredLightingConfig {
             fog_color: Color::srgb(0.102, 0.039, 0.180),
             fog_start: 10.0,
             fog_end: 100.0,
+
+            // Height fog - ground mist
+            // density: how thick the fog is (0.0 = none, 1.0 = very heavy)
+            // base: Y level where fog is densest
+            // falloff: how quickly fog thins with height (higher = sharper falloff)
+            height_fog_density: 0.6,
+            height_fog_base: 5.0,
+            height_fog_falloff: 0.05,
         }
     }
 }

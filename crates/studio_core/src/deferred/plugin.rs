@@ -108,6 +108,9 @@ impl Plugin for DeferredRenderingPlugin {
         // Extract SkyDomeConfig resource to render world (for enabling/disabling sky dome)
         app.add_plugins(ExtractResourcePlugin::<SkyDomeConfig>::default());
 
+        // Extract DeferredLightingConfig resource to render world (for height fog parameters)
+        app.add_plugins(ExtractResourcePlugin::<DeferredLightingConfig>::default());
+
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);
 

@@ -262,11 +262,20 @@ pub struct DirectionalShadowUniforms {
     pub moon2_color_intensity: [f32; 4],
     /// Shadow softness: x = directional, y = point, z = lighting_debug_mode, w = unused.
     pub shadow_softness: [f32; 4],
+    /// Height fog params: x = density, y = base, z = falloff, w = unused.
+    pub height_fog_params: [f32; 4],
 }
 
 impl DirectionalShadowUniforms {
-    /// Create uniforms from MoonConfig with debug mode.
-    pub fn from_config(config: &MoonConfig, scene_center: Vec3, lighting_debug_mode: i32) -> Self {
+    /// Create uniforms from MoonConfig with debug mode and height fog.
+    pub fn from_config(
+        config: &MoonConfig,
+        scene_center: Vec3,
+        lighting_debug_mode: i32,
+        height_fog_density: f32,
+        height_fog_base: f32,
+        height_fog_falloff: f32,
+    ) -> Self {
         Self {
             moon1_view_proj: config
                 .moon1_view_projection(scene_center)
@@ -304,6 +313,7 @@ impl DirectionalShadowUniforms {
                 lighting_debug_mode as f32,
                 0.0,
             ],
+            height_fog_params: [height_fog_density, height_fog_base, height_fog_falloff, 0.0],
         }
     }
 }

@@ -27,7 +27,8 @@ struct DirectionalShadowUniforms {
     moon1_color_intensity: vec4<f32>, // rgb = color, a = intensity
     moon2_direction: vec4<f32>,
     moon2_color_intensity: vec4<f32>,
-    shadow_softness: vec4<f32>,      // x = directional, y = point, zw = unused
+    shadow_softness: vec4<f32>,      // x = directional, y = point, z = debug_mode, w = unused
+    height_fog_params: vec4<f32>,    // x = density, y = base, z = falloff, w = unused
 }
 @group(2) @binding(0) var<uniform> shadow_uniforms: DirectionalShadowUniforms;
 
@@ -793,10 +794,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         final_color += albedo * emit_factor * 0.5;
     }
     
-    // --- Fog (Bonsai-style) ---
-    // Exponential fog for more natural falloff
-    let fog_factor = smoothstep(FOG_START, FOG_END, depth);
-    final_color = mix(final_color, FOG_COLOR, fog_factor);
+    // --- Fog (Distance + Height) ---
+    // Distance fog: exponential falloff with distance
+    let distance_fog = smoothstep(FOG_START, FOG_END, depth);
+    
+    // Height fog: ground-hugging mist that objects emerge from
+    // density controls thickness, base is where fog is densest, falloff controls vertical spread
+    let height_fog_density = shadow_uniforms.height_fog_params.x;
+    let height_fog_base = shadow_uniforms.height_fog_params.y;
+    let height_fog_falloff = shadow_uniforms.height_fog_params.z;
+    
+    // Height above fog base - objects above this emerge from mist
+    let height_above_base = world_pos.y - height_fog_base;
+    // Exponential decay with height - thicker near base, thins with altitude
+    let height_fog = height_fog_density * exp(-height_above_base * height_fog_falloff);
+    // Clamp to reasonable range
+    let height_fog_clamped = clamp(height_fog, 0.0, 0.9);
+    
+    // Combine: use maximum of distance and height fog
+    // This means objects can be fogged by either being far away OR low to the ground
+    let combined_fog = max(distance_fog, height_fog_clamped);
+    
+    final_color = mix(final_color, FOG_COLOR, combined_fog);
     
     // HDR output - values can exceed 1.0 for bloom
     return vec4<f32>(final_color, 1.0);
