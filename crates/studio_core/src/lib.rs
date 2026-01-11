@@ -61,7 +61,8 @@ pub use orbit_camera::{OrbitCamera, OrbitCameraBundle, OrbitCameraPlugin};
 pub use physics_math::{
     aggregate_particle_forces, apply_gravity, compute_ground_collision_force,
     compute_kinematic_correction, compute_particle_collision_force,
-    compute_terrain_collision_force, detect_terrain_collisions, generate_surface_particles,
+    compute_terrain_collision_force, compute_terrain_collision_force_scaled,
+    detect_terrain_collisions, detect_terrain_collisions_scaled, generate_surface_particles,
     has_ceiling_contact, has_floor_contact, has_wall_contact, integrate_angular_velocity,
     integrate_position, integrate_rotation, integrate_velocity, simulate_single_body,
     simulate_single_body_on_terrain, simulate_two_bodies, BodyId, BodyState, FragmentParticleData,
@@ -69,9 +70,10 @@ pub use physics_math::{
 };
 pub use scene_utils::{
     centered_offset, chunk_world_bounds, compute_camera_framing, ground_level_offset, spawn_chunk,
-    spawn_chunk_with_lights, spawn_chunk_with_lights_config, spawn_framed_camera,
-    spawn_point_light, spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming,
-    CameraPreset, EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
+    spawn_chunk_scaled, spawn_chunk_with_lights, spawn_chunk_with_lights_config,
+    spawn_chunk_with_lights_scaled, spawn_framed_camera, spawn_point_light,
+    spawn_world_with_lights, spawn_world_with_lights_config, CameraFraming, CameraPreset,
+    EmissiveLightConfig, SpawnedChunk, SpawnedWorld, WorldSpawnConfig,
 };
 pub use screenshot::{capture_screenshot, ScreenshotPlugin, ScreenshotRequest};
 pub use screenshot_sequence::{
@@ -80,8 +82,8 @@ pub use screenshot_sequence::{
 pub use sky_sphere::{SkySphere, SkySphereConfig, SkySphereMaterial, SkySpherePlugin};
 pub use voxel::{
     extract_clustered_emissive_lights, extract_emissive_lights, world_to_local, BorderDirection,
-    BorderSlice, ChunkBorders, ChunkPos, EmissiveLight, Voxel, VoxelChunk, VoxelWorld, CHUNK_SIZE,
-    CHUNK_SIZE_I32,
+    BorderSlice, ChunkBorders, ChunkPos, EmissiveLight, Voxel, VoxelChunk, VoxelScaleConfig,
+    VoxelWorld, CHUNK_SIZE, CHUNK_SIZE_I32,
 };
 pub use voxel_collision::{
     chunk_coord_to_world, world_pos_to_chunk_coord, world_pos_to_local, ChunkOccupancy,

@@ -22,7 +22,9 @@
 use bevy::prelude::*;
 
 use crate::deferred::{DeferredPointLight, DeferredRenderable};
-use crate::voxel::{extract_emissive_lights, EmissiveLight, VoxelChunk, VoxelWorld, CHUNK_SIZE};
+use crate::voxel::{
+    extract_emissive_lights, EmissiveLight, VoxelChunk, VoxelScaleConfig, VoxelWorld, CHUNK_SIZE,
+};
 use crate::voxel_mesh::{
     build_chunk_mesh_greedy, build_world_meshes_cross_chunk_with_options, VoxelMaterial,
 };
@@ -134,19 +136,46 @@ pub fn spawn_chunk_with_lights_config(
     world_offset: Vec3,
     config: &EmissiveLightConfig,
 ) -> SpawnedChunk {
+    spawn_chunk_with_lights_scaled(
+        commands,
+        meshes,
+        materials,
+        chunk,
+        world_offset,
+        config,
+        &VoxelScaleConfig::default(),
+    )
+}
+
+/// Spawn a voxel chunk with custom light configuration and scale.
+///
+/// The scale is applied to the entity transform, making voxels appear
+/// larger or smaller in world space.
+pub fn spawn_chunk_with_lights_scaled(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<VoxelMaterial>,
+    chunk: &VoxelChunk,
+    world_offset: Vec3,
+    config: &EmissiveLightConfig,
+    scale_config: &VoxelScaleConfig,
+) -> SpawnedChunk {
     // Build mesh with greedy meshing for best performance
     let mesh = build_chunk_mesh_greedy(chunk);
     let mesh_handle = meshes.add(mesh);
     let material = materials.add(VoxelMaterial::default());
 
+    let scale = scale_config.scale;
+
     // Spawn mesh entity
     // The mesh is centered at origin (voxels at 0-31 become -16 to +15)
     // world_offset positions the chunk center in world space
+    // Scale is applied to make voxels appear larger/smaller
     let mesh_entity = commands
         .spawn((
             Mesh3d(mesh_handle),
             MeshMaterial3d(material),
-            Transform::from_translation(world_offset),
+            Transform::from_translation(world_offset).with_scale(Vec3::splat(scale)),
             DeferredRenderable,
         ))
         .id();
@@ -157,22 +186,24 @@ pub fn spawn_chunk_with_lights_config(
     let mut light_entities = Vec::with_capacity(emissive_count);
 
     for light in &emissive_lights {
-        // mesh_position() returns coordinates relative to mesh center
-        // Apply world_offset to get final world position
+        // mesh_position() returns coordinates relative to mesh center (in voxel space)
+        // Scale to world space and apply world_offset
         let mesh_pos = light.mesh_position();
-        let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2])
-            + world_offset
-            + Vec3::new(0.0, config.y_offset, 0.0);
+        let scaled_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2]) * scale;
+        let world_pos = scaled_pos + world_offset + Vec3::new(0.0, config.y_offset * scale, 0.0);
 
         let intensity = config.intensity_multiplier * light.emission;
         let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
+
+        // Scale light radius with voxel scale
+        let scaled_radius = config.base_radius * scale;
 
         let entity = commands
             .spawn((
                 DeferredPointLight {
                     color,
                     intensity,
-                    radius: config.base_radius,
+                    radius: scaled_radius,
                 },
                 Transform::from_translation(world_pos),
             ))
@@ -199,6 +230,28 @@ pub fn spawn_chunk(
     chunk: &VoxelChunk,
     world_offset: Vec3,
 ) -> Entity {
+    spawn_chunk_scaled(
+        commands,
+        meshes,
+        materials,
+        chunk,
+        world_offset,
+        &VoxelScaleConfig::default(),
+    )
+}
+
+/// Spawn a voxel chunk without automatic lights, with custom scale.
+///
+/// Use this when you want full control over lighting, or for chunks
+/// that don't have emissive voxels.
+pub fn spawn_chunk_scaled(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<VoxelMaterial>,
+    chunk: &VoxelChunk,
+    world_offset: Vec3,
+    scale_config: &VoxelScaleConfig,
+) -> Entity {
     let mesh = build_chunk_mesh_greedy(chunk);
     let mesh_handle = meshes.add(mesh);
     let material = materials.add(VoxelMaterial::default());
@@ -207,7 +260,7 @@ pub fn spawn_chunk(
         .spawn((
             Mesh3d(mesh_handle),
             MeshMaterial3d(material),
-            Transform::from_translation(world_offset),
+            Transform::from_translation(world_offset).with_scale(Vec3::splat(scale_config.scale)),
             DeferredRenderable,
         ))
         .id()
@@ -395,6 +448,8 @@ pub struct WorldSpawnConfig {
     pub use_cross_chunk_culling: bool,
     /// Shared material handle (if None, creates one per chunk).
     pub shared_material: Option<Handle<VoxelMaterial>>,
+    /// Voxel scale configuration.
+    pub scale_config: VoxelScaleConfig,
 }
 
 impl Default for WorldSpawnConfig {
@@ -404,6 +459,7 @@ impl Default for WorldSpawnConfig {
             use_greedy_meshing: true,
             use_cross_chunk_culling: true, // Enable by default for best visuals
             shared_material: None,
+            scale_config: VoxelScaleConfig::default(),
         }
     }
 }
@@ -413,6 +469,14 @@ impl WorldSpawnConfig {
     pub fn without_cross_chunk_culling() -> Self {
         Self {
             use_cross_chunk_culling: false,
+            ..Default::default()
+        }
+    }
+
+    /// Create config with a specific voxel scale.
+    pub fn with_scale(scale: f32) -> Self {
+        Self {
+            scale_config: VoxelScaleConfig::new(scale),
             ..Default::default()
         }
     }
@@ -460,6 +524,8 @@ pub fn spawn_world_with_lights_config(
         .clone()
         .unwrap_or_else(|| materials.add(VoxelMaterial::default()));
 
+    let scale = config.scale_config.scale;
+
     let mut chunk_entities = Vec::new();
     let mut light_entities = Vec::new();
     let mut total_emissive = 0;
@@ -473,15 +539,16 @@ pub fn spawn_world_with_lights_config(
 
     for chunk_mesh in chunk_meshes {
         let chunk_pos = chunk_mesh.chunk_pos;
-        let world_offset = chunk_mesh.translation();
+        // Scale the world offset by the voxel scale
+        let world_offset = chunk_mesh.translation() * scale;
         let mesh_handle = meshes.add(chunk_mesh.mesh);
 
-        // Spawn chunk mesh
+        // Spawn chunk mesh with scale applied
         let entity = commands
             .spawn((
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(material.clone()),
-                Transform::from_translation(world_offset),
+                Transform::from_translation(world_offset).with_scale(Vec3::splat(scale)),
                 DeferredRenderable,
             ))
             .id();
@@ -493,20 +560,25 @@ pub fn spawn_world_with_lights_config(
             total_emissive += emissive.len();
 
             for light in &emissive {
+                // Scale light position from voxel space to world space
                 let mesh_pos = light.mesh_position();
-                let world_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2])
+                let scaled_pos = Vec3::new(mesh_pos[0], mesh_pos[1], mesh_pos[2]) * scale;
+                let world_pos = scaled_pos
                     + world_offset
-                    + Vec3::new(0.0, config.light_config.y_offset, 0.0);
+                    + Vec3::new(0.0, config.light_config.y_offset * scale, 0.0);
 
                 let intensity = config.light_config.intensity_multiplier * light.emission;
                 let color = Color::srgb(light.color[0], light.color[1], light.color[2]);
+
+                // Scale light radius
+                let scaled_radius = config.light_config.base_radius * scale;
 
                 let light_entity = commands
                     .spawn((
                         DeferredPointLight {
                             color,
                             intensity,
-                            radius: config.light_config.base_radius,
+                            radius: scaled_radius,
                         },
                         Transform::from_translation(world_pos),
                     ))

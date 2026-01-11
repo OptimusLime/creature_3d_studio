@@ -10,7 +10,8 @@
 //! - **Chunk Position** (`ChunkPos`): Which chunk contains the voxel (world / CHUNK_SIZE)
 //! - **Local Position** (`usize, usize, usize`): Position within chunk (0 to CHUNK_SIZE-1)
 
-use bevy::prelude::{IVec3, Vec3};
+use bevy::prelude::{IVec3, Resource, Vec3};
+use bevy::render::extract_resource::ExtractResource;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -1653,6 +1654,73 @@ impl ChunkBorders {
             }
             _ => false,
         }
+    }
+}
+
+/// Configuration for voxel scale in world space.
+///
+/// This controls how large voxels appear in the world. A scale of 1.0 means
+/// 1 voxel = 1 world unit. A scale of 0.5 means 1 voxel = 0.5 world units,
+/// making buildings appear half-sized.
+///
+/// ## How Scale Works
+///
+/// - **Rendering**: Entity transforms are scaled by this factor
+/// - **Collision**: World positions are divided by scale before voxel lookup
+/// - **Physics**: Penetration depths and contact points are scaled back to world space
+///
+/// ## Example
+///
+/// ```ignore
+/// // Make voxels appear half-sized
+/// app.insert_resource(VoxelScaleConfig::new(0.5));
+///
+/// // Or use default (1.0)
+/// app.init_resource::<VoxelScaleConfig>();
+/// ```
+#[derive(Resource, Clone, Debug, ExtractResource)]
+pub struct VoxelScaleConfig {
+    /// Scale factor for voxels in world space.
+    /// - 1.0 = 1 voxel = 1 world unit (default)
+    /// - 0.5 = 1 voxel = 0.5 world units (half-sized)
+    /// - 2.0 = 1 voxel = 2 world units (double-sized)
+    pub scale: f32,
+}
+
+impl Default for VoxelScaleConfig {
+    fn default() -> Self {
+        Self { scale: 1.0 }
+    }
+}
+
+impl VoxelScaleConfig {
+    /// Create a new scale config with the given scale factor.
+    pub fn new(scale: f32) -> Self {
+        Self { scale }
+    }
+
+    /// Convert a world position to voxel space.
+    #[inline]
+    pub fn world_to_voxel(&self, world_pos: Vec3) -> Vec3 {
+        world_pos / self.scale
+    }
+
+    /// Convert a voxel position to world space.
+    #[inline]
+    pub fn voxel_to_world(&self, voxel_pos: Vec3) -> Vec3 {
+        voxel_pos * self.scale
+    }
+
+    /// Scale a distance/size from voxel space to world space.
+    #[inline]
+    pub fn scale_to_world(&self, voxel_distance: f32) -> f32 {
+        voxel_distance * self.scale
+    }
+
+    /// Scale a distance/size from world space to voxel space.
+    #[inline]
+    pub fn scale_to_voxel(&self, world_distance: f32) -> f32 {
+        world_distance / self.scale
     }
 }
 

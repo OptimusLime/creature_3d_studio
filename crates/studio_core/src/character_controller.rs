@@ -13,8 +13,10 @@
 use bevy::prelude::*;
 
 use crate::physics_math::{
-    compute_kinematic_correction, detect_terrain_collisions, has_ceiling_contact, has_floor_contact,
+    compute_kinematic_correction, detect_terrain_collisions_scaled, has_ceiling_contact,
+    has_floor_contact,
 };
+use crate::voxel::VoxelScaleConfig;
 use crate::voxel_fragment::TerrainOccupancy;
 
 /// Plugin that adds the character controller systems.
@@ -241,12 +243,14 @@ fn character_physics_system(
     time: Res<Time>,
     config: Res<CharacterControllerConfig>,
     terrain: Option<Res<TerrainOccupancy>>,
+    scale_config: Option<Res<VoxelScaleConfig>>,
     mut player_query: Query<(&mut PlayerCharacter, &mut Transform)>,
 ) {
     let Some(terrain) = terrain else {
         return;
     };
 
+    let voxel_scale = scale_config.map(|c| c.scale).unwrap_or(1.0);
     let dt = time.delta_secs().min(0.05); // Cap delta time
 
     for (mut player, mut transform) in player_query.iter_mut() {
@@ -286,8 +290,13 @@ fn character_physics_system(
         let mut all_contacts = Vec::new();
         for offset in &sample_offsets {
             let sample_pos = transform.translation + *offset;
-            let contacts =
-                detect_terrain_collisions(sample_pos, &terrain.occupancy, particle_diameter);
+            // Use scale-aware collision detection
+            let contacts = detect_terrain_collisions_scaled(
+                sample_pos,
+                &terrain.occupancy,
+                particle_diameter,
+                voxel_scale,
+            );
             all_contacts.extend(contacts);
         }
 

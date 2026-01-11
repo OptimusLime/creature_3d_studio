@@ -62,6 +62,7 @@ use super::sky_dome_node::{
     load_star_texture, SkyDomeNode,
 };
 use crate::debug_screenshot::DebugModes;
+use crate::voxel::VoxelScaleConfig;
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -110,6 +111,9 @@ impl Plugin for DeferredRenderingPlugin {
 
         // Extract DeferredLightingConfig resource to render world (for height fog parameters)
         app.add_plugins(ExtractResourcePlugin::<DeferredLightingConfig>::default());
+
+        // Extract VoxelScaleConfig resource to render world (for GPU collision scale)
+        app.add_plugins(ExtractResourcePlugin::<VoxelScaleConfig>::default());
 
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);

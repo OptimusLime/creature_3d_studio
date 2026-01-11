@@ -595,6 +595,50 @@ pub struct CollisionUniforms {
     pub fragment_index: u32,
     /// Total number of fragments this frame
     pub fragment_count: u32,
+    /// Voxel scale factor (1.0 = 1 voxel = 1 world unit)
+    pub voxel_scale: f32,
+    /// Padding for 16-byte alignment
+    pub _pad0: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+}
+
+impl CollisionUniforms {
+    /// Create new collision uniforms with default scale (1.0).
+    pub fn new(
+        max_contacts: u32,
+        chunk_index_size: u32,
+        fragment_index: u32,
+        fragment_count: u32,
+    ) -> Self {
+        Self::with_scale(
+            max_contacts,
+            chunk_index_size,
+            fragment_index,
+            fragment_count,
+            1.0,
+        )
+    }
+
+    /// Create new collision uniforms with a specific voxel scale.
+    pub fn with_scale(
+        max_contacts: u32,
+        chunk_index_size: u32,
+        fragment_index: u32,
+        fragment_count: u32,
+        voxel_scale: f32,
+    ) -> Self {
+        Self {
+            max_contacts,
+            chunk_index_size,
+            fragment_index,
+            fragment_count,
+            voxel_scale,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+        }
+    }
 }
 
 // ============================================================================

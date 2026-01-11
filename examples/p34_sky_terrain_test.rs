@@ -20,7 +20,7 @@ use studio_core::deferred::SkyDomeConfig;
 use studio_core::{
     CharacterControllerConfig, CharacterControllerPlugin, DeferredLightingConfig,
     DeferredRenderable, MoonConfig, PlayerCharacter, TerrainOccupancy, ThirdPersonCamera, Voxel,
-    VoxelMaterial, VoxelWorld, VoxelWorldApp, WorldSource, ATTRIBUTE_VOXEL_AO,
+    VoxelMaterial, VoxelScaleConfig, VoxelWorld, VoxelWorldApp, WorldSource, ATTRIBUTE_VOXEL_AO,
     ATTRIBUTE_VOXEL_COLOR, ATTRIBUTE_VOXEL_EMISSION,
 };
 
@@ -47,6 +47,7 @@ fn main() {
     println!();
     println!("Other:");
     println!("  F12   - Take screenshot");
+    println!("  --scale=X  - Set voxel scale (default 0.25, 1.0 = original size)");
     println!();
 
     // Ensure output directory exists
@@ -59,6 +60,18 @@ fn main() {
     // Check for --test flag
     let test_mode = std::env::args().any(|arg| arg == "--test");
 
+    // Check for --scale=X flag (e.g., --scale=0.5)
+    // Default to 0.25 for smaller voxels (buildings feel more appropriately sized)
+    let voxel_scale = std::env::args()
+        .find(|arg| arg.starts_with("--scale="))
+        .and_then(|arg| {
+            arg.strip_prefix("--scale=")
+                .and_then(|s| s.parse::<f32>().ok())
+        })
+        .unwrap_or(0.25);
+
+    println!("Using voxel scale: {}", voxel_scale);
+
     let mut app = VoxelWorldApp::new("Phase 34: Sky + Terrain Test")
         .with_resolution(1920, 1080)
         .with_world(WorldSource::World(terrain))
@@ -66,10 +79,13 @@ fn main() {
         .with_greedy_meshing(true)
         .with_emissive_lights(true)
         .with_shadow_light(Vec3::new(100.0, 150.0, 100.0))
-        .with_camera_position(Vec3::new(0.0, 30.0, 50.0), Vec3::new(0.0, 10.0, 0.0))
+        // Camera position adjusted for smaller voxel scale (0.25)
+        // At scale 0.25, the terrain is 1/4 the visual size, so bring camera closer
+        .with_camera_position(Vec3::new(0.0, 10.0, 20.0), Vec3::new(0.0, 3.0, 0.0))
         .with_resource(DeferredLightingConfig {
-            fog_start: 200.0,
-            fog_end: 800.0,
+            // Fog distances adjusted for smaller voxel scale
+            fog_start: 50.0,
+            fog_end: 200.0,
             fog_color: Color::srgb(0.05, 0.03, 0.08),
             ..Default::default()
         })
@@ -81,17 +97,20 @@ fn main() {
             ..Default::default()
         })
         .with_resource(occupancy)
+        // Voxel scale configuration (default 1.0, can be set via --scale=X CLI arg)
+        .with_resource(VoxelScaleConfig::new(voxel_scale))
         .with_resource(CharacterControllerConfig {
-            move_speed: 12.0,
-            jump_speed: 14.0,
-            gravity: 30.0,
+            // Movement adjusted for smaller voxel scale
+            move_speed: 4.0, // Slower since world is visually smaller
+            jump_speed: 5.0,
+            gravity: 12.0,
             turn_speed: 2.5,
             pitch_speed: 1.5,
-            zoom_speed: 10.0,
+            zoom_speed: 3.0,
             min_pitch: -1.0,
             max_pitch: 0.8,
-            min_distance: 5.0,
-            max_distance: 50.0,
+            min_distance: 2.0,
+            max_distance: 20.0,
         })
         .with_resource(TimeControl {
             time_of_day: 0.15,
@@ -128,11 +147,26 @@ fn main() {
     app.run();
 }
 
+/// Compute terrain height at a given (x, z) position using the same noise as terrain generation
+fn terrain_height_at(x: i32, z: i32, ground_base: i32) -> i32 {
+    let fx = x as f32;
+    let fz = z as f32;
+
+    let hill1 = ((fx * 0.008).sin() * (fz * 0.006).cos()) * 15.0;
+    let hill2 = ((fx * 0.015 + 1.0).cos() * (fz * 0.012 + 2.0).sin()) * 8.0;
+    let bump = ((fx * 0.05).sin() * (fz * 0.05).cos()) * 3.0;
+    let detail = ((fx * 0.2).sin() * (fz * 0.2).cos()) * 0.5;
+
+    let height = ground_base + (hill1 + hill2 + bump + detail) as i32;
+    height.max(1)
+}
+
 /// Build rolling hills terrain extending far in every direction
 fn build_rolling_hills_terrain() -> VoxelWorld {
     let mut terrain = VoxelWorld::new();
 
-    let extent = 200i32;
+    // Larger terrain extent for the smaller voxel scale
+    let extent = 400i32;
     let ground_base = 5;
 
     let grass_dark = Voxel::solid(45, 80, 35);
@@ -147,16 +181,7 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
 
     for x in -extent..extent {
         for z in -extent..extent {
-            let fx = x as f32;
-            let fz = z as f32;
-
-            let hill1 = ((fx * 0.008).sin() * (fz * 0.006).cos()) * 15.0;
-            let hill2 = ((fx * 0.015 + 1.0).cos() * (fz * 0.012 + 2.0).sin()) * 8.0;
-            let bump = ((fx * 0.05).sin() * (fz * 0.05).cos()) * 3.0;
-            let detail = ((fx * 0.2).sin() * (fz * 0.2).cos()) * 0.5;
-
-            let height = ground_base + (hill1 + hill2 + bump + detail) as i32;
-            let height = height.max(1);
+            let height = terrain_height_at(x, z, ground_base);
 
             for y in 0..height {
                 let voxel = if y == height - 1 {
@@ -202,22 +227,19 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
     let light_post = Voxel::solid(50, 45, 55); // Dark stone post
 
     // Place light posts in a grid pattern across the terrain
-    for gx in -4i32..=4 {
-        for gz in -4i32..=4 {
+    // Wider grid spacing for larger terrain
+    for gx in -8i32..=8 {
+        for gz in -8i32..=8 {
             // Skip the center tower area
             if gx.abs() <= 1 && gz.abs() <= 1 {
                 continue;
             }
 
-            let lx = gx * 40;
-            let lz = gz * 40;
+            let lx = gx * 45;
+            let lz = gz * 45;
 
-            // Get ground height at this position
-            let fx = lx as f32;
-            let fz = lz as f32;
-            let hill1 = ((fx * 0.008).sin() * (fz * 0.006).cos()) * 15.0;
-            let hill2 = ((fx * 0.015 + 1.0).cos() * (fz * 0.012 + 2.0).sin()) * 8.0;
-            let ground_y = ground_base + (hill1 + hill2) as i32;
+            // Get ground height at this position using the SAME function as terrain generation
+            let ground_y = terrain_height_at(lx, lz, ground_base);
 
             // Build a small light post (3 blocks tall + light on top)
             for y in 0..3 {
@@ -234,7 +256,7 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
         }
     }
 
-    // Scattered trees
+    // Scattered trees - more positions for larger terrain
     let tree_positions = [
         (50, 70),
         (-30, 45),
@@ -242,17 +264,20 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
         (-60, -80),
         (120, 30),
         (-100, 100),
+        (180, -150),
+        (-200, 50),
+        (250, 200),
+        (-150, -200),
+        (300, -50),
+        (-280, 150),
     ];
 
     let trunk = Voxel::solid(80, 50, 30);
     let leaves = Voxel::solid(30, 90, 25);
 
     for (tx, tz) in tree_positions {
-        let fx = tx as f32;
-        let fz = tz as f32;
-        let hill1 = ((fx * 0.008).sin() * (fz * 0.006).cos()) * 15.0;
-        let hill2 = ((fx * 0.015 + 1.0).cos() * (fz * 0.012 + 2.0).sin()) * 8.0;
-        let ground_y = ground_base + (hill1 + hill2) as i32;
+        // Use the shared height function for correct placement
+        let ground_y = terrain_height_at(tx, tz, ground_base);
 
         for y in 0..6 {
             terrain.set_voxel(tx, ground_y + y, tz, trunk);
