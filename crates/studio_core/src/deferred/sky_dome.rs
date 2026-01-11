@@ -153,6 +153,16 @@ pub struct SkyDomeConfig {
     /// Path to moon 2 texture (relative to assets folder).
     /// If None, uses fallback texture.
     pub moon2_texture_path: Option<String>,
+
+    /// Path to star field texture (relative to assets folder).
+    /// If None, no stars are rendered.
+    pub star_texture_path: Option<String>,
+
+    /// Star field brightness multiplier (0.0 = invisible, 1.0 = normal, 2.0 = bright)
+    pub star_brightness: f32,
+
+    /// Star twinkle speed (0.0 = static, 1.0 = normal, 2.0 = fast)
+    pub star_twinkle_speed: f32,
 }
 
 impl Default for SkyDomeConfig {
@@ -177,6 +187,10 @@ impl Default for SkyDomeConfig {
             // Default to MJ-generated moon textures
             moon1_texture_path: Some("textures/generated/mj_moon_purple.png".to_string()),
             moon2_texture_path: Some("textures/generated/mj_moon_orange.png".to_string()),
+            // Default to MJ-generated star field
+            star_texture_path: Some("textures/generated/mj_stars.png".to_string()),
+            star_brightness: 1.0,
+            star_twinkle_speed: 1.0,
         }
     }
 }

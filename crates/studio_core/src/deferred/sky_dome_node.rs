@@ -50,6 +50,13 @@ pub struct MoonTextureHandles {
     pub moon2_loaded_path: Option<String>,
 }
 
+/// Handle to star field texture in the main world.
+#[derive(Resource, Default)]
+pub struct StarTextureHandle {
+    pub handle: Option<Handle<Image>>,
+    pub loaded_path: Option<String>,
+}
+
 /// System that loads the cloud texture based on SkyDomeConfig.
 /// Runs in PreUpdate in the main world.
 pub fn load_cloud_texture(
@@ -122,6 +129,31 @@ pub fn load_moon_textures(
     }
 }
 
+/// System that loads star field texture based on SkyDomeConfig.
+pub fn load_star_texture(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut star_handle: ResMut<StarTextureHandle>,
+) {
+    let needs_load = match (&config.star_texture_path, &star_handle.loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load {
+        if let Some(path) = &config.star_texture_path {
+            info!("Loading star texture: {}", path);
+            star_handle.handle = Some(asset_server.load(path.clone()));
+            star_handle.loaded_path = Some(path.clone());
+        } else {
+            star_handle.handle = None;
+            star_handle.loaded_path = None;
+        }
+    }
+}
+
 // ============================================================================
 // Cloud Texture Extraction (Main World -> Render World)
 // ============================================================================
@@ -137,6 +169,12 @@ pub struct ExtractedCloudTexture {
 pub struct ExtractedMoonTextures {
     pub moon1_handle: Option<Handle<Image>>,
     pub moon2_handle: Option<Handle<Image>>,
+}
+
+/// Extracted star texture handle for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedStarTexture {
+    pub handle: Option<Handle<Image>>,
 }
 
 /// Extract cloud texture handle to render world.
@@ -162,6 +200,15 @@ pub fn extract_moon_textures(
         moon1_handle: moon1,
         moon2_handle: moon2,
     });
+}
+
+/// Extract star texture handle to render world.
+pub fn extract_star_texture(
+    star_handle: Extract<Option<Res<StarTextureHandle>>>,
+    mut commands: Commands,
+) {
+    let handle = star_handle.as_ref().and_then(|h| h.handle.clone());
+    commands.insert_resource(ExtractedStarTexture { handle });
 }
 
 // ============================================================================
@@ -253,6 +300,8 @@ pub struct SkyDomeUniform {
     pub moon2_color: [f32; 4],
     /// Moon 2: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     pub moon2_params: [f32; 4],
+    /// Star params: x = brightness, y = twinkle_speed, z = time (for animation), w = unused
+    pub star_params: [f32; 4],
 }
 
 /// Sun orbital configuration.
@@ -435,10 +484,21 @@ impl ViewNode for SkyDomeNode {
             .map(|img| &img.texture_view)
             .or_else(|| fallback_cloud.map(|f| &f.view));
 
+        // Get star texture view (fall back to cloud fallback if not loaded)
+        let extracted_stars = world.get_resource::<ExtractedStarTexture>();
+        let star_texture_view = extracted_stars
+            .and_then(|e| e.handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
         let Some(moon1_texture_view) = moon1_texture_view else {
             return Ok(());
         };
         let Some(moon2_texture_view) = moon2_texture_view else {
+            return Ok(());
+        };
+        let Some(star_texture_view) = star_texture_view else {
             return Ok(());
         };
 
@@ -526,6 +586,14 @@ impl ViewNode for SkyDomeNode {
                 config.moon2.surface_detail,
                 0.0,
             ],
+            // Star params: use time_of_day as animation time source
+            // This makes stars twinkle based on in-game time
+            star_params: [
+                config.star_brightness,
+                config.star_twinkle_speed,
+                config.time_of_day * 100.0, // Scale up for visible twinkle over short time spans
+                0.0,
+            ],
         };
 
         // Create uniform buffer
@@ -582,6 +650,15 @@ impl ViewNode for SkyDomeNode {
                 BindGroupEntry {
                     binding: 9,
                     resource: BindingResource::Sampler(&sky_pipeline.moon_sampler),
+                },
+                // Star texture at binding 10 and 11
+                BindGroupEntry {
+                    binding: 10,
+                    resource: BindingResource::TextureView(star_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 11,
+                    resource: BindingResource::Sampler(&sky_pipeline.cloud_sampler), // Reuse linear sampler
                 },
             ],
         );
@@ -751,6 +828,24 @@ pub fn init_sky_dome_pipeline(
             // Moon 2 sampler
             BindGroupLayoutEntry {
                 binding: 9,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Star texture
+            BindGroupLayoutEntry {
+                binding: 10,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Star sampler
+            BindGroupLayoutEntry {
+                binding: 11,
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Sampler(SamplerBindingType::Filtering),
                 count: None,

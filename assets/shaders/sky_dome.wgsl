@@ -21,6 +21,10 @@
 @group(0) @binding(8) var moon2_texture: texture_2d<f32>;
 @group(0) @binding(9) var moon2_sampler: sampler;
 
+// Star field texture (procedurally generated)
+@group(0) @binding(10) var star_texture: texture_2d<f32>;
+@group(0) @binding(11) var star_sampler: sampler;
+
 // Sky dome uniforms (bind group 1)
 // MUST match SkyDomeUniform in sky_dome_node.rs exactly!
 struct SkyDomeUniforms {
@@ -43,6 +47,8 @@ struct SkyDomeUniforms {
     moon2_color: vec4<f32>,
     // Moon 2: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
     moon2_params: vec4<f32>,
+    // Star params: x = brightness, y = twinkle_speed, z = time, w = unused
+    star_params: vec4<f32>,
 }
 @group(1) @binding(0) var<uniform> sky: SkyDomeUniforms;
 
@@ -391,6 +397,68 @@ fn render_moons(ray_dir: vec3<f32>) -> vec4<f32> {
     return result;
 }
 
+// ============================================================================
+// STAR FIELD RENDERING
+// Stars twinkle using Perlin-like noise based on position and time
+// ============================================================================
+
+// Simple hash function for noise
+fn hash_star(p: vec2<f32>) -> f32 {
+    let p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    let p3_dot = dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z + p3_dot);
+}
+
+// Value noise for star twinkling
+fn star_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    
+    // Smoothstep for interpolation
+    let u = f * f * (3.0 - 2.0 * f);
+    
+    let a = hash_star(i);
+    let b = hash_star(i + vec2<f32>(1.0, 0.0));
+    let c = hash_star(i + vec2<f32>(0.0, 1.0));
+    let d = hash_star(i + vec2<f32>(1.0, 1.0));
+    
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// Render star field with twinkling
+fn render_stars(ray_dir: vec3<f32>, elevation: f32) -> vec3<f32> {
+    let star_brightness = sky.star_params.x;
+    let twinkle_speed = sky.star_params.y;
+    let time = sky.star_params.z;
+    
+    // Don't render stars below horizon
+    if ray_dir.y < -0.05 {
+        return vec3<f32>(0.0);
+    }
+    
+    // Convert ray direction to spherical UV for star texture sampling
+    let star_uv = direction_to_spherical_uv(ray_dir);
+    
+    // Sample star texture
+    let star_sample = textureSample(star_texture, star_sampler, star_uv);
+    
+    // Create twinkling effect using noise
+    // Use star position (UV) plus time for per-star twinkling
+    let noise_pos = star_uv * 50.0 + vec2<f32>(time * twinkle_speed, time * twinkle_speed * 0.7);
+    let twinkle = star_noise(noise_pos);
+    
+    // Modulate star brightness with twinkle (0.4 to 1.0 range)
+    let twinkle_factor = 0.4 + twinkle * 0.6;
+    
+    // Stars fade near horizon (atmospheric extinction)
+    let horizon_fade = smoothstep(-0.05, 0.3, ray_dir.y);
+    
+    // Final star color with twinkle and brightness
+    let star_color = star_sample.rgb * star_brightness * twinkle_factor * horizon_fade;
+    
+    return star_color * star_sample.a;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scene_color = textureSample(scene_texture, scene_sampler, in.uv);
@@ -414,10 +482,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t = pow(elevation, blend_power);
         let gradient = mix(horizon, zenith, t);
         
-        // === Layer 0: Sky gradient (base) ===
-        var sky_color = gradient;
+        // === Layer 0: Stars (furthest back) ===
+        let stars = render_stars(ray_dir, elevation);
         
-        // === Layer 1: Moons (behind clouds) ===
+        // === Layer 1: Sky gradient (blended over stars) ===
+        // Stars show through dark parts of the sky, gradient dominates brighter areas
+        // Use additive blend for stars so they shine through the dark sky
+        var sky_color = gradient + stars * (1.0 - length(gradient) * 0.5);
+        
+        // === Layer 2: Moons (behind clouds) ===
         let moons = render_moons(ray_dir);
         sky_color = mix(sky_color, moons.rgb, moons.a);
         
