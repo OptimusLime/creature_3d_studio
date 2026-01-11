@@ -100,17 +100,17 @@ fn main() {
         // Voxel scale configuration (default 1.0, can be set via --scale=X CLI arg)
         .with_resource(VoxelScaleConfig::new(voxel_scale))
         .with_resource(CharacterControllerConfig {
-            // Movement adjusted for smaller voxel scale
-            move_speed: 4.0, // Slower since world is visually smaller
-            jump_speed: 5.0,
-            gravity: 12.0,
+            // Movement adjusted for smaller character and voxel scale
+            move_speed: 3.0, // Slower for smaller character
+            jump_speed: 4.0,
+            gravity: 10.0,
             turn_speed: 2.5,
             pitch_speed: 1.5,
-            zoom_speed: 3.0,
+            zoom_speed: 2.0,
             min_pitch: -1.0,
             max_pitch: 0.8,
-            min_distance: 2.0,
-            max_distance: 20.0,
+            min_distance: 1.0, // Closer camera for smaller character
+            max_distance: 15.0,
         })
         .with_resource(TimeControl {
             time_of_day: 0.15,
@@ -205,12 +205,12 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
         }
     }
 
-    // Central tower
+    // Central tower (2x larger)
     let tower_stone = Voxel::solid(70, 65, 60);
-    for y in 0i32..30 {
-        for dx in -2i32..=2 {
-            for dz in -2i32..=2 {
-                if dx.abs() == 2 || dz.abs() == 2 || y >= 25 {
+    for y in 0i32..60 {
+        for dx in -4i32..=4 {
+            for dz in -4i32..=4 {
+                if dx.abs() >= 3 || dz.abs() >= 3 || y >= 50 {
                     terrain.set_voxel(dx, y + 10, dz, tower_stone);
                 }
             }
@@ -218,8 +218,10 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
     }
 
     let beacon = Voxel::emissive(255, 200, 100);
-    terrain.set_voxel(0, 41, 0, beacon);
-    terrain.set_voxel(0, 42, 0, beacon);
+    // Beacon at top of taller tower
+    for by in 71..75 {
+        terrain.set_voxel(0, by, 0, beacon);
+    }
 
     // Scattered glowing light posts for visibility in the dark world
     let light_purple = Voxel::emissive(180, 120, 255); // Purple glow
@@ -241,8 +243,8 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
             // Get ground height at this position using the SAME function as terrain generation
             let ground_y = terrain_height_at(lx, lz, ground_base);
 
-            // Build a small light post (3 blocks tall + light on top)
-            for y in 0..3 {
+            // Build a light post (6 blocks tall + light on top, 2x previous size)
+            for y in 0..6 {
                 terrain.set_voxel(lx, ground_y + y, lz, light_post);
             }
 
@@ -252,7 +254,7 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
             } else {
                 light_orange
             };
-            terrain.set_voxel(lx, ground_y + 3, lz, light);
+            terrain.set_voxel(lx, ground_y + 6, lz, light);
         }
     }
 
@@ -279,13 +281,15 @@ fn build_rolling_hills_terrain() -> VoxelWorld {
         // Use the shared height function for correct placement
         let ground_y = terrain_height_at(tx, tz, ground_base);
 
-        for y in 0..6 {
+        // 2x larger trees: trunk 12 blocks tall (was 6)
+        for y in 0..12 {
             terrain.set_voxel(tx, ground_y + y, tz, trunk);
         }
-        for dy in 4i32..9 {
-            for dx in -2i32..=2 {
-                for dz in -2i32..=2 {
-                    if dx.abs() + dz.abs() + (dy - 6).abs() < 5 {
+        // Crown from y=8 to y=18 (was 4-9), radius 4 (was 2)
+        for dy in 8i32..18 {
+            for dx in -4i32..=4 {
+                for dz in -4i32..=4 {
+                    if dx.abs() + dz.abs() + (dy - 12).abs() < 9 {
                         terrain.set_voxel(tx + dx, ground_y + dy, tz + dz, leaves);
                     }
                 }
@@ -432,7 +436,8 @@ fn spawn_player(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<VoxelMaterial>>,
 ) {
-    let half_extents = Vec3::new(0.4, 0.9, 0.4);
+    // Half the default size - makes the world feel larger
+    let half_extents = Vec3::new(0.2, 0.45, 0.2);
     // Start lower - just above expected terrain height near origin
     let start_pos = Vec3::new(0.0, 20.0, 30.0);
 
