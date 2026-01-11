@@ -1,84 +1,56 @@
-# Player Fantasy Demo: AI-Powered Spell Creation
+# Player Fantasy Demo
 
-## Core Thesis
+This is a brainstorming document. Nothing here is definitive. The goal is to explore what makes this game compelling and what we need to demonstrate that.
 
-In a dark 80s fantasy world lit only by two moons, players don't just cast spells—they *invent* them. With AI assistance, anyone can become a spell architect, designing increasingly complex magical systems without writing a single line of code themselves.
+---
 
-**The pitch in one sentence:** "Holy shit, I can basically be Harry Potter and invent my own spells."
+## The Fantasy
+
+A spell system so deep that you can't find its edges.
+
+You have access to a combinatorial magic system where spells are assembled from modules, behaviors stack, elements interact, and the outcomes scale with your creativity. The system is powerful enough that after months of play, you're still discovering new combinations. You look at someone else's spell and think "I didn't know you could do that."
+
+The boundaries are unclear. That's the point.
+
+### What Makes This Compelling
+
+1. **Unbounded exploration.** The spell system has more depth than any single player will exhaust. There's always another combination to try, another interaction to discover.
+
+2. **Personal investment.** The spells you create required your ideas, your iteration, your testing. They belong to you in a way that preset abilities never could.
+
+3. **Emergent complexity.** Simple modules combine into complex behaviors. A fireball is simple. A fireball that arcs, splits at apex, deploys poison to transform targets to wood, then ignites them with delayed fire bolts is built from simple pieces.
+
+4. **Collaboration with AI.** You describe intent; AI handles syntax. This removes the barrier of "I'd need to learn to code" while preserving the creative work of designing the spell's behavior.
+
+### What This Is Not
+
+This is not about "you don't have to write code." Plenty of games have visual scripting or preset abilities.
+
+This is about access to a system complex enough that your creativity is the limiting factor. The system will support whatever you can imagine; the question is whether you can imagine it.
 
 ---
 
 ## The World
 
-### Setting
-- **Aesthetic:** Dark 80s fantasy—think Labyrinth meets Dark Crystal meets early Final Fantasy
-- **Lighting:** Two moons (purple and orange) are the only light sources. No sun. Perpetual night.
-- **Inhabitants:** Weird voxel creatures roam the land—procedurally animated, AI-shaped beings
-- **Atmosphere:** Mysterious, dangerous, and deeply personal. Your spells and creatures are *yours*.
+Dark 80s fantasy. Two moons (purple and orange) provide the only light. No sun. Perpetual twilight.
 
-### Visual Identity
-- Voxel-based world with emissive magic
-- Glowing spells contrast against the dark landscape
-- Creatures with bioluminescent features
-- Everything feels handcrafted yet alive
+Voxel creatures roam the landscape. Emissive magic glows against the darkness. The aesthetic sits somewhere between Labyrinth, Dark Crystal, and early Final Fantasy concept art.
+
+The world exists to be a canvas for spell experimentation. Creatures to target. Terrain to interact with. Environmental elements (water, metal, vegetation) that spells can exploit.
 
 ---
 
-## Core Player Fantasy
+## Demo Narrative: Spell Progression
 
-### Two Pillars of Creation
+The demo shows escalating complexity. Each step builds on the last. The viewer should think: "Wait, you can do that? What else can you do?"
 
-**1. Spell Design**
-- Players design spells through conversation with AI
-- Spells are modular: packages of behaviors that combine
-- No coding required—AI writes Lua, player iterates on ideas
-- Deep ownership: your spell is *yours*, tuned through experimentation
+### Starting Point: Basic Fireball
 
-**2. Creature Design**
-- Simple 3D sculpting to define body shape
-- Physics system handles movement
-- AI generates the "brain" for locomotion
-- Procedural animation makes them feel alive
+Medium-range projectile. Travels forward. Explodes on impact. Pure fire.
 
-### The AI Integration
+This is the baseline. Everyone understands a fireball. It's satisfying but unremarkable.
 
-The game runs as an **MCP server** that an external AI can connect to. The AI:
-- Understands the Lua spell API and game context
-- Can read existing spells and modify them
-- Generates new spell code based on player descriptions
-- Explains what spells do and suggests improvements
-
-**Player workflow:**
-1. Describe what you want: "I want a fireball that splits into smaller fireballs"
-2. AI generates the spell code
-3. Test it in-game
-4. Iterate: "Make it split at the highest point of the arc"
-5. AI refines
-6. Repeat until satisfied
-
-This creates **deep ownership**—the spell required your ideas, your iteration, your tuning. It's not a preset; it's *yours*.
-
----
-
-## Spell Progression Narrative
-
-The demo tells a story through escalating spell complexity. Each step shows what's possible.
-
-### Act 1: The Basic Fireball
-
-**What it is:**
-- Medium-range projectile
-- Travels in a straight line (or slight arc)
-- Explodes on impact
-- Pure fire mana
-
-**Player prompt:** "Create a basic fireball spell"
-
-**What AI generates:**
 ```lua
-local Fireball = require("spells/base_projectile")
-local Explosion = require("spells/explosion")
-
 return Fireball:new({
     speed = 20,
     gravity = 0.5,
@@ -87,37 +59,19 @@ return Fireball:new({
 })
 ```
 
-**Visual:** Orange glowing orb, slight trail, blooms on impact.
+### Modification 1: Artillery Trajectory
 
-**Demo moment:** Player casts, fireball flies, explosion. Simple. Satisfying. "Okay, I made a fireball. Cool."
+Player wants to hit distant targets with more force.
 
----
+Change: Launch at 60 degrees. Gravity creates an arc. Impact velocity scales the explosion.
 
-### Act 2: The Artillery Strike
+Tradeoff: Harder to aim. You're predicting where the target will be.
 
-**Player realization:** "What if I could hit things further away? Or harder?"
-
-**Player prompt:** "Make it an artillery strike—shoots up high, then comes down with more force"
-
-**What changes:**
-- Initial trajectory points upward at 60°
-- Gravity pulls it into an arc
-- Gains energy as it falls (potential → kinetic)
-- Bigger explosion on impact
-
-**What AI generates:**
 ```lua
 local ArtilleryFireball = Fireball:extend({
-    launch_angle = 60,  -- degrees from horizontal
-    
-    on_launch = function(self, ctx)
-        -- Convert horizontal aim to upward arc
-        local aim = ctx.aim_direction
-        self.velocity = rotate_toward_vertical(aim, self.launch_angle) * self.speed
-    end,
+    launch_angle = 60,
     
     on_hit = function(self, ctx)
-        -- Explosion scales with impact velocity
         local impact_energy = self.velocity:length()
         return Explosion:new({ 
             radius = 3 + impact_energy * 0.1,
@@ -127,476 +81,321 @@ local ArtilleryFireball = Fireball:extend({
 })
 ```
 
-**Tradeoff introduced:** Landing precision is harder. You're aiming at where the target *will be*.
+Visual: Fireball arcs into the sky, hangs at apex, plummets. Bigger explosion.
 
-**Demo moment:** Player aims at distant enemy. Fireball arcs into the sky, hangs at apex, plummets down. Massive explosion. "Whoa, that's way more satisfying."
+### Modification 2: Apex Split
 
----
+Player wants area coverage.
 
-### Act 3: The Split
+Change: At the highest point of the arc (velocity.y crosses zero), split into four projectiles. Each child gets 25% of remaining energy.
 
-**Player realization:** "What if it split into multiple projectiles?"
-
-**Player prompt:** "At the highest point of the arc, split into four smaller fireballs"
-
-**What changes:**
-- Spell detects apex (velocity.y crosses zero)
-- Splits into 4 child projectiles
-- Each child has 25% of remaining energy
-- Children spread in a pattern
-
-**What AI generates:**
 ```lua
-local SplitArtillery = ArtilleryFireball:extend({
-    split_count = 4,
-    split_spread = 15,  -- degrees
+tick = function(self, ctx)
+    ArtilleryFireball.tick(self, ctx)
     
-    tick = function(self, ctx)
-        ArtilleryFireball.tick(self, ctx)
-        
-        -- Detect apex
-        if self.prev_velocity_y > 0 and ctx.velocity.y <= 0 then
-            ctx:signal_split({
-                count = self.split_count,
-                spread_angle = self.split_spread,
-                child = Fireball:new({
-                    speed = ctx.velocity:length(),
-                    gravity = self.gravity,
-                    on_hit = self.on_hit
-                })
-            })
-        end
-        self.prev_velocity_y = ctx.velocity.y
+    if self.prev_velocity_y > 0 and ctx.velocity.y <= 0 then
+        ctx:signal_split({
+            count = 4,
+            spread_angle = 15,
+            child = Fireball:new({ gravity = self.gravity })
+        })
     end
-})
+    self.prev_velocity_y = ctx.velocity.y
+end
 ```
 
-**Demo moment:** Fireball arcs up, reaches apex, *pop*—four smaller fireballs spread out and rain down. Area denial. "Now we're talking."
+Visual: Single fireball arcs up. At apex, pops into four. They rain down across an area.
 
----
+### Modification 3: Elemental Combo
 
-### Act 4: The Elemental Combo
+Player wants synergy between elements.
 
-**Player realization:** "What if different projectiles did different things? What if they *synergized*?"
+Change: Two of the split projectiles are poison (transforms organic targets to wood). Two are fire (ignites wood for bonus damage). Poison falls faster so it lands first.
 
-**Player prompt:** "Two of the split projectiles should be poison that converts targets to wood. The other two are fire. Poison lands first, then fire ignites the wood."
-
-**What changes:**
-- Split produces mixed children (2 poison, 2 fire)
-- Poison children have faster descent (heavier? different arc?)
-- Poison effect: transforms organic targets into wood material
-- Fire effect: ignites wood for bonus damage
-- Sequencing matters: poison must land first
-
-**What AI generates:**
 ```lua
-local ElementalCombo = SplitArtillery:extend({
-    tick = function(self, ctx)
-        ArtilleryFireball.tick(self, ctx)
-        
-        if self.prev_velocity_y > 0 and ctx.velocity.y <= 0 then
-            -- Create mixed payload
-            local poison_bolt = PoisonBolt:new({
-                gravity = self.gravity * 1.5,  -- Falls faster
-                on_hit = OrganicTransform:new({ 
-                    target_material = "wood",
-                    duration = 3.0
-                })
-            })
-            
-            local fire_bolt = Fireball:new({
-                gravity = self.gravity,  -- Normal fall speed
-                on_hit = Explosion:new({
-                    radius = 2,
-                    damage = 30,
-                    bonus_vs_material = { wood = 3.0 }  -- 3x damage to wood
-                })
-            })
-            
-            ctx:signal_split({
-                children = {
-                    { projectile = poison_bolt, angle = -10 },
-                    { projectile = poison_bolt, angle = 10 },
-                    { projectile = fire_bolt, angle = -20 },
-                    { projectile = fire_bolt, angle = 20 },
-                }
-            })
-        end
-        self.prev_velocity_y = ctx.velocity.y
-    end
+ctx:signal_split({
+    children = {
+        { projectile = PoisonBolt:new({ 
+            gravity = self.gravity * 1.5,  -- Falls faster
+            on_hit = OrganicTransform:new({ target_material = "wood" })
+        }), angle = -10 },
+        { projectile = PoisonBolt:new({ ... }), angle = 10 },
+        { projectile = Fireball:new({ 
+            on_hit = Explosion:new({ bonus_vs_material = { wood = 3.0 } })
+        }), angle = -20 },
+        { projectile = Fireball:new({ ... }), angle = 20 },
+    }
 })
 ```
 
-**Demo moment:** 
-1. Artillery fireball arcs up
-2. At apex, splits into four
+Visual sequence:
+1. Artillery arc upward
+2. Apex split into four
 3. Two green bolts (poison) fall faster, hit first
-4. Targets transform—flesh becomes wood
-5. Two orange bolts (fire) land on the now-wooden targets
-6. *WHOOSH*—wood ignites, massive fire damage
+4. Targets transform: flesh becomes wood
+5. Two orange bolts (fire) land on wooden targets
+6. Wood ignites. 3x damage.
 
-**Player reaction:** "Holy shit. I just invented a spell that turns people into trees and then burns them."
+This is the payoff moment. A single spell with sequenced elemental interactions.
 
----
+### The Signature
 
-### Act 5: The Signature
+Each spell gets a procedurally generated insignia based on its composition. Visual identity for your creation.
 
-Every spell gets a **cast signature**—a procedurally generated insignia that represents its unique identity.
-
-**Components of the signature:**
-- Base shape from spell type (projectile, area, utility)
+Options for signature generation:
+- Shape from spell type (projectile, area, beam)
 - Color from primary element
 - Complexity from module count
-- Unique seed from spell code hash
+- Unique seed from code hash
 
-**Demo moment:** After creating the elemental combo, the game reveals its signature—a complex symbol combining fire and poison motifs. "This is YOUR spell. No one else has this exact combination."
+Open question: What aesthetic? Runic? Geometric? Organic?
 
 ---
 
-## Demo Storyboard
+## Demo Storyboard (Draft)
 
-### Scene 1: The World (15 seconds)
-- Slow pan across dark voxel landscape
-- Two moons visible in sky
-- Strange creatures moving in distance
-- Text: "A world lit only by two moons..."
+Target: 90-120 seconds. Platform: TikTok/YouTube Shorts viable, but also works longer form.
 
-### Scene 2: The Problem (10 seconds)
-- Player character faces enemies
-- No weapons, no obvious solution
-- Text: "...where you must create your own power."
+### Opening: The World (10-15 sec)
+- Dark landscape. Two moons. Voxel creatures in distance.
+- Establish the aesthetic. No text yet, or minimal.
 
-### Scene 3: The AI Conversation (20 seconds)
-- Split screen: game world + chat interface
-- Player types: "Create a fireball spell"
-- AI responds with explanation
-- Spell code appears (briefly visible)
-- Text: "Describe what you want. AI builds it."
+### The Hook (10 sec)
+- Player faces a problem (enemies, obstacle).
+- Quick cut to chat interface. Player types something.
+- Spell appears. Cast. Effect.
+- This should happen fast. Establish the loop: describe, create, cast.
 
-### Scene 4: First Cast (10 seconds)
-- Player casts basic fireball
-- Simple but satisfying explosion
-- Text: "Start simple."
+### The Build (30-40 sec)
+- Iteration montage. Quick cuts.
+- "Make it arc higher" / artillery fires
+- "Split at the top" / cluster rains down
+- "Mix in poison and fire" / elemental combo
+- Each iteration is 5-8 seconds. Show the conversation briefly, then the result.
+- Spells get visually more impressive.
 
-### Scene 5: Iteration Montage (30 seconds)
-- Quick cuts of player refining:
-  - "Make it arc higher" → artillery variant
-  - "Split at the top" → cluster variant
-  - "Mix in poison" → elemental combo
-- Each iteration shows the AI conversation briefly
-- Spells get visually more complex
-- Text: "Iterate. Experiment. Perfect."
+### The Payoff (15-20 sec)
+- Full elemental combo in slow motion.
+- Split. Poison lands. Transformation visible. Fire lands. Ignition.
+- Let it breathe. This is the moment.
 
-### Scene 6: The Payoff (20 seconds)
-- Full elemental combo in action
-- Slow-motion: split, poison lands, transformation, fire lands, ignition
-- Massive damage
-- Text: "Create something no one has ever seen."
+### The Close (10 sec)
+- Signature reveal (optional).
+- Logo. Simple call to action or just end.
 
-### Scene 7: The Signature (10 seconds)
-- Spell signature reveals
-- Zoom into the intricate symbol
-- Text: "Your spell. Your signature. Your magic."
+### Alternative Structures
 
-### Scene 8: Call to Action (5 seconds)
-- Game logo
-- Text: "Become a spell architect."
+**Option A: Single spell focus.** Follow one spell from basic to complex. More narrative, less montage.
 
-**Total runtime:** ~2 minutes
+**Option B: Multiple spells.** Show three different players with three different spell styles. Demonstrates breadth.
+
+**Option C: Problem/solution.** Present a challenge (tough enemy, environmental puzzle), show spell creation as the solution.
+
+Open question: Which structure best sells the fantasy?
 
 ---
 
 ## System Requirements
 
-### Required for Demo
+### For Demo (Minimum)
 
-| System | Purpose | Status |
-|--------|---------|--------|
-| **Spell Module System** | Composable spell behaviors | In design (spell_system.md) |
-| **Lua API** | Spell definition language | In design (spell_system_phase0.md) |
-| **MCP Server** | AI connection to game | Not started |
-| **Projectile Physics** | Fireball flight, gravity, arcs | Partially exists (VoxelFragment) |
-| **Ground Detection** | Impact triggering | In design |
-| **Explosion Effect** | Visual + damage | Not started |
-| **Split Mechanic** | One spell → many | In design |
-| **Elemental System** | Material types, interactions | Not started |
-| **Signature Generator** | Procedural spell insignia | Not started |
-| **Video Capture** | Demo recording | Exists (screenshot system) |
+| System | What It Does | Status |
+|--------|--------------|--------|
+| Spell Module System | Composable behaviors, energy tracking | In design |
+| Lua API | Spell definition, require/extend | In design (phase 0) |
+| MCP Server | AI reads/writes/executes spells | Not started |
+| Projectile Physics | Flight, gravity, collision | Partial (VoxelFragment) |
+| Split Mechanic | One projectile becomes many | In design |
+| Elemental Interactions | Material transforms, damage bonuses | Not started |
+| Visual Effects | Explosions, trails, transformations | Not started |
+| Video Capture | Record demo footage | Exists |
 
-### Required for Full Vision (Post-Demo)
+### For Demo (Nice to Have)
 
-| System | Purpose |
-|--------|---------|
-| Creature Sculpting | 3D body definition |
-| Creature Physics | Movement and locomotion |
-| Creature AI | Procedural animation brain |
-| Spell Package Manager | Import/export spells |
-| Multiplayer | Share spells with others |
-| Spell Marketplace | Trade/sell spell designs |
+| System | What It Does |
+|--------|--------------|
+| Signature Generator | Procedural spell insignia |
+| More Elements | Ice, lightning, water interactions |
+| Sound Design | Audio feedback for spells |
+
+### Post-Demo
+
+| System | What It Does |
+|--------|--------------|
+| Creature Sculpting | Define body shapes |
+| Creature Physics/Animation | Movement, procedural animation |
+| Spell Package Manager | Import/export/share spells |
+| Multiplayer | See others' spells in action |
 
 ---
 
 ## MCP Server Design
 
-### What the AI Needs Access To
+The game runs as an MCP server. An external AI connects and has access to the spell system.
 
-**Read access:**
-- Current spell definitions (Lua source)
-- Spell API documentation
+### AI Capabilities
+
+**Read:**
+- Spell source files
+- API documentation
 - Available modules and their parameters
-- Game state (for context-aware suggestions)
-- Player's spell history
+- Game state (what's in the test environment)
 
-**Write access:**
+**Write:**
 - Create new spell files
-- Modify existing spell files
-- Trigger spell reload
+- Modify existing spells
+- Hot-reload changes
 
-**Execute access:**
-- Cast spells for testing
-- Spawn test targets
+**Execute:**
+- Cast spells
+- Spawn targets
 - Reset test environment
 
-### MCP Tools to Implement
+### Tool Sketch
 
-```typescript
-// Example MCP tool definitions
-
-tools: [
-  {
-    name: "list_spells",
-    description: "List all spells the player has created",
-    parameters: {}
-  },
-  {
-    name: "read_spell",
-    description: "Read the Lua source of a spell",
-    parameters: {
-      spell_name: { type: "string" }
-    }
-  },
-  {
-    name: "create_spell",
-    description: "Create a new spell from Lua source",
-    parameters: {
-      name: { type: "string" },
-      source: { type: "string" },
-      description: { type: "string" }
-    }
-  },
-  {
-    name: "modify_spell",
-    description: "Modify an existing spell",
-    parameters: {
-      spell_name: { type: "string" },
-      new_source: { type: "string" }
-    }
-  },
-  {
-    name: "cast_spell",
-    description: "Cast a spell in the test environment",
-    parameters: {
-      spell_name: { type: "string" },
-      target_position: { type: "object" }
-    }
-  },
-  {
-    name: "get_spell_api_docs",
-    description: "Get documentation for the spell API",
-    parameters: {}
-  },
-  {
-    name: "list_available_modules",
-    description: "List spell modules that can be imported",
-    parameters: {}
-  }
-]
+```
+list_spells          - what spells exist
+read_spell(name)     - get Lua source
+create_spell(name, source)
+modify_spell(name, new_source)
+cast_spell(name, target?)
+get_api_docs         - spell API reference
+list_modules         - available modules to import
 ```
 
-### Conversation Example
+### Example Flow
 
-**Player:** "I want a spell that freezes enemies in place"
+Player: "I want something that freezes enemies"
 
-**AI (using tools):**
-1. Calls `list_available_modules` → sees `stasis`, `ice_damage`, `area_effect`
-2. Calls `get_spell_api_docs` → understands how to compose them
-3. Generates Lua:
+AI checks available modules, sees `stasis`, `ice_damage`, `area_effect`. Generates:
+
 ```lua
-local Projectile = require("spells/base_projectile")
-local Stasis = require("effects/stasis")
-
 return Projectile:new({
     speed = 25,
     element = "ice",
-    on_hit = Stasis:new({
-        duration = 3.0,
-        radius = 0,  -- single target
-        visual = "ice_encase"
-    })
+    on_hit = Stasis:new({ duration = 3.0, radius = 0 })
 })
 ```
-4. Calls `create_spell` with the source
-5. Responds: "I've created an ice bolt that freezes a single target for 3 seconds. Want me to add an area effect so it freezes nearby enemies too?"
 
-**Player:** "Yeah, make it freeze everyone within 5 meters"
+Creates the spell. Player tests. Asks for area effect. AI modifies radius. Iterate.
 
-**AI:**
-1. Calls `modify_spell` with updated radius
-2. Responds: "Done! Now it freezes all enemies within 5 meters of the impact point. The duration is still 3 seconds. Want to test it?"
+The AI handles syntax. The player handles intent and iteration.
 
 ---
 
 ## Elemental Interaction Framework
 
-### Material Types
+This is where depth comes from. Simple elements combine into complex outcomes.
 
-| Material | Properties |
-|----------|------------|
-| Flesh | Default organic, takes poison damage |
-| Wood | Flammable, created by organic transform |
-| Stone | Resistant, can be shattered |
-| Metal | Conductive, reflects some magic |
-| Ice | Melts to water, shatters on impact |
-| Water | Conducts lightning, extinguishes fire |
+### Materials
 
-### Element Interactions
+| Material | Notes |
+|----------|-------|
+| Flesh | Default organic. Can be transformed. |
+| Wood | Flammable. Created by organic transform. |
+| Stone | Resistant. Can shatter. |
+| Metal | Conducts lightning. |
+| Ice | Melts to water. Shatters on impact. |
+| Water | Conducts lightning. Extinguishes fire. |
 
-| Element A | Element B | Result |
-|-----------|-----------|--------|
-| Fire | Wood | Ignition (bonus damage, spreads) |
-| Fire | Ice | Melt (removes ice, creates water) |
-| Fire | Water | Steam (area denial, obscures) |
-| Poison | Flesh | Transform to Wood |
-| Lightning | Water | Conduct (chains to wet targets) |
-| Lightning | Metal | Amplify (bonus damage) |
-| Ice | Water | Freeze (creates ice surface) |
+### Interactions
 
-### Example Combo Chains
+| A | B | Result |
+|---|---|--------|
+| Fire | Wood | Ignition, spreads |
+| Fire | Ice | Melt, creates water |
+| Fire | Water | Steam, obscures |
+| Poison | Flesh | Transform to wood |
+| Lightning | Water | Chain to wet targets |
+| Lightning | Metal | Bonus damage |
+| Ice | Water | Freeze surface |
 
-**The Burn Chain:**
-1. Poison bolt → transforms flesh to wood
-2. Fire bolt → ignites wood (3x damage)
-3. Result: Massive single-target damage
+### Combo Examples
 
-**The Conductor:**
-1. Water splash → wets area
-2. Lightning bolt → chains through wet targets
-3. Result: Multi-target crowd control
+**Burn Chain:** Poison (flesh to wood) then Fire (ignites wood). Single target massive damage.
 
-**The Shatter:**
-1. Ice bolt → freezes target (creates ice shell)
-2. Impact bolt → shatters ice
-3. Result: Massive burst damage to frozen targets
+**Conductor:** Water splash (wets area) then Lightning (chains through wet). Crowd control.
+
+**Shatter:** Ice (freezes, creates shell) then Impact (shatters). Burst damage.
+
+These are the interactions we know about. The system should support discovering new ones through experimentation.
 
 ---
 
 ## Creature System (Secondary Pillar)
 
-### Creation Flow
+Not required for initial demo, but part of the full vision.
 
-1. **Sculpt:** Simple 3D drawing to define body shape
-   - Drag to create limbs
-   - Pinch to define joints
-   - Paint to add features
+### Concept
 
-2. **Physicalize:** System generates physics model
-   - Mass distribution from volume
-   - Joint constraints from shape
-   - Collision mesh from surface
+1. **Sculpt:** Simple 3D drawing defines body shape. Drag limbs, pinch joints.
 
-3. **Animate:** AI generates movement brain
-   - Locomotion style from body type
-   - Procedural animation from physics
-   - Behavior patterns from player hints
+2. **Physicalize:** System generates physics model from shape. Mass, joints, collision.
 
-### Example: Creating a Spider-Thing
+3. **Animate:** AI generates locomotion. Gait from body type, procedural animation from physics.
 
-1. Player sculpts: bulbous body, eight legs, two pincers
-2. System infers: "This is an 8-legged crawler with melee attacks"
-3. AI generates:
-   - Walking gait (alternating leg groups)
-   - Climbing behavior (wall adhesion)
-   - Attack pattern (pincer strike)
-4. Player tests, iterates: "Make it jump"
-5. AI adds: leap behavior, landing recovery
+### Example
+
+Player sculpts: bulbous body, eight legs, pincers.
+System infers: 8-legged crawler.
+AI generates: alternating gait, climbing behavior, pincer attack.
+Player iterates: "Make it jump." AI adds leap behavior.
 
 ### Connection to Spells
 
-Creatures can:
-- Be targets for spell testing
-- Have spell-like abilities (breath weapons, projectiles)
-- React to elemental effects (burn when hit by fire)
-- Be summoned by spells
+Creatures serve as:
+- Targets for spell testing
+- Hosts for spell-like abilities (breath weapons)
+- Entities that react to elemental effects
+- Summons from spells
 
 ---
 
-## Success Metrics for Demo
+## Development Phases (Rough)
 
-### Emotional Response
-- "Holy shit" moment when elemental combo lands
-- Sense of ownership over created spell
-- Desire to create more, experiment further
+This is not a schedule. These are the chunks of work.
 
-### Technical Proof Points
-- AI successfully generates working spell code
-- Spell composition creates emergent gameplay
-- Visual effects match the power fantasy
-
-### Funding Viability
-- Demo shows clear product differentiation
-- AI integration is novel and compelling
-- Path to full game is believable
-
----
-
-## Development Priority
-
-### Phase 1: Minimum Viable Fireball (Weeks 1-2)
-- Basic projectile physics
-- Simple explosion effect
+**Phase 1: Fireball flies**
+- Projectile physics
 - Ground detection
-- Lua spell definition
+- Basic explosion
+- Lua spell definition working
 
-### Phase 2: AI Integration (Weeks 3-4)
-- MCP server setup
-- Basic spell creation via AI
+**Phase 2: AI writes spells**
+- MCP server running
+- AI can create/modify spells
 - Test environment for iteration
 
-### Phase 3: Artillery + Split (Weeks 5-6)
+**Phase 3: Complexity**
 - Arc trajectory
-- Apex detection
-- Split mechanic
+- Apex detection, split mechanic
 - Multiple projectile types
 
-### Phase 4: Elemental Combo (Weeks 7-8)
+**Phase 4: Elements**
 - Material system
-- Element interactions
-- Poison → Wood → Fire chain
+- Elemental interactions
 - Visual effects for transformations
 
-### Phase 5: Polish + Capture (Weeks 9-10)
-- Signature generator
-- Demo environment
-- Video capture
-- Edit and publish
-
-**Total estimated time to demo: 10 weeks**
+**Phase 5: Demo capture**
+- Polish
+- Environment setup
+- Record footage
 
 ---
 
 ## Open Questions
 
-1. **AI Provider:** Which AI service for MCP? Claude? GPT? Local model?
-2. **Signature Style:** What aesthetic for spell insignias?
-3. **Demo Platform:** TikTok? YouTube? Both?
-4. **Creature Priority:** Include in initial demo or save for later?
-5. **Multiplayer Tease:** Show spell sharing in demo?
+- AI provider for MCP: Claude, GPT, local model?
+- Signature aesthetic: runic, geometric, organic?
+- Demo platform: TikTok, YouTube, both?
+- Creatures in initial demo or later?
+- Show spell sharing/multiplayer?
 
 ---
 
-## References
+## Related Documents
 
 - Spell system design: `docs/plans/spell_system.md`
 - Phase 0 details: `docs/plans/spell_system_phase0.md`
 - Visual fidelity: `docs/plans/visual_fidelity_improvements.md`
-- Physics system: `docs/physics/ARCHITECTURE.md`
+- Physics: `docs/physics/ARCHITECTURE.md`
