@@ -659,8 +659,12 @@ fn setup_world(
     config: Res<VoxelWorldAppConfig>,
     mut world_source: ResMut<VoxelWorldSource>,
     mut setup_callback: ResMut<SetupCallback>,
+    scale_config: Option<Res<crate::voxel::VoxelScaleConfig>>,
 ) {
     let config = &config.0;
+
+    // Get voxel scale from resource, or use default (1.0)
+    let voxel_scale = scale_config.map(|c| c.scale).unwrap_or(1.0);
 
     // Load world from source
     let world = match std::mem::replace(&mut world_source.0, WorldSource::Empty) {
@@ -733,6 +737,7 @@ fn setup_world(
         let mut spawn_config = WorldSpawnConfig {
             use_greedy_meshing: config.use_greedy_meshing,
             use_cross_chunk_culling: config.use_cross_chunk_culling,
+            scale_config: crate::voxel::VoxelScaleConfig::new(voxel_scale),
             ..default()
         };
 
@@ -750,9 +755,10 @@ fn setup_world(
         );
 
         println!(
-            "Spawned {} chunk meshes + {} lights",
+            "Spawned {} chunk meshes + {} lights (voxel_scale: {})",
             result.chunk_entities.len(),
-            result.light_entities.len()
+            result.light_entities.len(),
+            voxel_scale
         );
     }
 
