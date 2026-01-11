@@ -1012,268 +1012,152 @@ High-energy spells automatically generate point lights via the existing `extract
 
 ## Implementation Phases
 
-### Phase 0: Minimal Fireball End-to-End
+**IMPORTANT:** Phase 0 has been expanded into its own document with detailed sub-phases.
+See: `docs/plans/spell_system_phase0.md`
 
-**Goal:** A single glowing voxel that moves forward in a straight line. No gravity, no sensors, no explosions. Just: spawn → move → despawn after 3 seconds.
+### Phase 0: Foundation (See spell_system_phase0.md)
 
-**Test Environment:**
-- Simple flat voxel terrain (16x16 platform)
-- Fixed camera looking at the platform
-- Auto-spawns a fireball every 2 seconds from position (0, 5, 8) toward (0, 5, 0)
-- Can run headless or rendered
-- Video capture support for visual verification
+Phase 0 is broken into sub-phases that establish foundational mechanics before any rendering:
 
-**Verification (Measurable):**
+| Sub-Phase | Focus | Tests Without |
+|-----------|-------|---------------|
+| **0A: Lua Mechanics** | MLua setup, custom require, sandboxing, object inheritance | Rendering, game world, spells |
+| **0B: Spell Infrastructure** | Core Rust types, Lua-driven tick, spell composition | Rendering, game world |
+| **0C: World Integration** | Terrain queries, ground sensor, form transformation | Rendering |
+| **0D: Simulation** | Full lifecycle test, energy depletion | Rendering |
+| **0E: Visual Rendering** | Emissive voxels, complete visual fireball | - |
+
+**Key insight:** We do NOT render until 0E. All spell logic is tested via unit tests and simulation before we add visual complexity.
+
+**Critical unknowns resolved in 0A:**
+- Does MLua's `require` work? Can we customize it?
+- Can we sandbox require to block stdlib (io, os)?
+- How do relative imports work?
+- Can Lua objects extend other Lua objects?
+
+**Verification for Phase 0 overall:**
 ```bash
-# Build and run headless test
-cargo test -p studio_spell fireball_straight_line
+# All unit tests pass
+cargo test -p studio_spell
 
-# Test assertions:
-# 1. Spell spawns at (0, 5, 8)
-# 2. After 1.0 seconds at speed 10, spell is at approximately (0, 5, -2) ± 0.1
-# 3. After 3.0 seconds, spell entity is despawned (timeout)
-# 4. Zero panics, zero errors in log
-
-# Visual verification (optional)
-cargo run --example p40_spell_fireball -- --record
-# Creates: screenshots/spell_test/fireball_straight.mp4
-# Verify: glowing voxel moves in straight line, disappears after 3 sec
-```
-
-**Files Created:**
-```
-crates/studio_spell/
-  Cargo.toml
-  src/
-    lib.rs                 # Crate root, exports
-    node.rs                # SpellNode trait
-    tape.rs                # CostTape (minimal - just records, no cost calc yet)
-    spell_object.rs        # SpellObject component
-    systems.rs             # spell_tick_system
-    nodes/
-      mod.rs
-      projectile.rs        # ProjectileNode: velocity integration
-      timeout.rs           # TimeoutNode: despawn after N seconds
-      sequential.rs        # SequentialNode: run children in order
-    plugin.rs              # SpellPlugin for Bevy
-
-examples/
-  p40_spell_fireball.rs    # Test harness
-```
-
-**Pseudocode for Fireball Graph:**
-```
-Fireball = Sequential [
-    Projectile { velocity: Vec3(0, 0, -10) },  // Constant velocity, no gravity
-    Timeout { seconds: 3.0 }                   // Despawn signal after 3 sec
-]
-
-// Projectile.tick(ctx):
-//   ctx.tape.record("Projectile", Physics { description: "velocity_integration" })
-//   ctx.position += ctx.velocity * ctx.dt
-//
-// Timeout.tick(ctx):
-//   if ctx.time_alive >= self.seconds:
-//     ctx.signals.push(SpellSignal::Complete)
-//
-// Sequential.tick(ctx):
-//   for child in children:
-//     child.tick(ctx)
-```
-
-**Tasks:**
-1. Create `crates/studio_spell/Cargo.toml` with bevy dependency
-2. Create `SpellNode` trait in `node.rs` (tick takes `&mut TickContext`, no return)
-3. Create `CostTape` in `tape.rs` (just Vec<CostEntry>, no cost calculation yet)
-4. Create `ProjectileNode` in `nodes/projectile.rs` (integrates velocity)
-5. Create `TimeoutNode` in `nodes/timeout.rs` (emits Complete signal)
-6. Create `SequentialNode` in `nodes/sequential.rs` (runs children)
-7. Create `SpellObject` component in `spell_object.rs`
-8. Create `spell_tick_system` in `systems.rs`
-9. Create `SpellPlugin` in `plugin.rs`
-10. Create `examples/p40_spell_fireball.rs` test harness with video capture
-11. Write unit test `fireball_straight_line` that asserts position after 1 second
-
----
-
-### Phase 1: Add Gravity
-
-**Goal:** Fireball arcs downward due to gravity. Separate test for anti-gravity (straight line despite world gravity).
-
-**Verification:**
-```bash
-cargo test -p studio_spell fireball_with_gravity
-
-# Assertions:
-# 1. With GravityNode, after 1 sec starting at (0, 5, 8) with vel (0, 0, -10):
-#    y position < 5.0 (fell due to gravity)
-#    z position ≈ -2 (still moving forward)
-# 2. With AntiGravityNode canceling gravity:
-#    y position ≈ 5.0 (no vertical change)
-
-cargo run --example p40_spell_fireball -- --gravity --record
-# Video shows arcing trajectory
-```
-
-**Files Modified/Created:**
-```
-crates/studio_spell/src/nodes/
-  gravity.rs       # NEW: GravityNode (applies g * dt to velocity.y)
-  anti_gravity.rs  # NEW: AntiGravityNode (cancels gravity, costs energy)
-```
-
-**Tasks:**
-1. Create `GravityNode` - applies gravity to velocity each tick
-2. Create `AntiGravityNode` - applies upward force equal to gravity
-3. Update test harness with `--gravity` flag
-4. Add unit tests for gravity arc math
-
----
-
-### Phase 2: Ground Collision Sensor
-
-**Goal:** Fireball detects when it hits the terrain and emits a signal.
-
-**Verification:**
-```bash
-cargo test -p studio_spell fireball_ground_hit
-
-# Assertions:
-# 1. Fireball starts at (0, 5, 0), gravity pulls it down
-# 2. Terrain at y=0
-# 3. When position.y <= terrain_height + 0.5, GroundSensor triggers
-# 4. GroundSensor emits TransformTo signal (for now, just Complete)
-# 5. Spell despawns on ground hit, NOT after timeout
-
-cargo run --example p40_spell_fireball -- --gravity --ground-hit --record
-# Video shows: fireball arcs down, hits ground, disappears immediately
-```
-
-**Files Created:**
-```
-crates/studio_spell/src/nodes/
-  ground_sensor.rs  # NEW: queries terrain, emits signal on collision
-```
-
-**Tasks:**
-1. Create `GroundSensorNode` with `on_hit: SpellSignal` parameter
-2. Integrate with `TerrainOccupancy` query in TickContext
-3. Add `--ground-hit` flag to test harness
-4. Unit test for ground detection logic
-
----
-
-### Phase 3: Tape-Based Energy Consumption
-
-**Goal:** Actions cost energy. Spell fizzles if it can't afford a tick.
-
-**Verification:**
-```bash
-cargo test -p studio_spell energy_consumption
-
-# Assertions:
-# 1. Spell starts with 10 energy
-# 2. AntiGravity costs 2 energy/second
-# 3. After 5 seconds, energy = 0, spell fizzles
-# 4. Spell with 100 energy lasts full 50 seconds of anti-gravity
-
-cargo test -p studio_spell insufficient_energy_fizzle
-
-# 1. Spell starts with 1 energy
-# 2. First tick costs 2 energy (anti-gravity)
-# 3. tape.total_cost() > energy_available
-# 4. Spell fizzles immediately with log message
-
-cargo run --example p40_spell_fireball -- --energy=10 --record
-# Video shows: spell flies, then fizzles mid-air when energy runs out
-```
-
-**Files Modified:**
-```
-crates/studio_spell/src/
-  tape.rs          # Add compute_cost() function, cost formulas
-  systems.rs       # Check tape.can_afford() before applying state
-```
-
-**Tasks:**
-1. Implement `CostTape::compute_cost()` with action-type-based formulas
-2. Implement `tape.can_afford(energy)` check in `spell_tick_system`
-3. Add fizzle behavior when can't afford
-4. Add `--energy=N` flag to test harness
-5. Unit tests for cost calculation and fizzle
-
----
-
-### Phase 4: Form Transformation
-
-**Goal:** On ground hit, fireball transforms into explosion form (for now, explosion just logs and despawns).
-
-**Verification:**
-```bash
-cargo test -p studio_spell form_transformation
-
-# Assertions:
-# 1. Fireball with GroundSensor { on_hit: TransformTo(ExplosionNode) }
-# 2. On ground hit, form changes to ExplosionNode
-# 3. ExplosionNode.tick() logs "Explosion at (x, y, z) with E energy"
-# 4. ExplosionNode emits Complete after 1 tick
-
-cargo run --example p40_spell_fireball -- --gravity --explosion --record
-# Video: fireball arcs, hits ground, brief flash (explosion), gone
-```
-
-**Files Created:**
-```
-crates/studio_spell/src/nodes/
-  explosion.rs     # NEW: logs explosion, emits Complete
-```
-
-**Tasks:**
-1. Create `ExplosionNode` (placeholder - just logs and completes)
-2. Update `GroundSensorNode` to take `on_hit: Box<dyn SpellNode>`
-3. Implement signal handling in `spell_tick_system` for `TransformTo`
-4. Unit test for transformation flow
-
----
-
-### Phase 5: Visual Rendering
-
-**Goal:** Spell renders as a glowing emissive voxel. Uses existing deferred renderer.
-
-**Verification:**
-```bash
+# Visual verification (only after 0E)
 cargo run --example p40_spell_fireball -- --rendered --record
-# Video shows: orange glowing voxel moving through scene
-# Bloom visible around the voxel
-# Trail effect (optional, can defer)
-
-# Screenshot test:
-cargo run --example p40_spell_fireball -- --screenshot=spell_glow.png
-# Inspect: voxel is emissive orange, bloom halo visible
+# Video: fireball arcs, hits ground, explodes, disappears
 ```
-
-**Files Created/Modified:**
-```
-crates/studio_spell/src/
-  render.rs        # NEW: SpellVoxelVolume component, spawn mesh
-  systems.rs       # Add mesh spawning on spell creation
-```
-
-**Tasks:**
-1. Create `SpellVoxelVolume` component
-2. Spawn emissive voxel mesh when SpellObject spawns
-3. Update mesh position each tick
-4. Despawn mesh when spell despawns
-5. Test with deferred renderer bloom
 
 ---
 
-### Later Phases (Deferred)
+### Phase 1: Sensors and Tracking
 
-**Phase 6: Lua API** - Expose nodes to Lua for spell definition
-**Phase 7: Package System** - Load spell definitions from files
-**Phase 8: Volume Scaling** - Spell size proportional to energy
-**Phase 9: Advanced Nodes** - Split, Homing, Area effects
+**Goal:** Spells can sense the world - find targets, track entities. This is where we integrate with the game engine in complex ways.
+
+**Why this before more physics?** Homing behavior requires:
+- Querying the world for targets
+- Updating velocity toward target
+- Understanding Lua↔Rust boundary for world queries
+
+This forces us to solve real integration problems.
+
+**Verification:**
+```bash
+cargo test -p studio_spell homing_fireball
+
+# Assertions:
+# 1. HomingFireball extends Fireball (composition works)
+# 2. find_nearest_target() returns mock target position
+# 3. Velocity adjusts toward target over time
+# 4. Spell reaches target (within radius)
+
+cargo run --example p41_homing_test -- --record
+# Video: fireball curves toward target marker
+```
+
+**New Lua API:**
+```lua
+-- In spell tick
+local target = ctx:find_nearest_target("enemy", 50.0)  -- type, max_range
+if target then
+    local dir = (target.position - ctx.position):normalize()
+    ctx:apply_steering(dir, self.turn_rate * ctx.dt)
+end
+```
+
+**Files:**
+```
+crates/studio_spell/src/
+  world/
+    targets.rs        # Target query API
+  lua/
+    world_api.rs      # find_nearest_target binding
+
+assets/scripts/spells/
+  homing_fireball.lua # Extends fireball with homing
+```
+
+---
+
+### Phase 2: Energy and Cost Formulas
+
+**Goal:** Establish the actual cost formulas. Different actions cost different amounts.
+
+**Verification:**
+```bash
+cargo test -p studio_spell cost_formulas
+
+# Assertions:
+# 1. Projectile physics: 0 cost (free)
+# 2. Gravity: 0 cost (free, it's natural)
+# 3. AntiGravity: strength * 2.0 * dt cost
+# 4. Steering: turn_rate * 0.5 * dt cost
+# 5. Sensor query: 0.1 * dt cost
+# 6. Explosion: radius^2 * 5.0 one-time cost
+
+cargo test -p studio_spell spell_cost_tape_report
+# Verify tape.report() prints readable breakdown
+```
+
+---
+
+### Phase 3: Form Transformation (Explosion)
+
+**Goal:** Fireball transforms into explosion on ground hit. Explosion is a different form with different behavior.
+
+**Verification:**
+```bash
+cargo test -p studio_spell explosion_form
+
+# Assertions:
+# 1. Explosion receives energy from fireball
+# 2. Explosion expands over time (radius grows)
+# 3. Expansion costs energy
+# 4. When energy depleted, explosion completes
+```
+
+---
+
+### Phase 4: Split Transformation
+
+**Goal:** One spell becomes multiple spells (e.g., cluster bomb).
+
+**Verification:**
+```bash
+cargo test -p studio_spell split_spell
+
+# Assertions:
+# 1. Original spell has 100 energy
+# 2. Split into 3 child spells
+# 3. Each child has ~33 energy (minus split cost)
+# 4. Children are independent entities
+```
+
+---
+
+### Later Phases
+
+**Phase 5: Visual Polish** - Trails, particles, screen shake
+**Phase 6: Lua Package System** - Import spells from packages
+**Phase 7: Advanced Sensors** - Proximity, line-of-sight, area detection
+**Phase 8: Spell Interactions** - Spells affecting other spells
 
 ---
 
