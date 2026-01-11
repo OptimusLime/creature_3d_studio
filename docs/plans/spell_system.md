@@ -37,33 +37,36 @@ The spell system borrows PyTorch's key abstractions:
 
 ### 1. Spell Objects
 
-A spell object is a physical entity in the voxel world:
+A spell object is a physical entity in the voxel world. Its "state" is simply **where it is in the spell graph** plus **how much energy remains**:
 
-```
-SpellObject {
-    // Physical properties
+```rust
+/// ECS component for a spell in the world
+struct SpellObject {
+    // === The spell's current form (graph position) ===
+    form: Box<dyn SpellNode>,       // Current active node
+    
+    // === Energy (the only "resource") ===
+    energy: f32,                    // Remaining energy
+    
+    // === Physical state of current form ===
     position: Vec3,
     velocity: Vec3,
-    rotation: Quat,
-    angular_velocity: Vec3,
+    mass: f32,                      // Derived from energy * density
     
-    // Energy properties  
-    energy: f32,                    // Current mana/energy
-    max_energy: f32,                // Initial energy budget
-    energy_density: f32,            // Energy per voxel (max ~100)
+    // === Visual ===
+    color: Color,
     
-    // Visual representation
-    voxel_volume: VoxelVolume,      // Emissive voxels forming the spell
-    color: Color,                   // Emission color
-    glow_intensity: f32,            // Bloom factor
-    
-    // Behavior
-    brain: Box<dyn SpellModule>,    // The spell's "neural network"
-    
-    // Lifecycle
-    state: SpellState,              // Active, Fizzling, Exploding, Dead
+    // === Debugging ===
+    last_tape: Option<CostTape>,    // Tape from last tick (for inspection)
 }
 ```
+
+**There is no SpellState enum.** The spell's "state" is:
+- Which node is active (`form`)
+- How much energy remains (`energy`)  
+- Physical properties (`position`, `velocity`, `mass`)
+
+When `energy` reaches 0 or the form signals `Complete`, the spell is done.
 
 **Volume-Energy Relationship:**
 - Each voxel has a maximum energy density (~100 units)
@@ -71,99 +74,149 @@ SpellObject {
 - As energy depletes, voxels are consumed from the outer surface
 - High-power spells are physically larger (can't hide a nuke in a marble)
 
-### 2. Spell Modules
+### 2. Spell Graph and Energy Pointer
 
-Modules are the building blocks of spell behavior. Each module has:
-
-```rust
-trait SpellModule {
-    /// Execute one tick of this module
-    /// Returns the new state and energy consumed
-    fn tick(&mut self, input: SpellState, dt: f32) -> (SpellState, f32);
-    
-    /// Base cost per second to keep this module "loaded"
-    fn base_cost(&self) -> f32;
-    
-    /// Reset module to initial state
-    fn reset(&mut self);
-    
-    /// Human-readable name for debugging
-    fn name(&self) -> &str;
-}
-```
-
-**SpellState** flows through modules like tensors through a neural network:
+A spell's "state" is not an enum. It is:
+1. **Where you are in the graph** (current node/form)
+2. **How much energy/mass remains** at that node
+3. **Physical properties** (position, velocity) of the current form
 
 ```rust
-struct SpellState {
-    // Transform
-    position: Vec3,
-    velocity: Vec3,
-    rotation: Quat,
-    angular_velocity: Vec3,
+/// A spell is energy bound to a form (graph node)
+struct SpellInstance {
+    /// Current form - the active node in the spell graph
+    form: SpellFormRef,
     
-    // Resources
+    /// Energy remaining in this instance
     energy: f32,
     
-    // Sensors
-    ground_distance: Option<f32>,
-    target_distance: Option<f32>,
-    time_alive: f32,
-    
-    // Flags
-    triggered: bool,
-    should_terminate: bool,
+    /// Physical state of the current form
+    position: Vec3,
+    velocity: Vec3,
+    mass: f32,  // Derived from energy via density
+}
+
+/// Reference to a node in the spell graph
+enum SpellFormRef {
+    /// Projectile form - has velocity, affected by physics
+    Projectile { module_idx: usize },
+    /// Effect form - stationary, applies effect over time
+    Effect { module_idx: usize },
+    /// Terminal - spell is complete
+    Exhausted,
 }
 ```
 
-### 3. Module Composition
+**Key insight**: There is no "SpellState" blob passed around. The spell IS the current node plus energy. When a sensor triggers, it tells the parent to transfer energy to a new form:
+
+```
+Example: Fireball with 100 energy
+  1. Enter Sequential, costs 5 → 95 energy remains
+  2. Launch converts 50 energy to mass+velocity → 45 energy cruising as Projectile
+  3. Parallel runs: [GroundSensor, Projectile physics]
+  4. GroundSensor triggers → tells parent to convert remaining energy to Explosion form
+  5. Explosion form receives 45 energy, computes effect from mass/velocity/energy
+  6. Explosion consumes energy over radius expansion → 0 energy → Exhausted
+```
+
+### 3. Spell Modules (Graph Nodes)
+
+Modules are nodes in the spell graph. Each node type has different behavior:
+
+```rust
+/// A node in the spell graph
+trait SpellNode: Send + Sync {
+    /// Execute one tick. Actions are recorded to the tape.
+    /// Does NOT return cost - cost is implicit in tape actions.
+    fn tick(&mut self, ctx: &mut TickContext);
+    
+    /// Reset to initial state
+    fn reset(&mut self);
+    
+    /// Node name for tape/debugging
+    fn name(&self) -> &str;
+}
+
+/// Context passed during tick - includes the tape for recording costs
+struct TickContext<'a> {
+    /// The tape records all actions and their costs
+    tape: &'a mut CostTape,
+    
+    /// Current physical state (read/write)
+    position: &'a mut Vec3,
+    velocity: &'a mut Vec3,
+    
+    /// Energy available (read-only during tick - tape handles consumption)
+    energy_available: f32,
+    
+    /// World queries
+    terrain: &'a TerrainOccupancy,
+    
+    /// Time
+    dt: f32,
+    time_alive: f32,
+    
+    /// Signals from node to parent
+    signals: &'a mut Vec<SpellSignal>,
+}
+
+/// Signals a node can send to its parent
+enum SpellSignal {
+    /// Transfer all remaining energy to a new form
+    TransformTo { target: Box<dyn SpellNode> },
+    /// Split energy among multiple new forms
+    Split { targets: Vec<Box<dyn SpellNode>>, distribution: Vec<f32> },
+    /// This form is complete
+    Complete,
+}
+
+### 4. Node Composition
 
 #### Sequential
-Execute modules in order, each transforms the state:
+All children tick every frame in order:
 
 ```lua
 local fireball = Sequential {
-    Launch { direction = "forward", speed = 20 },
-    ApplyGravity { strength = 0.5 },  -- Half gravity (partially floaty)
-    OnGroundHit { 
-        transform_to = Explosion { radius = 3, damage = 50 }
-    }
+    Projectile {},                    -- Integrates velocity
+    Gravity { strength = 9.8 },       -- Applies gravity
+    GroundSensor {                    -- Watches for ground hit
+        on_hit = Explosion { radius = 3 }
+    },
+    Timeout { seconds = 10 }          -- Fallback despawn
 }
 ```
 
-Execution flow:
+Execution per tick:
 ```
-state_0 -> Launch.tick() -> state_1 -> ApplyGravity.tick() -> state_2 -> OnGroundHit.tick() -> state_3
+Projectile.tick(ctx)  -- position += velocity * dt
+Gravity.tick(ctx)     -- velocity.y -= 9.8 * dt  
+GroundSensor.tick(ctx) -- if hit: signal TransformTo(Explosion)
+Timeout.tick(ctx)      -- if time_alive > 10: signal Complete
 ```
 
 #### Parallel
-Execute multiple module chains simultaneously, merge results:
+Same as Sequential for now - all children tick. Used semantically to indicate "these run together":
 
 ```lua
-local split_bolt = Parallel {
-    -- Branch A: goes left
-    Sequential {
-        Deflect { angle = -30 },
-        ApplyGravity {},
+local floaty_fireball = Sequential {
+    Projectile {},
+    Parallel {
+        Gravity { strength = 9.8 },      -- Pulls down
+        AntiGravity { strength = 9.8 },  -- Pushes up (costs energy!)
+        GroundSensor { on_hit = Explosion { radius = 3 } },
     },
-    -- Branch B: goes right  
-    Sequential {
-        Deflect { angle = 30 },
-        ApplyGravity {},
-    },
-    -- Merge strategy
-    merge = "split"  -- Creates two spell objects
+    Timeout { seconds = 10 },
 }
 ```
 
-#### Conditional (Sensors/Triggers)
-Modules that watch for conditions and transform behavior:
+#### Sensors (Conditional Triggers)
+Sensors check conditions and emit signals:
 
 ```lua
-OnGroundHit { transform_to = explosion }
-OnTimeout { seconds = 5, transform_to = fizzle }
-OnTargetNear { radius = 2, transform_to = detonate }
-WhenEnergyLow { threshold = 10, transform_to = fizzle }
+GroundSensor { on_hit = Explosion { radius = 3 } }  -- TransformTo on ground hit
+Timeout { seconds = 5 }                              -- Complete after 5 sec
+ProximitySensor { radius = 2, on_enter = Detonate {} }
+EnergySensor { below = 10, on_trigger = Fizzle {} }
 ```
 
 ---
@@ -172,27 +225,88 @@ WhenEnergyLow { threshold = 10, transform_to = fizzle }
 
 ### Cost Accounting (The "Tape")
 
-Like PyTorch's autograd tape, we record all operations and their costs:
+Like PyTorch's autograd, **calling forward implies the backward tape**. Costs are NOT returned by tick - they are recorded implicitly by the actions taken.
 
 ```rust
+/// The tape records all actions during a tick
 struct CostTape {
     entries: Vec<CostEntry>,
-    total_cost: f32,
+    frozen: bool,  // Set after tick to prevent modification
 }
 
 struct CostEntry {
-    module_name: String,
-    operation: String,
+    node_name: String,
+    action: CostAction,
     cost: f32,
-    timestamp: f32,
+}
+
+enum CostAction {
+    /// Physics integration (gravity, velocity)
+    Physics { description: &'static str },
+    /// Active force application (thrust, anti-gravity)
+    Force { force_magnitude: f32 },
+    /// Sensor query (ground detection, target search)
+    Sensor { sensor_type: &'static str },
+    /// Form transformation
+    Transform { from: &'static str, to: &'static str },
+}
+
+impl CostTape {
+    /// Record an action - automatically computes cost from action type
+    fn record(&mut self, node: &str, action: CostAction) {
+        let cost = self.compute_cost(&action);
+        self.entries.push(CostEntry { 
+            node_name: node.to_string(), 
+            action, 
+            cost 
+        });
+    }
+    
+    /// Get total cost of all recorded actions
+    fn total_cost(&self) -> f32 {
+        self.entries.iter().map(|e| e.cost).sum()
+    }
+    
+    /// Check if we can afford to execute (call BEFORE applying state changes)
+    fn can_afford(&self, available_energy: f32) -> bool {
+        self.total_cost() <= available_energy
+    }
 }
 ```
 
+### Two-Pass Execution Model
+
+Since cost is implicit in actions, we may need two passes:
+
+```rust
+fn execute_tick(spell: &mut SpellInstance, dt: f32, world: &World) {
+    // Pass 1: Record actions to tape (dry run)
+    let mut tape = CostTape::new();
+    let mut ctx = TickContext::new(&mut tape, spell, world, dt);
+    spell.form.tick(&mut ctx);
+    
+    // Check affordability
+    if !tape.can_afford(spell.energy) {
+        // Can't afford - spell fizzles
+        spell.form = SpellFormRef::Exhausted;
+        log::info!("Spell fizzled: needed {} energy, had {}", 
+                   tape.total_cost(), spell.energy);
+        return;
+    }
+    
+    // Pass 2: Actually apply state changes
+    tape.freeze();
+    spell.energy -= tape.total_cost();
+    apply_recorded_actions(spell, &tape);
+}
+```
+
+**Alternative (simpler)**: For Phase 0, we can use a single pass where actions that exceed energy simply don't execute, and the spell fizzles mid-tick. Optimize to two-pass later if needed.
+
 The tape allows:
-1. **Reporting**: Show player exactly why their spell fizzled
-2. **Optimization**: Identify expensive modules to optimize
-3. **Debugging**: Trace spell behavior step by step
-4. **Balancing**: Game designers can tune costs based on actual usage patterns
+1. **Reporting**: Show player exactly why their spell fizzled ("AntiGravity cost 6.2 energy but you only had 5.1")
+2. **Debugging**: Full trace of spell behavior step by step
+3. **Balancing**: Tune cost formulas in one place (CostTape::compute_cost)
 
 ### Cost Categories
 
@@ -402,34 +516,34 @@ end
 
 ```lua
 -- custom_module.lua: Example custom module
+-- Note: tick does NOT return cost. Actions record to tape implicitly.
 
-local Module = spell.Module
+local Node = spell.Node
 
-local MyHomingModule = Module:extend("MyHomingModule")
+local MyHomingNode = Node:extend("MyHomingNode")
 
-function MyHomingModule:init(params)
+function MyHomingNode:init(params)
     self.turn_rate = params.turn_rate or 5.0
     self.target_type = params.target_type or "nearest_enemy"
 end
 
-function MyHomingModule:tick(state, dt)
-    local target = self:find_target(state.position, self.target_type)
+function MyHomingNode:tick(ctx)
+    -- Recording a sensor query costs energy (implicit via tape)
+    local target = ctx:find_target(self.target_type)
+    
     if target then
-        local to_target = (target.position - state.position):normalize()
-        local current_dir = state.velocity:normalize()
-        local new_dir = current_dir:lerp(to_target, self.turn_rate * dt)
-        state.velocity = new_dir * state.velocity:length()
+        local to_target = (target.position - ctx.position):normalize()
+        local current_dir = ctx.velocity:normalize()
+        
+        -- Applying force costs energy (implicit via tape)
+        local turn_force = self.turn_rate * ctx.dt
+        ctx:apply_steering(to_target, turn_force)
     end
     
-    local cost = self.turn_rate * 0.2 * dt  -- Cost scales with turn rate
-    return state, cost
+    -- No return value - cost is already on the tape
 end
 
-function MyHomingModule:base_cost()
-    return 1.0  -- 1 energy/second just to have homing loaded
-end
-
-return MyHomingModule
+return MyHomingNode
 ```
 
 ### World Interaction API
@@ -576,54 +690,60 @@ crates/
 ### Core Trait (Rust)
 
 ```rust
-// crates/studio_spell/src/module.rs
+// crates/studio_spell/src/node.rs
 
 use bevy::prelude::*;
 
-/// The state flowing through spell modules
-#[derive(Clone, Debug)]
-pub struct SpellState {
-    pub position: Vec3,
-    pub velocity: Vec3,
-    pub rotation: Quat,
-    pub angular_velocity: Vec3,
-    pub energy: f32,
-    pub time_alive: f32,
-    pub ground_distance: Option<f32>,
-    pub triggered: bool,
-    pub should_terminate: bool,
-}
-
-/// Result of a module tick
-pub struct TickResult {
-    pub state: SpellState,
-    pub energy_consumed: f32,
-    pub transformation: Option<Box<dyn SpellModule>>,
-}
-
-/// Core trait for spell modules
-pub trait SpellModule: Send + Sync {
-    /// Execute one tick
-    fn tick(&mut self, state: SpellState, dt: f32, world: &SpellWorld) -> TickResult;
+/// A node in the spell graph. Nodes do NOT return cost - cost is 
+/// recorded to the tape implicitly via actions.
+pub trait SpellNode: Send + Sync {
+    /// Execute one tick. Record actions to ctx.tape.
+    /// Physical state changes go through ctx.
+    /// Signals (transform, split, complete) go to ctx.signals.
+    fn tick(&mut self, ctx: &mut TickContext);
     
-    /// Base energy cost per second
-    fn base_cost(&self) -> f32;
-    
-    /// Reset to initial state
+    /// Reset node to initial state (for reuse)
     fn reset(&mut self);
     
-    /// Module name for debugging/tape
+    /// Node name for tape entries
     fn name(&self) -> &str;
     
     /// Clone into boxed trait object
-    fn box_clone(&self) -> Box<dyn SpellModule>;
+    fn box_clone(&self) -> Box<dyn SpellNode>;
 }
 
-/// World context passed to modules
-pub struct SpellWorld<'w> {
-    pub terrain: &'w TerrainOccupancy,
-    pub targets: &'w Query<'w, 'w, (Entity, &'w Transform), With<Target>>,
-    // ... other world queries
+/// Context for a tick - provides tape, state access, and world queries
+pub struct TickContext<'a> {
+    // === Cost tape (write-only during tick) ===
+    pub tape: &'a mut CostTape,
+    
+    // === Physical state (read/write) ===
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub mass: f32,
+    
+    // === Energy (read-only - tape handles consumption) ===
+    pub energy_available: f32,
+    
+    // === Time ===
+    pub dt: f32,
+    pub time_alive: f32,
+    
+    // === World queries ===
+    pub terrain: &'a TerrainOccupancy,
+    
+    // === Output signals ===
+    pub signals: Vec<SpellSignal>,
+}
+
+/// Signals a node can emit
+pub enum SpellSignal {
+    /// Transfer all energy to a new form
+    TransformTo(Box<dyn SpellNode>),
+    /// Split into multiple forms
+    Split { targets: Vec<Box<dyn SpellNode>>, weights: Vec<f32> },
+    /// This form is complete (spell ends)
+    Complete,
 }
 ```
 
@@ -637,11 +757,25 @@ use bevy::prelude::*;
 /// ECS component for a spell object
 #[derive(Component)]
 pub struct SpellObject {
-    pub brain: Box<dyn SpellModule>,
-    pub state: SpellState,
-    pub voxel_entity: Entity,
+    /// Current form (graph node)
+    pub form: Box<dyn SpellNode>,
+    
+    /// Energy remaining
+    pub energy: f32,
+    
+    /// Physical state
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub mass: f32,
+    
+    /// Timing
+    pub time_alive: f32,
+    
+    /// Visual
     pub color: Color,
-    pub tape: CostTape,
+    
+    /// Debug: last tick's tape
+    pub last_tape: Option<CostTape>,
 }
 
 /// Resource for spell definitions
@@ -652,7 +786,7 @@ pub struct SpellRegistry {
 
 pub struct SpellDefinition {
     pub name: String,
-    pub create_brain: fn() -> Box<dyn SpellModule>,
+    pub create_form: fn() -> Box<dyn SpellNode>,
     pub default_energy: f32,
     pub default_color: Color,
 }
@@ -665,101 +799,100 @@ pub struct SpellDefinition {
 
 /// Main spell simulation system
 pub fn spell_tick_system(
-    mut spells: Query<(&mut SpellObject, &mut Transform)>,
+    mut commands: Commands,
+    mut spells: Query<(Entity, &mut SpellObject, &mut Transform)>,
     terrain: Res<TerrainOccupancy>,
-    targets: Query<(Entity, &Transform), With<Target>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
     
-    for (mut spell, mut transform) in spells.iter_mut() {
-        // Update sensor data
-        spell.state.ground_distance = compute_ground_distance(
-            spell.state.position, 
-            &terrain
-        );
-        spell.state.time_alive += dt;
+    for (entity, mut spell, mut transform) in spells.iter_mut() {
+        // Create fresh tape for this tick
+        let mut tape = CostTape::new();
         
-        // Build world context
-        let world = SpellWorld {
+        // Build tick context
+        let mut ctx = TickContext {
+            tape: &mut tape,
+            position: spell.position,
+            velocity: spell.velocity,
+            mass: spell.mass,
+            energy_available: spell.energy,
+            dt,
+            time_alive: spell.time_alive,
             terrain: &terrain,
-            targets: &targets,
+            signals: Vec::new(),
         };
         
-        // Execute brain
-        let result = spell.brain.tick(spell.state.clone(), dt, &world);
+        // Execute current form - actions record to tape
+        spell.form.tick(&mut ctx);
         
-        // Record cost
-        spell.tape.record(spell.brain.name(), result.energy_consumed);
+        // Check if we can afford the tick
+        let cost = tape.total_cost();
+        if cost > spell.energy {
+            // Fizzle - can't afford
+            log::debug!("Spell fizzled: cost {} > energy {}", cost, spell.energy);
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
         
-        // Apply result
-        spell.state = result.state;
-        spell.state.energy -= result.energy_consumed;
+        // Apply results
+        spell.energy -= cost;
+        spell.position = ctx.position;
+        spell.velocity = ctx.velocity;
+        spell.mass = ctx.mass;
+        spell.time_alive += dt;
+        spell.last_tape = Some(tape);
         
         // Update transform
-        transform.translation = spell.state.position;
-        transform.rotation = spell.state.rotation;
+        transform.translation = spell.position;
         
-        // Handle transformation
-        if let Some(new_brain) = result.transformation {
-            spell.brain = new_brain;
-            spell.brain.reset();
+        // Handle signals
+        for signal in ctx.signals {
+            match signal {
+                SpellSignal::TransformTo(new_form) => {
+                    spell.form = new_form;
+                }
+                SpellSignal::Complete => {
+                    commands.entity(entity).despawn_recursive();
+                }
+                SpellSignal::Split { targets, weights } => {
+                    // Spawn new spell entities for each target
+                    // (implementation in spawn_split_spells helper)
+                }
+            }
         }
         
-        // Check death conditions
-        if spell.state.energy <= 0.0 || spell.state.should_terminate {
-            spell.state.should_terminate = true;
-        }
-    }
-}
-
-/// Resize spell voxel volume based on remaining energy
-pub fn spell_volume_system(
-    mut spells: Query<(&SpellObject, &mut VoxelVolume)>,
-) {
-    for (spell, mut volume) in spells.iter_mut() {
-        let target_voxels = (spell.state.energy / MAX_ENERGY_DENSITY).ceil() as usize;
-        volume.resize_to(target_voxels.max(1));
-    }
-}
-
-/// Remove dead spells
-pub fn spell_cleanup_system(
-    mut commands: Commands,
-    spells: Query<(Entity, &SpellObject)>,
-) {
-    for (entity, spell) in spells.iter() {
-        if spell.state.should_terminate {
+        // Check energy exhaustion
+        if spell.energy <= 0.0 {
             commands.entity(entity).despawn_recursive();
         }
     }
 }
 ```
 
-### Lua Bindings
+### Lua Bindings (Phase 6 - Deferred)
 
 ```rust
 // crates/studio_spell/src/lua_api.rs
+// NOTE: This is Phase 6, not needed for initial implementation
 
 use mlua::prelude::*;
 
 pub fn register_spell_api(lua: &Lua) -> LuaResult<()> {
     let spell = lua.create_table()?;
     
-    // Module constructors
+    // Node constructors - return boxed SpellNode
     spell.set("Sequential", lua.create_function(create_sequential)?)?;
     spell.set("Parallel", lua.create_function(create_parallel)?)?;
-    spell.set("Launch", lua.create_function(create_launch)?)?;
+    spell.set("Projectile", lua.create_function(create_projectile)?)?;
+    spell.set("Gravity", lua.create_function(create_gravity)?)?;
     spell.set("AntiGravity", lua.create_function(create_anti_gravity)?)?;
-    spell.set("ApplyGravity", lua.create_function(create_apply_gravity)?)?;
-    spell.set("OnGroundHit", lua.create_function(create_on_ground_hit)?)?;
+    spell.set("GroundSensor", lua.create_function(create_ground_sensor)?)?;
+    spell.set("Timeout", lua.create_function(create_timeout)?)?;
     spell.set("Explosion", lua.create_function(create_explosion)?)?;
-    // ... etc
     
-    // Registration
+    // Registration and casting
     spell.set("register", lua.create_function(register_spell)?)?;
-    
-    // Casting
     spell.set("cast", lua.create_function(cast_spell)?)?;
     
     lua.globals().set("spell", spell)?;
@@ -768,18 +901,19 @@ pub fn register_spell_api(lua: &Lua) -> LuaResult<()> {
 
 fn create_sequential<'lua>(
     lua: &'lua Lua,
-    modules: LuaTable<'lua>,
+    children: LuaTable<'lua>,
 ) -> LuaResult<LuaAnyUserData<'lua>> {
-    let mut children: Vec<Box<dyn SpellModule>> = Vec::new();
+    let mut nodes: Vec<Box<dyn SpellNode>> = Vec::new();
     
-    for pair in modules.pairs::<i32, LuaAnyUserData>() {
+    for pair in children.pairs::<i32, LuaAnyUserData>() {
         let (_, ud) = pair?;
-        let module: &LuaSpellModule = ud.borrow()?;
-        children.push(module.inner.box_clone());
+        let node: &LuaSpellNode = ud.borrow()?;
+        nodes.push(node.inner.box_clone());
     }
     
-    let sequential = Sequential::new(children);
-    lua.create_userdata(LuaSpellModule { inner: Box::new(sequential) })
+    lua.create_userdata(LuaSpellNode { 
+        inner: Box::new(SequentialNode { children: nodes }) 
+    })
 }
 ```
 
@@ -878,176 +1012,572 @@ High-energy spells automatically generate point lights via the existing `extract
 
 ## Implementation Phases
 
-### Phase 0: Test Harness
+### Phase 0: Minimal Fireball End-to-End
 
-**Outcome:** A dedicated test example that spawns spell objects and verifies basic behavior.
+**Goal:** A single glowing voxel that moves forward in a straight line. No gravity, no sensors, no explosions. Just: spawn → move → despawn after 3 seconds.
 
-**Verification:**
+**Test Environment:**
+- Simple flat voxel terrain (16x16 platform)
+- Fixed camera looking at the platform
+- Auto-spawns a fireball every 2 seconds from position (0, 5, 8) toward (0, 5, 0)
+- Can run headless or rendered
+- Video capture support for visual verification
+
+**Verification (Measurable):**
 ```bash
-cargo run --example p40_spell_test
-# Spell spawns, moves forward, hits ground, prints "explosion triggered"
+# Build and run headless test
+cargo test -p studio_spell fireball_straight_line
+
+# Test assertions:
+# 1. Spell spawns at (0, 5, 8)
+# 2. After 1.0 seconds at speed 10, spell is at approximately (0, 5, -2) ± 0.1
+# 3. After 3.0 seconds, spell entity is despawned (timeout)
+# 4. Zero panics, zero errors in log
+
+# Visual verification (optional)
+cargo run --example p40_spell_fireball -- --record
+# Creates: screenshots/spell_test/fireball_straight.mp4
+# Verify: glowing voxel moves in straight line, disappears after 3 sec
+```
+
+**Files Created:**
+```
+crates/studio_spell/
+  Cargo.toml
+  src/
+    lib.rs                 # Crate root, exports
+    node.rs                # SpellNode trait
+    tape.rs                # CostTape (minimal - just records, no cost calc yet)
+    spell_object.rs        # SpellObject component
+    systems.rs             # spell_tick_system
+    nodes/
+      mod.rs
+      projectile.rs        # ProjectileNode: velocity integration
+      timeout.rs           # TimeoutNode: despawn after N seconds
+      sequential.rs        # SequentialNode: run children in order
+    plugin.rs              # SpellPlugin for Bevy
+
+examples/
+  p40_spell_fireball.rs    # Test harness
+```
+
+**Pseudocode for Fireball Graph:**
+```
+Fireball = Sequential [
+    Projectile { velocity: Vec3(0, 0, -10) },  // Constant velocity, no gravity
+    Timeout { seconds: 3.0 }                   // Despawn signal after 3 sec
+]
+
+// Projectile.tick(ctx):
+//   ctx.tape.record("Projectile", Physics { description: "velocity_integration" })
+//   ctx.position += ctx.velocity * ctx.dt
+//
+// Timeout.tick(ctx):
+//   if ctx.time_alive >= self.seconds:
+//     ctx.signals.push(SpellSignal::Complete)
+//
+// Sequential.tick(ctx):
+//   for child in children:
+//     child.tick(ctx)
 ```
 
 **Tasks:**
-1. Create `crates/studio_spell/` crate structure
-2. Create `examples/p40_spell_test.rs`
-3. Minimal `SpellObject` component
-4. Minimal `spell_tick_system`
+1. Create `crates/studio_spell/Cargo.toml` with bevy dependency
+2. Create `SpellNode` trait in `node.rs` (tick takes `&mut TickContext`, no return)
+3. Create `CostTape` in `tape.rs` (just Vec<CostEntry>, no cost calculation yet)
+4. Create `ProjectileNode` in `nodes/projectile.rs` (integrates velocity)
+5. Create `TimeoutNode` in `nodes/timeout.rs` (emits Complete signal)
+6. Create `SequentialNode` in `nodes/sequential.rs` (runs children)
+7. Create `SpellObject` component in `spell_object.rs`
+8. Create `spell_tick_system` in `systems.rs`
+9. Create `SpellPlugin` in `plugin.rs`
+10. Create `examples/p40_spell_fireball.rs` test harness with video capture
+11. Write unit test `fireball_straight_line` that asserts position after 1 second
 
-### Phase 1: Core Module Trait
+---
 
-**Outcome:** `SpellModule` trait defined with `tick()`, `base_cost()`, `reset()`.
+### Phase 1: Add Gravity
 
-**Verification:**
-```bash
-cargo test -p studio_spell module_trait
-# Tests pass for trait implementation
-```
-
-**Tasks:**
-1. Define `SpellState` struct
-2. Define `SpellModule` trait
-3. Implement `Sequential` module
-4. Unit tests for sequential execution
-
-### Phase 2: Physics Modules
-
-**Outcome:** Basic physics modules: `Launch`, `ApplyGravity`, `AntiGravity`, `Thrust`.
+**Goal:** Fireball arcs downward due to gravity. Separate test for anti-gravity (straight line despite world gravity).
 
 **Verification:**
 ```bash
-cargo run --example p40_spell_test
-# Spell launches forward, arcs due to gravity, reaches ground
+cargo test -p studio_spell fireball_with_gravity
+
+# Assertions:
+# 1. With GravityNode, after 1 sec starting at (0, 5, 8) with vel (0, 0, -10):
+#    y position < 5.0 (fell due to gravity)
+#    z position ≈ -2 (still moving forward)
+# 2. With AntiGravityNode canceling gravity:
+#    y position ≈ 5.0 (no vertical change)
+
+cargo run --example p40_spell_fireball -- --gravity --record
+# Video shows arcing trajectory
+```
+
+**Files Modified/Created:**
+```
+crates/studio_spell/src/nodes/
+  gravity.rs       # NEW: GravityNode (applies g * dt to velocity.y)
+  anti_gravity.rs  # NEW: AntiGravityNode (cancels gravity, costs energy)
 ```
 
 **Tasks:**
-1. Implement `Launch` module
-2. Implement `ApplyGravity` module
-3. Implement `AntiGravity` module
-4. Implement `Thrust` module
-5. Visual test with trajectory
+1. Create `GravityNode` - applies gravity to velocity each tick
+2. Create `AntiGravityNode` - applies upward force equal to gravity
+3. Update test harness with `--gravity` flag
+4. Add unit tests for gravity arc math
 
-### Phase 3: Sensor Modules
+---
 
-**Outcome:** Sensor modules that detect conditions: `OnGroundHit`, `OnTimeout`, `OnTargetNear`.
+### Phase 2: Ground Collision Sensor
+
+**Goal:** Fireball detects when it hits the terrain and emits a signal.
 
 **Verification:**
 ```bash
-cargo run --example p40_spell_test
-# Spell detects ground hit, triggers transformation
+cargo test -p studio_spell fireball_ground_hit
+
+# Assertions:
+# 1. Fireball starts at (0, 5, 0), gravity pulls it down
+# 2. Terrain at y=0
+# 3. When position.y <= terrain_height + 0.5, GroundSensor triggers
+# 4. GroundSensor emits TransformTo signal (for now, just Complete)
+# 5. Spell despawns on ground hit, NOT after timeout
+
+cargo run --example p40_spell_fireball -- --gravity --ground-hit --record
+# Video shows: fireball arcs down, hits ground, disappears immediately
+```
+
+**Files Created:**
+```
+crates/studio_spell/src/nodes/
+  ground_sensor.rs  # NEW: queries terrain, emits signal on collision
 ```
 
 **Tasks:**
-1. Implement `OnGroundHit` sensor
-2. Implement `OnTimeout` sensor
-3. Implement `OnTargetNear` sensor
-4. Integrate with terrain query
+1. Create `GroundSensorNode` with `on_hit: SpellSignal` parameter
+2. Integrate with `TerrainOccupancy` query in TickContext
+3. Add `--ground-hit` flag to test harness
+4. Unit test for ground detection logic
 
-### Phase 4: Transformation Modules
+---
 
-**Outcome:** Modules that transform spells: `Explosion`, `Split`, `Fizzle`.
+### Phase 3: Tape-Based Energy Consumption
+
+**Goal:** Actions cost energy. Spell fizzles if it can't afford a tick.
 
 **Verification:**
 ```bash
-cargo run --example p40_spell_test
-# Spell hits ground, transforms to explosion, explosion completes
+cargo test -p studio_spell energy_consumption
+
+# Assertions:
+# 1. Spell starts with 10 energy
+# 2. AntiGravity costs 2 energy/second
+# 3. After 5 seconds, energy = 0, spell fizzles
+# 4. Spell with 100 energy lasts full 50 seconds of anti-gravity
+
+cargo test -p studio_spell insufficient_energy_fizzle
+
+# 1. Spell starts with 1 energy
+# 2. First tick costs 2 energy (anti-gravity)
+# 3. tape.total_cost() > energy_available
+# 4. Spell fizzles immediately with log message
+
+cargo run --example p40_spell_fireball -- --energy=10 --record
+# Video shows: spell flies, then fizzles mid-air when energy runs out
+```
+
+**Files Modified:**
+```
+crates/studio_spell/src/
+  tape.rs          # Add compute_cost() function, cost formulas
+  systems.rs       # Check tape.can_afford() before applying state
 ```
 
 **Tasks:**
-1. Implement `Explosion` transformation
-2. Implement `Split` transformation
-3. Implement `Fizzle` termination
-4. Handle brain swapping
+1. Implement `CostTape::compute_cost()` with action-type-based formulas
+2. Implement `tape.can_afford(energy)` check in `spell_tick_system`
+3. Add fizzle behavior when can't afford
+4. Add `--energy=N` flag to test harness
+5. Unit tests for cost calculation and fizzle
 
-### Phase 5: Energy System
+---
 
-**Outcome:** Energy consumption, voxel volume scaling, spell death on energy depletion.
+### Phase 4: Form Transformation
+
+**Goal:** On ground hit, fireball transforms into explosion form (for now, explosion just logs and despawns).
 
 **Verification:**
 ```bash
-cargo run --example p41_spell_energy_test
-# Spell shrinks over time, fizzles when energy depleted
+cargo test -p studio_spell form_transformation
+
+# Assertions:
+# 1. Fireball with GroundSensor { on_hit: TransformTo(ExplosionNode) }
+# 2. On ground hit, form changes to ExplosionNode
+# 3. ExplosionNode.tick() logs "Explosion at (x, y, z) with E energy"
+# 4. ExplosionNode emits Complete after 1 tick
+
+cargo run --example p40_spell_fireball -- --gravity --explosion --record
+# Video: fireball arcs, hits ground, brief flash (explosion), gone
+```
+
+**Files Created:**
+```
+crates/studio_spell/src/nodes/
+  explosion.rs     # NEW: logs explosion, emits Complete
 ```
 
 **Tasks:**
-1. Implement energy consumption in tick
-2. Implement `CostTape` recording
-3. Implement volume resize system
-4. Implement energy depletion fizzle
+1. Create `ExplosionNode` (placeholder - just logs and completes)
+2. Update `GroundSensorNode` to take `on_hit: Box<dyn SpellNode>`
+3. Implement signal handling in `spell_tick_system` for `TransformTo`
+4. Unit test for transformation flow
 
-### Phase 6: Lua API
+---
 
-**Outcome:** Lua bindings for defining and casting spells.
+### Phase 5: Visual Rendering
+
+**Goal:** Spell renders as a glowing emissive voxel. Uses existing deferred renderer.
 
 **Verification:**
-```lua
--- Test script
-local fireball = spell.Sequential {
-    spell.Launch { speed = 20 },
-    spell.OnGroundHit { transform_to = spell.Explosion { radius = 3 } }
+```bash
+cargo run --example p40_spell_fireball -- --rendered --record
+# Video shows: orange glowing voxel moving through scene
+# Bloom visible around the voxel
+# Trail effect (optional, can defer)
+
+# Screenshot test:
+cargo run --example p40_spell_fireball -- --screenshot=spell_glow.png
+# Inspect: voxel is emissive orange, bloom halo visible
+```
+
+**Files Created/Modified:**
+```
+crates/studio_spell/src/
+  render.rs        # NEW: SpellVoxelVolume component, spawn mesh
+  systems.rs       # Add mesh spawning on spell creation
+```
+
+**Tasks:**
+1. Create `SpellVoxelVolume` component
+2. Spawn emissive voxel mesh when SpellObject spawns
+3. Update mesh position each tick
+4. Despawn mesh when spell despawns
+5. Test with deferred renderer bloom
+
+---
+
+### Later Phases (Deferred)
+
+**Phase 6: Lua API** - Expose nodes to Lua for spell definition
+**Phase 7: Package System** - Load spell definitions from files
+**Phase 8: Volume Scaling** - Spell size proportional to energy
+**Phase 9: Advanced Nodes** - Split, Homing, Area effects
+
+---
+
+## Early End-to-End: Fireball Flow
+
+This section provides complete pseudocode for the minimal fireball implementation (Phases 0-2).
+
+### Required Objects
+
+```rust
+// === Core Types ===
+
+struct CostTape {
+    entries: Vec<CostEntry>,
 }
-spell.register("fireball", fireball)
-spell.cast("fireball", { position = Vec3(0, 5, 0) })
+struct CostEntry {
+    node: String,
+    action: String,
+    cost: f32,
+}
+
+struct TickContext<'a> {
+    tape: &'a mut CostTape,
+    position: Vec3,
+    velocity: Vec3,
+    energy_available: f32,
+    dt: f32,
+    time_alive: f32,
+    terrain: &'a TerrainOccupancy,
+    signals: Vec<SpellSignal>,
+}
+
+enum SpellSignal {
+    TransformTo(Box<dyn SpellNode>),
+    Complete,
+}
+
+trait SpellNode: Send + Sync {
+    fn tick(&mut self, ctx: &mut TickContext);
+    fn name(&self) -> &str;
+}
+
+// === Node Implementations ===
+
+struct ProjectileNode;  // Just integrates velocity
+
+impl SpellNode for ProjectileNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        ctx.tape.record("Projectile", "velocity_integration", 0.0);
+        ctx.position += ctx.velocity * ctx.dt;
+    }
+    fn name(&self) -> &str { "Projectile" }
+}
+
+struct GravityNode { strength: f32 }
+
+impl SpellNode for GravityNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        ctx.tape.record("Gravity", "apply_gravity", 0.0);  // Free
+        ctx.velocity.y -= self.strength * ctx.dt;
+    }
+    fn name(&self) -> &str { "Gravity" }
+}
+
+struct AntiGravityNode { strength: f32 }
+
+impl SpellNode for AntiGravityNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        let cost = self.strength * 2.0 * ctx.dt;  // 2 energy/sec per unit strength
+        ctx.tape.record("AntiGravity", "counter_gravity", cost);
+        ctx.velocity.y += self.strength * ctx.dt;
+    }
+    fn name(&self) -> &str { "AntiGravity" }
+}
+
+struct TimeoutNode { seconds: f32 }
+
+impl SpellNode for TimeoutNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        if ctx.time_alive >= self.seconds {
+            ctx.signals.push(SpellSignal::Complete);
+        }
+    }
+    fn name(&self) -> &str { "Timeout" }
+}
+
+struct GroundSensorNode { 
+    threshold: f32,
+    on_hit: Option<Box<dyn SpellNode>>,
+}
+
+impl SpellNode for GroundSensorNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        ctx.tape.record("GroundSensor", "query_terrain", 0.1 * ctx.dt);
+        
+        let ground_y = ctx.terrain.height_at(ctx.position.x, ctx.position.z);
+        if ctx.position.y <= ground_y + self.threshold {
+            if let Some(target) = self.on_hit.take() {
+                ctx.signals.push(SpellSignal::TransformTo(target));
+            } else {
+                ctx.signals.push(SpellSignal::Complete);
+            }
+        }
+    }
+    fn name(&self) -> &str { "GroundSensor" }
+}
+
+struct SequentialNode { children: Vec<Box<dyn SpellNode>> }
+
+impl SpellNode for SequentialNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        for child in &mut self.children {
+            child.tick(ctx);
+        }
+    }
+    fn name(&self) -> &str { "Sequential" }
+}
+
+struct ParallelNode { children: Vec<Box<dyn SpellNode>> }
+
+impl SpellNode for ParallelNode {
+    fn tick(&mut self, ctx: &mut TickContext) {
+        // Same as sequential for now - all run each tick
+        for child in &mut self.children {
+            child.tick(ctx);
+        }
+    }
+    fn name(&self) -> &str { "Parallel" }
+}
 ```
 
-**Tasks:**
-1. Create `lua_api.rs` with MLua bindings
-2. Implement module constructors
-3. Implement `spell.register()`
-4. Implement `spell.cast()`
-5. Hot-reload support
+### Fireball Graph Construction
 
-### Phase 7: Rendering Integration
+```rust
+// Fireball with gravity, ground detection, explosion on hit
+fn create_fireball(direction: Vec3, speed: f32) -> Box<dyn SpellNode> {
+    Box::new(SequentialNode {
+        children: vec![
+            // Initial velocity
+            Box::new(ProjectileNode),
+            
+            // Physics + sensors run in parallel
+            Box::new(ParallelNode {
+                children: vec![
+                    Box::new(GravityNode { strength: 9.8 }),
+                    Box::new(GroundSensorNode {
+                        threshold: 0.5,
+                        on_hit: Some(Box::new(ExplosionNode { radius: 3.0 })),
+                    }),
+                ],
+            }),
+            
+            // Fallback timeout
+            Box::new(TimeoutNode { seconds: 10.0 }),
+        ],
+    })
+}
 
-**Outcome:** Spells render as emissive voxel volumes with trails.
-
-**Verification:**
-```bash
-cargo run --example p42_spell_visual_test
-# Spell visible as glowing orb, leaves trail
+// Anti-gravity fireball (straight line)
+fn create_floaty_fireball(direction: Vec3, speed: f32) -> Box<dyn SpellNode> {
+    Box::new(SequentialNode {
+        children: vec![
+            Box::new(ProjectileNode),
+            Box::new(ParallelNode {
+                children: vec![
+                    Box::new(GravityNode { strength: 9.8 }),
+                    Box::new(AntiGravityNode { strength: 9.8 }),  // Cancels gravity
+                    Box::new(GroundSensorNode {
+                        threshold: 0.5,
+                        on_hit: Some(Box::new(ExplosionNode { radius: 3.0 })),
+                    }),
+                ],
+            }),
+            Box::new(TimeoutNode { seconds: 10.0 }),
+        ],
+    })
+}
 ```
 
-**Tasks:**
-1. Implement `SpellVoxelVolume` component
-2. Integrate with deferred renderer
-3. Implement trail particle system
-4. Volume shape generation
+### Main Tick Loop
 
-### Phase 8: Package System
-
-**Outcome:** Package loading from filesystem, manifest parsing, dependency resolution.
-
-**Verification:**
-```bash
-# Create test package
-mkdir -p assets/spells/test_package
-# Create manifest.lua and modules
-cargo run --example p43_package_test
-# Package loads, spell available
+```rust
+fn spell_tick_system(
+    mut commands: Commands,
+    mut spells: Query<(Entity, &mut SpellObject, &mut Transform)>,
+    terrain: Res<TerrainOccupancy>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    
+    for (entity, mut spell, mut transform) in spells.iter_mut() {
+        spell.time_alive += dt;
+        
+        // Fresh tape for this tick
+        let mut tape = CostTape::new();
+        
+        // Build context
+        let mut ctx = TickContext {
+            tape: &mut tape,
+            position: spell.position,
+            velocity: spell.velocity,
+            energy_available: spell.energy,
+            dt,
+            time_alive: spell.time_alive,
+            terrain: &terrain,
+            signals: Vec::new(),
+        };
+        
+        // Run the spell graph
+        spell.form.tick(&mut ctx);
+        
+        // Check if we can afford it
+        let total_cost = tape.total_cost();
+        if total_cost > spell.energy {
+            // Fizzle
+            println!("Spell fizzled: needed {}, had {}", total_cost, spell.energy);
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+        
+        // Apply state changes
+        spell.energy -= total_cost;
+        spell.position = ctx.position;
+        spell.velocity = ctx.velocity;
+        transform.translation = spell.position;
+        
+        // Process signals
+        for signal in ctx.signals {
+            match signal {
+                SpellSignal::TransformTo(new_form) => {
+                    spell.form = new_form;
+                }
+                SpellSignal::Complete => {
+                    commands.entity(entity).despawn_recursive();
+                }
+            }
+        }
+    }
+}
 ```
 
-**Tasks:**
-1. Design manifest format
-2. Implement package loader
-3. Implement dependency resolver
-4. Implement `spell install` command
+### Test Harness Structure
 
-### Phase 9: Example Spells
+```rust
+// examples/p40_spell_fireball.rs
 
-**Outcome:** Suite of example spells demonstrating system capabilities.
+fn main() {
+    let args = Args::parse();
+    
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(SpellPlugin)
+        .add_plugins(if args.headless {
+            HeadlessPlugin
+        } else {
+            RenderPlugin
+        })
+        .insert_resource(TestConfig {
+            spawn_interval: 2.0,
+            use_gravity: args.gravity,
+            use_ground_hit: args.ground_hit,
+            record_video: args.record,
+            initial_energy: args.energy.unwrap_or(100.0),
+        })
+        .add_systems(Startup, setup_test_scene)
+        .add_systems(Update, spawn_fireballs)
+        .add_systems(Update, record_video.run_if(|c: Res<TestConfig>| c.record_video))
+        .run();
+}
 
-**Verification:**
-```bash
-cargo run --example p44_spell_gallery
-# Interactive gallery of example spells
+fn setup_test_scene(mut commands: Commands) {
+    // 16x16 flat terrain at y=0
+    // Camera at (0, 10, 20) looking at origin
+}
+
+fn spawn_fireballs(
+    mut commands: Commands,
+    time: Res<Time>,
+    config: Res<TestConfig>,
+    mut timer: Local<f32>,
+) {
+    *timer += time.delta_secs();
+    if *timer >= config.spawn_interval {
+        *timer = 0.0;
+        
+        let form = if config.use_gravity {
+            create_fireball(Vec3::NEG_Z, 10.0)
+        } else {
+            create_floaty_fireball(Vec3::NEG_Z, 10.0)
+        };
+        
+        commands.spawn(SpellObject {
+            form,
+            energy: config.initial_energy,
+            position: Vec3::new(0.0, 5.0, 8.0),
+            velocity: Vec3::new(0.0, 0.0, -10.0),
+            mass: 1.0,
+            time_alive: 0.0,
+            color: Color::ORANGE,
+            last_tape: None,
+        });
+    }
+}
 ```
-
-**Tasks:**
-1. Fireball (basic projectile)
-2. Ice spike (ground-targeting)
-3. Chain lightning (target-chaining)
-4. Meteor (high-energy, large volume)
-5. Shield (defensive, area effect)
 
 ---
 
