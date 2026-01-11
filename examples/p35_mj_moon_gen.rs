@@ -1,13 +1,13 @@
 //! Phase 35: MarkovJunior Moon Texture Generator
 //!
 //! Generates stylized moon textures using MarkovJunior.
-//! Creates shattered/crushed moon appearance for dual-moon sky.
+//! Creates cratered moon appearance with circles-in-circles approach.
 //!
 //! Run: cargo run --example p35_mj_moon_gen
 //!
 //! Output:
-//!   - assets/textures/generated/mj_moon_purple.png (shattered style)
-//!   - assets/textures/generated/mj_moon_orange.png (crushed style)
+//!   - assets/textures/generated/mj_moon_purple.png (cratered purple moon)
+//!   - assets/textures/generated/mj_moon_orange.png (cratered orange moon)
 
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::path::Path;
@@ -27,22 +27,22 @@ fn main() {
     // Ensure output directory exists
     std::fs::create_dir_all(OUTPUT_DIR).expect("Failed to create output directory");
 
-    // Generate purple moon (shattered style)
-    println!("Generating purple moon (shattered)...");
+    // Generate purple moon (cratered style)
+    println!("Generating purple moon (cratered)...");
     generate_moon(
-        "MarkovJunior/models/MoonShattered.xml",
+        "MarkovJunior/models/MoonCratered.xml",
         "mj_moon_purple.png",
         42,
         MoonPalette::Purple,
     );
 
-    // Generate orange moon (crushed style)
+    // Generate orange moon (cratered style, different seed)
     println!();
-    println!("Generating orange moon (crushed)...");
+    println!("Generating orange moon (cratered)...");
     generate_moon(
-        "MarkovJunior/models/MoonCrushed.xml",
+        "MarkovJunior/models/MoonCratered.xml",
         "mj_moon_orange.png",
-        123,
+        789, // Different seed for different crater pattern
         MoonPalette::Orange,
     );
 
@@ -98,20 +98,18 @@ fn generate_moon(model_path: &str, output_name: &str, seed: u64, palette: MoonPa
 }
 
 /// Get color palette for moon rendering
-/// Values in MJ: B=0, W=1, G=2, D=3
+/// Values in MJ: B=0 (background), W=1 (moon surface), C=2 (crater)
 fn get_moon_colors(palette: MoonPalette) -> Vec<[u8; 4]> {
     match palette {
         MoonPalette::Purple => vec![
             [0, 0, 0, 0],         // B: transparent background
-            [200, 180, 220, 255], // W: bright purple-white surface
-            [140, 100, 160, 255], // G: medium purple (shadows)
-            [80, 50, 100, 255],   // D: dark purple (cracks/craters)
+            [170, 150, 190, 255], // W: moon surface (muted purple-gray)
+            [90, 60, 110, 255],   // C: crater (much darker for visibility)
         ],
         MoonPalette::Orange => vec![
             [0, 0, 0, 0],         // B: transparent background
-            [255, 220, 180, 255], // W: bright orange-white surface
-            [200, 140, 80, 255],  // G: medium orange (shadows)
-            [140, 80, 40, 255],   // D: dark orange (cracks)
+            [210, 180, 150, 255], // W: moon surface (muted orange-tan)
+            [120, 80, 50, 255],   // C: crater (much darker for visibility)
         ],
     }
 }
