@@ -91,8 +91,8 @@ fn generate_star_field(output_name: &str, seed: u64) {
         stars.push(Star {
             x: rng.next_f32(),
             y: rng.next_f32(),
-            radius: rng.next_range(1.5, 2.5),
-            brightness: rng.next_range(1.0, 1.2), // Brighter
+            radius: rng.next_range(1.9, 3.1), // ~25% larger
+            brightness: rng.next_range(1.0, 1.2),
             color,
         });
     }
@@ -105,7 +105,7 @@ fn generate_star_field(output_name: &str, seed: u64) {
         stars.push(Star {
             x: rng.next_f32(),
             y: rng.next_f32(),
-            radius: rng.next_range(0.8, 1.4),
+            radius: rng.next_range(1.0, 1.75), // ~25% larger
             brightness: rng.next_range(0.7, 0.95),
             color,
         });
@@ -119,7 +119,7 @@ fn generate_star_field(output_name: &str, seed: u64) {
         stars.push(Star {
             x: rng.next_f32(),
             y: rng.next_f32(),
-            radius: rng.next_range(0.4, 0.7),
+            radius: rng.next_range(0.5, 0.9), // ~25% larger
             brightness: rng.next_range(0.4, 0.7),
             color,
         });
@@ -133,7 +133,7 @@ fn generate_star_field(output_name: &str, seed: u64) {
         stars.push(Star {
             x: rng.next_f32(),
             y: rng.next_f32(),
-            radius: rng.next_range(0.2, 0.4),
+            radius: rng.next_range(0.25, 0.5), // ~25% larger
             brightness: rng.next_range(0.25, 0.5),
             color,
         });
