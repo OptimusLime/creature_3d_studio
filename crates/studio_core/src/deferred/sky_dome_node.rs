@@ -1,0 +1,942 @@
+//! Sky dome render graph node.
+//!
+//! This node performs a fullscreen pass that renders procedural sky
+//! where no geometry exists (depth > 999.0).
+//!
+//! Runs after bloom pass, before transparent pass.
+
+use bevy::image::BevyDefault;
+use bevy::prelude::*;
+use bevy::render::{
+    render_asset::RenderAssets,
+    render_graph::{NodeRunError, RenderGraphContext, ViewNode},
+    render_resource::{
+        BindGroupEntry, BindGroupLayout, BindGroupLayoutEntry, BindingResource, BindingType,
+        BufferBindingType, BufferInitDescriptor, BufferUsages, CachedRenderPipelineId,
+        ColorTargetState, ColorWrites, Extent3d, FilterMode, FragmentState, LoadOp,
+        MultisampleState, Operations, PipelineCache, PrimitiveState, RenderPassColorAttachment,
+        RenderPassDescriptor, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+        SamplerDescriptor, ShaderStages, StoreOp, TextureDescriptor, TextureDimension,
+        TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension, VertexState,
+    },
+    renderer::{RenderContext, RenderDevice, RenderQueue},
+    texture::GpuImage,
+    view::{ExtractedView, ViewTarget},
+    Extract,
+};
+use std::f32::consts::TAU;
+
+use super::gbuffer::ViewGBufferTextures;
+use super::sky_dome::SkyDomeConfig;
+
+// ============================================================================
+// Cloud Texture Loading (Main World)
+// ============================================================================
+
+/// Handle to the cloud texture in the main world.
+/// This resource holds the texture handle loaded from the configured path.
+#[derive(Resource, Default)]
+pub struct CloudTextureHandle {
+    pub handle: Option<Handle<Image>>,
+    pub loaded_path: Option<String>,
+}
+
+/// Handle to moon textures in the main world.
+#[derive(Resource, Default)]
+pub struct MoonTextureHandles {
+    pub moon1_handle: Option<Handle<Image>>,
+    pub moon1_loaded_path: Option<String>,
+    pub moon2_handle: Option<Handle<Image>>,
+    pub moon2_loaded_path: Option<String>,
+}
+
+/// Handle to star field texture in the main world.
+#[derive(Resource, Default)]
+pub struct StarTextureHandle {
+    pub handle: Option<Handle<Image>>,
+    pub loaded_path: Option<String>,
+}
+
+/// System that loads the cloud texture based on SkyDomeConfig.
+/// Runs in PreUpdate in the main world.
+pub fn load_cloud_texture(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut cloud_handle: ResMut<CloudTextureHandle>,
+) {
+    // Check if we need to load or reload
+    let needs_load = match (&config.cloud_texture_path, &cloud_handle.loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true, // Clear if path removed
+        (None, None) => false,
+    };
+
+    if needs_load {
+        if let Some(path) = &config.cloud_texture_path {
+            info!("Loading cloud texture: {}", path);
+            cloud_handle.handle = Some(asset_server.load(path.clone()));
+            cloud_handle.loaded_path = Some(path.clone());
+        } else {
+            cloud_handle.handle = None;
+            cloud_handle.loaded_path = None;
+        }
+    }
+}
+
+/// System that loads moon textures based on SkyDomeConfig.
+pub fn load_moon_textures(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut moon_handles: ResMut<MoonTextureHandles>,
+) {
+    // Moon 1
+    let needs_load_moon1 = match (&config.moon1_texture_path, &moon_handles.moon1_loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load_moon1 {
+        if let Some(path) = &config.moon1_texture_path {
+            info!("Loading moon1 texture: {}", path);
+            moon_handles.moon1_handle = Some(asset_server.load(path.clone()));
+            moon_handles.moon1_loaded_path = Some(path.clone());
+        } else {
+            moon_handles.moon1_handle = None;
+            moon_handles.moon1_loaded_path = None;
+        }
+    }
+
+    // Moon 2
+    let needs_load_moon2 = match (&config.moon2_texture_path, &moon_handles.moon2_loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load_moon2 {
+        if let Some(path) = &config.moon2_texture_path {
+            info!("Loading moon2 texture: {}", path);
+            moon_handles.moon2_handle = Some(asset_server.load(path.clone()));
+            moon_handles.moon2_loaded_path = Some(path.clone());
+        } else {
+            moon_handles.moon2_handle = None;
+            moon_handles.moon2_loaded_path = None;
+        }
+    }
+}
+
+/// System that loads star field texture based on SkyDomeConfig.
+pub fn load_star_texture(
+    config: Res<SkyDomeConfig>,
+    asset_server: Res<AssetServer>,
+    mut star_handle: ResMut<StarTextureHandle>,
+) {
+    let needs_load = match (&config.star_texture_path, &star_handle.loaded_path) {
+        (Some(new_path), Some(old_path)) => new_path != old_path,
+        (Some(_), None) => true,
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+
+    if needs_load {
+        if let Some(path) = &config.star_texture_path {
+            info!("Loading star texture: {}", path);
+            star_handle.handle = Some(asset_server.load(path.clone()));
+            star_handle.loaded_path = Some(path.clone());
+        } else {
+            star_handle.handle = None;
+            star_handle.loaded_path = None;
+        }
+    }
+}
+
+// ============================================================================
+// Cloud Texture Extraction (Main World -> Render World)
+// ============================================================================
+
+/// Extracted cloud texture handle for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedCloudTexture {
+    pub handle: Option<Handle<Image>>,
+}
+
+/// Extracted moon texture handles for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedMoonTextures {
+    pub moon1_handle: Option<Handle<Image>>,
+    pub moon2_handle: Option<Handle<Image>>,
+}
+
+/// Extracted star texture handle for the render world.
+#[derive(Resource, Default)]
+pub struct ExtractedStarTexture {
+    pub handle: Option<Handle<Image>>,
+}
+
+/// Extract cloud texture handle to render world.
+/// Runs in ExtractSchedule.
+pub fn extract_cloud_texture(
+    cloud_handle: Extract<Option<Res<CloudTextureHandle>>>,
+    mut commands: Commands,
+) {
+    let handle = cloud_handle.as_ref().and_then(|h| h.handle.clone());
+    commands.insert_resource(ExtractedCloudTexture { handle });
+}
+
+/// Extract moon texture handles to render world.
+pub fn extract_moon_textures(
+    moon_handles: Extract<Option<Res<MoonTextureHandles>>>,
+    mut commands: Commands,
+) {
+    let (moon1, moon2) = moon_handles
+        .as_ref()
+        .map(|h| (h.moon1_handle.clone(), h.moon2_handle.clone()))
+        .unwrap_or((None, None));
+    commands.insert_resource(ExtractedMoonTextures {
+        moon1_handle: moon1,
+        moon2_handle: moon2,
+    });
+}
+
+/// Extract star texture handle to render world.
+pub fn extract_star_texture(
+    star_handle: Extract<Option<Res<StarTextureHandle>>>,
+    mut commands: Commands,
+) {
+    let handle = star_handle.as_ref().and_then(|h| h.handle.clone());
+    commands.insert_resource(ExtractedStarTexture { handle });
+}
+
+// ============================================================================
+// Fallback Cloud Texture (Render World)
+// ============================================================================
+
+/// Fallback white texture for when cloud texture isn't loaded.
+#[derive(Resource)]
+pub struct FallbackCloudTexture {
+    pub texture: bevy::render::render_resource::Texture,
+    pub view: bevy::render::render_resource::TextureView,
+}
+
+/// Initialize a 1x1 white fallback texture for clouds.
+/// This ensures we always have something to bind even if the texture hasn't loaded.
+pub fn init_fallback_cloud_texture(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    existing: Option<Res<FallbackCloudTexture>>,
+) {
+    if existing.is_some() {
+        return;
+    }
+
+    // Create 1x1 white RGBA texture
+    let texture = render_device.create_texture(&TextureDescriptor {
+        label: Some("fallback_cloud_texture"),
+        size: Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba8UnormSrgb,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    // Write white pixel (RGBA = 255, 255, 255, 255)
+    render_queue.write_texture(
+        texture.as_image_copy(),
+        &[255u8, 255, 255, 255],
+        bevy::render::render_resource::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: None,
+        },
+        Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+
+    let view = texture.create_view(&Default::default());
+
+    commands.insert_resource(FallbackCloudTexture { texture, view });
+}
+
+/// GPU uniform structure for sky dome rendering.
+/// Must match the WGSL struct layout exactly.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SkyDomeUniform {
+    /// Inverse view-projection matrix for reconstructing view direction
+    pub inv_view_proj: [[f32; 4]; 4],
+    /// Horizon color (rgb, a unused)
+    pub horizon_color: [f32; 4],
+    /// Zenith color (rgb, a unused)
+    pub zenith_color: [f32; 4],
+    /// x = blend_power, y = moons_enabled, z = sun_intensity, w = time_of_day
+    pub params: [f32; 4],
+    /// Sun: xyz = direction, w = angular_size
+    pub sun_direction: [f32; 4],
+    /// Sun: rgb = color, a = unused
+    pub sun_color: [f32; 4],
+    /// Moon 1: xyz = direction, w = size
+    pub moon1_direction: [f32; 4],
+    /// Moon 1: rgb = color, a = glow_intensity
+    pub moon1_color: [f32; 4],
+    /// Moon 1: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
+    pub moon1_params: [f32; 4],
+    /// Moon 2: xyz = direction, w = size
+    pub moon2_direction: [f32; 4],
+    /// Moon 2: rgb = color, a = glow_intensity
+    pub moon2_color: [f32; 4],
+    /// Moon 2: x = glow_falloff, y = limb_darkening, z = surface_detail, w = unused
+    pub moon2_params: [f32; 4],
+    /// Star params: x = brightness, y = twinkle_speed, z = time (for animation), w = unused
+    pub star_params: [f32; 4],
+}
+
+/// Sun orbital configuration.
+/// Simple east-west arc based on time of day.
+struct SunOrbit;
+
+impl SunOrbit {
+    /// Calculate sun direction from time of day.
+    /// 0.0 = midnight (below horizon), 0.25 = sunrise (east), 0.5 = noon (zenith), 0.75 = sunset (west)
+    fn calculate_direction(time_of_day: f32) -> Vec3 {
+        // Convert time to angle: 0.0 = -PI/2 (nadir), 0.5 = PI/2 (zenith)
+        let angle = (time_of_day - 0.25) * TAU;
+
+        // Sun moves in XY plane (east to west arc)
+        let x = angle.cos();
+        let y = angle.sin();
+        let z = 0.0; // No tilt for simplicity
+
+        Vec3::new(x, y, z).normalize()
+    }
+}
+
+/// Moon orbital configuration - creates dramatic tilted orbits.
+///
+/// Time mapping:
+/// - 0.00 = Rising (on horizon)
+/// - 0.25 = Zenith (highest point)
+/// - 0.50 = Setting (on horizon)
+/// - 0.75 = Nadir (below horizon, not visible)
+///
+/// Each moon has its own orbital plane defined by:
+/// - inclination: tilt angle from vertical (degrees)
+/// - azimuth_offset: rotation of orbital plane around vertical axis (degrees)
+struct MoonOrbit {
+    /// Orbital inclination in degrees (tilt from vertical plane)
+    /// 0 = rises east, sets west (like sun)
+    /// 45 = tilted path, rises NE, sets SW (or vice versa)
+    inclination: f32,
+    /// Azimuth offset in degrees - rotates the orbital plane
+    /// 0 = rise in east (+X), 90 = rise in south (+Z)
+    azimuth_offset: f32,
+}
+
+impl MoonOrbit {
+    /// Purple moon orbit - dramatic northward tilt
+    /// Rises in the ENE, arcs high toward NW, sets in WNW
+    fn purple() -> Self {
+        Self {
+            inclination: 35.0,    // Significant tilt toward north
+            azimuth_offset: 20.0, // Slightly offset from due east
+        }
+    }
+
+    /// Orange moon orbit - southern arc, different timing feel
+    /// Rises in the ESE, arcs toward SW, sets in WSW
+    fn orange() -> Self {
+        Self {
+            inclination: -25.0,    // Tilt toward south (negative)
+            azimuth_offset: -15.0, // Slightly offset the other way
+        }
+    }
+
+    /// Calculate moon direction from orbital time (0.0 - 1.0).
+    ///
+    /// Uses proper 3D rotation to create tilted orbital planes:
+    /// 1. Start with basic east-west arc in XY plane
+    /// 2. Rotate around X axis for inclination (tilt north/south)
+    /// 3. Rotate around Y axis for azimuth offset (rotate rise/set points)
+    ///
+    /// Time mapping:
+    /// - 0.00 = Rising in east (Y=0, X=+1)
+    /// - 0.25 = Zenith (Y=+1, highest point)
+    /// - 0.50 = Setting in west (Y=0, X=-1)
+    /// - 0.75 = Nadir (Y=-1, below horizon)
+    fn calculate_direction(&self, moon_time: f32) -> Vec3 {
+        // Convert time to angle for orbital position
+        // At time 0.0: moon rising in east, Y=0
+        // At time 0.25: moon at zenith, Y=1
+        // At time 0.5: moon setting in west, Y=0
+        // At time 0.75: moon at nadir, Y=-1
+        let angle = moon_time * TAU;
+
+        // Base orbit: X tracks east-west position, Y tracks altitude
+        // cos gives: 1 at 0, 0 at π/2, -1 at π, 0 at 3π/2
+        // sin gives: 0 at 0, 1 at π/2, 0 at π, -1 at 3π/2
+        let base_x = angle.cos(); // East (+1) -> West (-1) -> East (+1)
+        let base_y = angle.sin(); // Horizon (0) -> Zenith (+1) -> Horizon (0) -> Nadir (-1)
+        let base_z = 0.0;
+
+        // Apply inclination: rotate around X axis (tilts the orbital plane north/south)
+        let incline_rad = self.inclination.to_radians();
+        let cos_inc = incline_rad.cos();
+        let sin_inc = incline_rad.sin();
+
+        let tilted_x = base_x;
+        let tilted_y = base_y * cos_inc - base_z * sin_inc;
+        let tilted_z = base_y * sin_inc + base_z * cos_inc;
+
+        // Apply azimuth offset: rotate around Y axis (rotates rise/set direction)
+        let azimuth_rad = self.azimuth_offset.to_radians();
+        let cos_az = azimuth_rad.cos();
+        let sin_az = azimuth_rad.sin();
+
+        let final_x = tilted_x * cos_az + tilted_z * sin_az;
+        let final_y = tilted_y;
+        let final_z = -tilted_x * sin_az + tilted_z * cos_az;
+
+        Vec3::new(final_x, final_y, final_z).normalize()
+    }
+}
+
+/// Render graph node for sky dome rendering.
+///
+/// Draws a fullscreen triangle, checks depth from G-buffer,
+/// and renders sky gradient with moons where no geometry exists.
+#[derive(Default)]
+pub struct SkyDomeNode;
+
+impl ViewNode for SkyDomeNode {
+    type ViewQuery = (
+        &'static ViewTarget,
+        &'static ViewGBufferTextures,
+        &'static ExtractedView,
+    );
+
+    fn run<'w>(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        (view_target, gbuffer, view): bevy::ecs::query::QueryItem<'w, '_, Self::ViewQuery>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        // Check if sky dome is enabled
+        let config = world
+            .get_resource::<SkyDomeConfig>()
+            .cloned()
+            .unwrap_or_default();
+        if !config.enabled {
+            return Ok(());
+        }
+
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let Some(sky_pipeline) = world.get_resource::<SkyDomePipeline>() else {
+            return Ok(());
+        };
+
+        let Some(pipeline) = pipeline_cache.get_render_pipeline(sky_pipeline.pipeline_id) else {
+            // Pipeline not ready yet (shader still loading)
+            return Ok(());
+        };
+
+        // Get texture views (from extracted handles or fallback)
+        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
+        let extracted_cloud = world.get_resource::<ExtractedCloudTexture>();
+        let extracted_moons = world.get_resource::<ExtractedMoonTextures>();
+        let fallback_cloud = world.get_resource::<FallbackCloudTexture>();
+
+        // Try to get actual cloud texture, fall back to white texture
+        let cloud_texture_view = extracted_cloud
+            .and_then(|e| e.handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let Some(cloud_texture_view) = cloud_texture_view else {
+            // Neither cloud texture nor fallback ready - skip rendering
+            return Ok(());
+        };
+
+        // Get moon texture views (fall back to cloud fallback if not loaded)
+        let moon1_texture_view = extracted_moons
+            .and_then(|e| e.moon1_handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let moon2_texture_view = extracted_moons
+            .and_then(|e| e.moon2_handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        // Get star texture view (fall back to cloud fallback if not loaded)
+        let extracted_stars = world.get_resource::<ExtractedStarTexture>();
+        let star_texture_view = extracted_stars
+            .and_then(|e| e.handle.as_ref())
+            .and_then(|h| gpu_images.get(h))
+            .map(|img| &img.texture_view)
+            .or_else(|| fallback_cloud.map(|f| &f.view));
+
+        let Some(moon1_texture_view) = moon1_texture_view else {
+            return Ok(());
+        };
+        let Some(moon2_texture_view) = moon2_texture_view else {
+            return Ok(());
+        };
+        let Some(star_texture_view) = star_texture_view else {
+            return Ok(());
+        };
+
+        // Use post_process_write to get source (current frame) and destination (output)
+        // This swaps the buffers so we read from source and write to destination
+        let post_process = view_target.post_process_write();
+
+        // Compute inverse view-projection matrix for reconstructing view direction
+        let world_from_view = view.world_from_view.to_matrix();
+        let view_from_world = world_from_view.inverse();
+        let clip_from_world = view
+            .clip_from_world
+            .unwrap_or(view.clip_from_view * view_from_world);
+        let inv_view_proj = clip_from_world.inverse();
+
+        // Convert colors to linear space arrays
+        let horizon_linear = config.horizon_color.to_linear();
+        let zenith_linear = config.zenith_color.to_linear();
+
+        // Compute sun position from time_of_day
+        let sun_dir = SunOrbit::calculate_direction(config.time_of_day);
+        let sun_color_linear = config.sun.color.to_linear();
+
+        // Compute moon positions from their individual orbital times
+        let moon1_orbit = MoonOrbit::purple();
+        let moon2_orbit = MoonOrbit::orange();
+        let moon1_dir = moon1_orbit.calculate_direction(config.moon1_time);
+        let moon2_dir = moon2_orbit.calculate_direction(config.moon2_time);
+
+        // Convert moon colors to linear
+        let moon1_color_linear = config.moon1.color.to_linear();
+        let moon2_color_linear = config.moon2.color.to_linear();
+
+        // Create uniform data
+        let uniform = SkyDomeUniform {
+            inv_view_proj: inv_view_proj.to_cols_array_2d(),
+            horizon_color: [
+                horizon_linear.red,
+                horizon_linear.green,
+                horizon_linear.blue,
+                1.0,
+            ],
+            zenith_color: [
+                zenith_linear.red,
+                zenith_linear.green,
+                zenith_linear.blue,
+                1.0,
+            ],
+            params: [
+                config.horizon_blend_power,
+                if config.moons_enabled { 1.0 } else { 0.0 },
+                config.sun.intensity,
+                config.time_of_day,
+            ],
+            sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, config.sun.size],
+            sun_color: [
+                sun_color_linear.red,
+                sun_color_linear.green,
+                sun_color_linear.blue,
+                1.0,
+            ],
+            moon1_direction: [moon1_dir.x, moon1_dir.y, moon1_dir.z, config.moon1.size],
+            moon1_color: [
+                moon1_color_linear.red,
+                moon1_color_linear.green,
+                moon1_color_linear.blue,
+                config.moon1.glow_intensity,
+            ],
+            moon1_params: [
+                config.moon1.glow_falloff,
+                config.moon1.limb_darkening,
+                config.moon1.surface_detail,
+                0.0,
+            ],
+            moon2_direction: [moon2_dir.x, moon2_dir.y, moon2_dir.z, config.moon2.size],
+            moon2_color: [
+                moon2_color_linear.red,
+                moon2_color_linear.green,
+                moon2_color_linear.blue,
+                config.moon2.glow_intensity,
+            ],
+            moon2_params: [
+                config.moon2.glow_falloff,
+                config.moon2.limb_darkening,
+                config.moon2.surface_detail,
+                0.0,
+            ],
+            // Star params: use time_of_day as animation time source
+            // This makes stars twinkle based on in-game time
+            star_params: [
+                config.star_brightness,
+                config.star_twinkle_speed,
+                config.time_of_day * 100.0, // Scale up for visible twinkle over short time spans
+                0.0,
+            ],
+        };
+
+        // Create uniform buffer
+        let uniform_buffer =
+            render_context
+                .render_device()
+                .create_buffer_with_data(&BufferInitDescriptor {
+                    label: Some("sky_dome_uniform"),
+                    contents: bytemuck::bytes_of(&uniform),
+                    usage: BufferUsages::UNIFORM,
+                });
+
+        // Create bind group for scene texture + G-buffer position + cloud texture + moon textures (group 0)
+        let textures_bind_group = render_context.render_device().create_bind_group(
+            Some("sky_dome_textures_bind_group"),
+            &sky_pipeline.textures_layout,
+            &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(post_process.source),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&sky_pipeline.scene_sampler),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&gbuffer.position.default_view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&sky_pipeline.position_sampler),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::TextureView(cloud_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: BindingResource::Sampler(&sky_pipeline.cloud_sampler),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: BindingResource::TextureView(moon1_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 7,
+                    resource: BindingResource::Sampler(&sky_pipeline.moon_sampler),
+                },
+                BindGroupEntry {
+                    binding: 8,
+                    resource: BindingResource::TextureView(moon2_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: BindingResource::Sampler(&sky_pipeline.moon_sampler),
+                },
+                // Star texture at binding 10 and 11
+                BindGroupEntry {
+                    binding: 10,
+                    resource: BindingResource::TextureView(star_texture_view),
+                },
+                BindGroupEntry {
+                    binding: 11,
+                    resource: BindingResource::Sampler(&sky_pipeline.cloud_sampler), // Reuse linear sampler
+                },
+            ],
+        );
+
+        // Create bind group for uniforms (group 1)
+        let uniforms_bind_group = render_context.render_device().create_bind_group(
+            Some("sky_dome_uniforms_bind_group"),
+            &sky_pipeline.uniforms_layout,
+            &[BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        );
+
+        // Begin render pass writing to destination
+        let mut render_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+            label: Some("sky_dome_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: post_process.destination,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load, // Preserve existing content (we selectively overwrite sky pixels)
+                    store: StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        // Draw fullscreen triangle
+        render_pass.set_render_pipeline(pipeline);
+        render_pass.set_bind_group(0, &textures_bind_group, &[]);
+        render_pass.set_bind_group(1, &uniforms_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
+
+        Ok(())
+    }
+}
+
+/// Pipeline resources for sky dome rendering.
+#[derive(Resource)]
+pub struct SkyDomePipeline {
+    pub pipeline_id: CachedRenderPipelineId,
+    /// Textures bind group layout (group 0)
+    pub textures_layout: BindGroupLayout,
+    /// Uniforms bind group layout (group 1)
+    pub uniforms_layout: BindGroupLayout,
+    /// Linear filtering sampler for scene texture
+    pub scene_sampler: Sampler,
+    /// Non-filtering sampler for G-buffer position (Rgba32Float not filterable)
+    pub position_sampler: Sampler,
+    /// Linear filtering sampler for cloud texture
+    pub cloud_sampler: Sampler,
+    /// Linear filtering sampler for moon textures
+    pub moon_sampler: Sampler,
+}
+
+/// System to initialize the sky dome pipeline.
+/// Runs in the Render schedule after RenderDevice exists.
+pub fn init_sky_dome_pipeline(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    pipeline_cache: Res<PipelineCache>,
+    asset_server: Res<AssetServer>,
+    existing: Option<Res<SkyDomePipeline>>,
+) {
+    // Only initialize once
+    if existing.is_some() {
+        return;
+    }
+
+    // Create textures bind group layout (group 0)
+    // - binding 0: scene texture (post-bloom output)
+    // - binding 1: scene sampler (filtering)
+    // - binding 2: G-buffer position texture (for depth check)
+    // - binding 3: position sampler (non-filtering, since Rgba32Float)
+    // - binding 4: cloud texture
+    // - binding 5: cloud sampler (filtering)
+    let textures_layout = render_device.create_bind_group_layout(
+        "sky_dome_textures_layout",
+        &[
+            // Scene texture
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Scene sampler (filtering)
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // G-buffer position texture (Rgba32Float - not filterable)
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: false },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Position sampler (non-filtering for Rgba32Float)
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
+                count: None,
+            },
+            // Cloud texture (Rgba8UnormSrgb - filterable)
+            BindGroupLayoutEntry {
+                binding: 4,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Cloud sampler (filtering)
+            BindGroupLayoutEntry {
+                binding: 5,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Moon 1 texture
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Moon 1 sampler
+            BindGroupLayoutEntry {
+                binding: 7,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Moon 2 texture
+            BindGroupLayoutEntry {
+                binding: 8,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Moon 2 sampler
+            BindGroupLayoutEntry {
+                binding: 9,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Star texture
+            BindGroupLayoutEntry {
+                binding: 10,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Star sampler
+            BindGroupLayoutEntry {
+                binding: 11,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    );
+
+    // Create uniforms bind group layout (group 1)
+    let uniforms_layout = render_device.create_bind_group_layout(
+        "sky_dome_uniforms_layout",
+        &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    );
+
+    // Create scene sampler (linear filtering for scene texture)
+    let scene_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_scene_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
+
+    // Create position sampler (non-filtering for G-buffer position)
+    let position_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_position_sampler"),
+        mag_filter: FilterMode::Nearest,
+        min_filter: FilterMode::Nearest,
+        ..default()
+    });
+
+    // Create cloud sampler (linear filtering for cloud texture)
+    let cloud_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_cloud_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
+
+    // Create moon sampler (linear filtering for moon textures)
+    let moon_sampler = render_device.create_sampler(&SamplerDescriptor {
+        label: Some("sky_dome_moon_sampler"),
+        mag_filter: FilterMode::Linear,
+        min_filter: FilterMode::Linear,
+        ..default()
+    });
+
+    // Load shader
+    let shader = asset_server.load("shaders/sky_dome.wgsl");
+
+    // Queue pipeline creation with both bind group layouts
+    let pipeline_id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+        label: Some("sky_dome_pipeline".into()),
+        layout: vec![textures_layout.clone(), uniforms_layout.clone()],
+        push_constant_ranges: vec![],
+        vertex: VertexState {
+            shader: shader.clone(),
+            shader_defs: vec![],
+            entry_point: Some("vs_main".into()),
+            buffers: vec![],
+        },
+        primitive: PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState {
+            shader,
+            shader_defs: vec![],
+            entry_point: Some("fs_main".into()),
+            targets: vec![Some(ColorTargetState {
+                format: TextureFormat::bevy_default(),
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        zero_initialize_workgroup_memory: false,
+    });
+
+    commands.insert_resource(SkyDomePipeline {
+        pipeline_id,
+        textures_layout,
+        uniforms_layout,
+        scene_sampler,
+        position_sampler,
+        cloud_sampler,
+        moon_sampler,
+    });
+}

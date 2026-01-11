@@ -26,6 +26,7 @@ use bevy::render::{
 use super::collision_extract::ExtractedFragments;
 use super::collision_prepare::{CollisionBindGroups, CollisionFragmentBuffer, GpuCollisionState};
 use super::collision_readback::GpuCollisionContacts;
+use crate::voxel::VoxelScaleConfig;
 use crate::voxel_collision_gpu::{
     CollisionUniforms, GpuCollisionPipeline, GpuCollisionResult, GpuContact, HASH_GRID_TOTAL_CELLS,
     MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
@@ -69,7 +70,11 @@ pub fn run_collision_compute_system(
     fragment_buffer: Option<Res<CollisionFragmentBuffer>>,
     extracted_fragments: Option<Res<ExtractedFragments>>,
     contacts: Option<Res<GpuCollisionContacts>>,
+    scale_config: Option<Res<VoxelScaleConfig>>,
 ) {
+    // Get voxel scale (default to 1.0 if not configured)
+    let voxel_scale = scale_config.map(|c| c.scale).unwrap_or(1.0);
+
     // Get required resources
     let Some(collision_pipeline) = collision_pipeline else {
         return;
@@ -151,12 +156,13 @@ pub fn run_collision_compute_system(
     // ========================================================================
     for (frag_idx, frag) in extracted_fragments.fragments.iter().enumerate() {
         // Update uniforms with current fragment index
-        let uniforms = CollisionUniforms {
-            max_contacts: MAX_GPU_CONTACTS,
-            chunk_index_size: MAX_GPU_CHUNKS * 4,
-            fragment_index: frag_idx as u32,
-            fragment_count: fragment_buffer.count,
-        };
+        let uniforms = CollisionUniforms::with_scale(
+            MAX_GPU_CONTACTS,
+            MAX_GPU_CHUNKS * 4,
+            frag_idx as u32,
+            fragment_buffer.count,
+            voxel_scale,
+        );
         render_queue.write_buffer(
             &collision_pipeline.uniform_buffer,
             0,
@@ -188,13 +194,14 @@ pub fn run_collision_compute_system(
     // Phase 3: Collision Detection (one dispatch per fragment)
     // ========================================================================
     for (frag_idx, frag) in extracted_fragments.fragments.iter().enumerate() {
-        // Update uniforms with current fragment index
-        let uniforms = CollisionUniforms {
-            max_contacts: MAX_GPU_CONTACTS,
-            chunk_index_size: MAX_GPU_CHUNKS * 4,
-            fragment_index: frag_idx as u32,
-            fragment_count: fragment_buffer.count,
-        };
+        // Update uniforms with current fragment index and scale
+        let uniforms = CollisionUniforms::with_scale(
+            MAX_GPU_CONTACTS,
+            MAX_GPU_CHUNKS * 4,
+            frag_idx as u32,
+            fragment_buffer.count,
+            voxel_scale,
+        );
         render_queue.write_buffer(
             &collision_pipeline.uniform_buffer,
             0,

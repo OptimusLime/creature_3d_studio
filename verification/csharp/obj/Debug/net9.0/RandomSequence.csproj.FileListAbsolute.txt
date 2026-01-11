@@ -1,0 +1,15 @@
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/bin/Debug/net9.0/RandomSequence
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/bin/Debug/net9.0/RandomSequence.deps.json
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/bin/Debug/net9.0/RandomSequence.runtimeconfig.json
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/bin/Debug/net9.0/RandomSequence.dll
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/bin/Debug/net9.0/RandomSequence.pdb
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.GeneratedMSBuildEditorConfig.editorconfig
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.AssemblyInfoInputs.cache
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.AssemblyInfo.cs
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.csproj.CoreCompileInputs.cache
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.sourcelink.json
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.dll
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/refint/RandomSequence.dll
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.pdb
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/RandomSequence.genruntimeconfig.cache
+/Users/paul/coding/creatures/creature_3d_studio/verification/csharp/obj/Debug/net9.0/ref/RandomSequence.dll

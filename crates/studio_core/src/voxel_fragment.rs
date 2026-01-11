@@ -42,10 +42,10 @@
 use bevy::prelude::*;
 
 use crate::physics_math::{
-    compute_terrain_collision_force, generate_surface_particles, integrate_angular_velocity,
+    compute_terrain_collision_force_scaled, generate_surface_particles, integrate_angular_velocity,
     integrate_position, integrate_rotation, integrate_velocity, ParticleConfig, PhysicsConfig,
 };
-use crate::voxel::VoxelWorld;
+use crate::voxel::{VoxelScaleConfig, VoxelWorld};
 use crate::voxel_collision::FragmentOccupancy;
 use crate::voxel_mesh::build_world_meshes_cross_chunk;
 
@@ -562,6 +562,7 @@ pub fn fragment_terrain_collision_system(
     time: Res<Time>,
     terrain: Res<TerrainOccupancy>,
     collision_config: Res<FragmentCollisionConfig>,
+    scale_config: Option<Res<VoxelScaleConfig>>,
     mut fragments: Query<(
         &FragmentSurfaceParticles,
         &mut Transform,
@@ -572,6 +573,7 @@ pub fn fragment_terrain_collision_system(
         return;
     }
 
+    let voxel_scale = scale_config.map(|c| c.scale).unwrap_or(1.0);
     let frame_dt = time.delta_secs();
 
     // Use substeps to prevent tunneling through terrain at high velocities
@@ -621,12 +623,13 @@ pub fn fragment_terrain_collision_system(
                 // Velocity at this particle includes angular contribution
                 let particle_vel = fragment_vel + angular_vel.cross(world_offset);
 
-                // Compute collision force for this particle against terrain
-                let particle_force = compute_terrain_collision_force(
+                // Compute collision force for this particle against terrain (scale-aware)
+                let particle_force = compute_terrain_collision_force_scaled(
                     particle_world_pos,
                     particle_vel,
                     &terrain.occupancy,
                     &physics_config,
+                    voxel_scale,
                 );
 
                 // Gravity is applied PER PARTICLE (reference line 326)
@@ -905,7 +908,7 @@ pub fn draw_terrain_debug_gizmos(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::physics_math::apply_gravity;
+    use crate::physics_math::{apply_gravity, compute_terrain_collision_force};
     use crate::voxel::Voxel;
 
     #[test]

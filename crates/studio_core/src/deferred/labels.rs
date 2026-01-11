@@ -23,6 +23,8 @@ pub enum DeferredLabel {
     LightingPass,
     /// Bloom pass: post-process bloom effect on HDR output
     BloomPass,
+    /// Sky dome pass: renders procedural sky where no geometry exists
+    SkyDomePass,
     /// GPU collision compute: runs voxel collision on GPU
     CollisionCompute,
 }

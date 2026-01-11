@@ -103,6 +103,10 @@ struct CollisionUniforms {
     chunk_index_size: u32,  // Size of hash table
     fragment_index: u32,    // Current fragment being processed (per dispatch)
     fragment_count: u32,    // Total fragments this frame
+    voxel_scale: f32,       // Voxel scale factor (1.0 = 1 voxel = 1 world unit)
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 // ============================================================================
@@ -384,27 +388,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
     // Translate to world position
     let world_pos = fragment.position + rotated;
     
+    // Convert world position to voxel space (divide by scale)
+    let voxel_scale = uniforms.voxel_scale;
+    let scaled_pos = world_pos / voxel_scale;
+    
     // Convert to voxel coordinates (floor to get the voxel we're in)
     let voxel_pos = vec3<i32>(
-        i32(floor(world_pos.x)),
-        i32(floor(world_pos.y)),
-        i32(floor(world_pos.z))
+        i32(floor(scaled_pos.x)),
+        i32(floor(scaled_pos.y)),
+        i32(floor(scaled_pos.z))
     );
     
     // Check for collision with terrain
     if is_terrain_occupied(voxel_pos) {
         // Collision detected! Output a terrain contact
-        let normal = calculate_contact_normal(world_pos, voxel_pos);
-        let penetration = calculate_penetration(world_pos, voxel_pos, normal);
+        // Note: calculate_contact_normal and calculate_penetration work in voxel space
+        // We need to scale the penetration back to world space
+        let normal = calculate_contact_normal(scaled_pos, voxel_pos);
+        let voxel_penetration = calculate_penetration(scaled_pos, voxel_pos, normal);
+        let penetration = voxel_penetration * voxel_scale;
         
         // Atomically allocate a slot in the output buffer
         let contact_idx = atomicAdd(&contact_count, 1u);
         
         if contact_idx < uniforms.max_contacts {
             var contact: Contact;
-            contact.position = world_pos;
-            contact.penetration = penetration;
-            contact.normal = normal;
+            contact.position = world_pos;  // Keep position in world space
+            contact.penetration = penetration;  // Scaled to world space
+            contact.normal = normal;  // Direction unchanged
             contact.fragment_index = fragment.fragment_index;
             contact.contact_type = CONTACT_TYPE_TERRAIN;
             contact.other_fragment = 0u;

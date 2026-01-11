@@ -64,6 +64,8 @@ mod point_light_shadow_node;
 mod prepare;
 mod shadow;
 mod shadow_node;
+mod sky_dome;
+mod sky_dome_node;
 
 pub use bloom::*;
 pub use bloom_node::*;
@@ -87,3 +89,5 @@ pub use point_light_shadow::*;
 pub use point_light_shadow_node::*;
 pub use shadow::*;
 pub use shadow_node::*;
+pub use sky_dome::*;
+pub use sky_dome_node::*;

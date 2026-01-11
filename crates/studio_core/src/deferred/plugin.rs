@@ -55,7 +55,14 @@ use super::shadow_node::{
     prepare_directional_shadow_uniforms, prepare_shadow_mesh_bind_groups, Moon1ShadowPassNode,
     Moon2ShadowPassNode,
 };
+use super::sky_dome::SkyDomeConfig;
+use super::sky_dome_node::{
+    extract_cloud_texture, extract_moon_textures, extract_star_texture,
+    init_fallback_cloud_texture, init_sky_dome_pipeline, load_cloud_texture, load_moon_textures,
+    load_star_texture, SkyDomeNode,
+};
 use crate::debug_screenshot::DebugModes;
+use crate::voxel::VoxelScaleConfig;
 
 /// Plugin that enables deferred rendering for voxels.
 ///
@@ -84,6 +91,7 @@ impl Plugin for DeferredRenderingPlugin {
         app.init_resource::<MoonConfig>();
         app.init_resource::<GtaoConfig>();
         app.init_resource::<DebugModes>();
+        app.init_resource::<SkyDomeConfig>();
 
         // Extract DeferredCamera and DeferredRenderable components to render world
         app.add_plugins(ExtractComponentPlugin::<DeferredCamera>::default());
@@ -98,8 +106,28 @@ impl Plugin for DeferredRenderingPlugin {
         // Extract BloomConfig resource to render world (for enabling/disabling bloom)
         app.add_plugins(ExtractResourcePlugin::<BloomConfig>::default());
 
+        // Extract SkyDomeConfig resource to render world (for enabling/disabling sky dome)
+        app.add_plugins(ExtractResourcePlugin::<SkyDomeConfig>::default());
+
+        // Extract DeferredLightingConfig resource to render world (for height fog parameters)
+        app.add_plugins(ExtractResourcePlugin::<DeferredLightingConfig>::default());
+
+        // Extract VoxelScaleConfig resource to render world (for GPU collision scale)
+        app.add_plugins(ExtractResourcePlugin::<VoxelScaleConfig>::default());
+
         // Add GPU collision readback plugin (creates shared resource in both worlds)
         app.add_plugins(GpuCollisionReadbackPlugin);
+
+        // Initialize cloud, moon, and star texture handle resources (empty initially)
+        app.init_resource::<super::sky_dome_node::CloudTextureHandle>();
+        app.init_resource::<super::sky_dome_node::MoonTextureHandles>();
+        app.init_resource::<super::sky_dome_node::StarTextureHandle>();
+
+        // Load cloud, moon, and star textures in main world (runs in PreUpdate so they're ready before extraction)
+        app.add_systems(
+            PreUpdate,
+            (load_cloud_texture, load_moon_textures, load_star_texture),
+        );
 
         // Get render app
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -129,6 +157,15 @@ impl Plugin for DeferredRenderingPlugin {
                 extract_terrain_occupancy_system,
             ),
         );
+        // Cloud, moon, and star texture extraction (separate to avoid tuple limit)
+        render_app.add_systems(
+            ExtractSchedule,
+            (
+                extract_cloud_texture,
+                extract_moon_textures,
+                extract_star_texture,
+            ),
+        );
 
         // Add prepare systems
         // - init pipelines runs first to create pipeline resources
@@ -153,6 +190,8 @@ impl Plugin for DeferredRenderingPlugin {
                 init_gtao_noise_texture.in_set(RenderSystems::Prepare),
                 init_depth_prefilter_pipeline.in_set(RenderSystems::Prepare),
                 init_gtao_denoise_pipeline.in_set(RenderSystems::Prepare),
+                init_sky_dome_pipeline.in_set(RenderSystems::Prepare),
+                init_fallback_cloud_texture.in_set(RenderSystems::Prepare),
             ),
         );
 
@@ -287,7 +326,12 @@ impl Plugin for DeferredRenderingPlugin {
                 DeferredLabel::LightingPass,
             )
             // Bloom pass node
-            .add_render_graph_node::<ViewNodeRunner<BloomNode>>(Core3d, DeferredLabel::BloomPass);
+            .add_render_graph_node::<ViewNodeRunner<BloomNode>>(Core3d, DeferredLabel::BloomPass)
+            // Sky dome pass node (after bloom, before transparent)
+            .add_render_graph_node::<ViewNodeRunner<SkyDomeNode>>(
+                Core3d,
+                DeferredLabel::SkyDomePass,
+            );
 
         // Define render graph edges (execution order)
         // Shadow passes run first, then G-buffer, then connect to MainOpaquePass
@@ -323,6 +367,7 @@ impl Plugin for DeferredRenderingPlugin {
                 Node3d::MainOpaquePass,
                 DeferredLabel::LightingPass,
                 DeferredLabel::BloomPass,
+                DeferredLabel::SkyDomePass,
                 Node3d::MainTransparentPass,
             ),
         );

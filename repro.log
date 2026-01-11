@@ -1,0 +1,29 @@
+warning: use of deprecated type alias `bevy::prelude::EventWriter`: Renamed to `MessageWriter`.
+   --> examples/p23_kinematic_controller.rs:129:19
+    |
+129 |     mut app_exit: EventWriter<AppExit>,
+    |                   ^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: unused variable: `app_exit`
+   --> examples/p23_kinematic_controller.rs:129:9
+    |
+129 |     mut app_exit: EventWriter<AppExit>,
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_exit`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: variable does not need to be mutable
+   --> examples/p23_kinematic_controller.rs:129:5
+    |
+129 |     mut app_exit: EventWriter<AppExit>,
+    |     ----^^^^^^^^
+    |     |
+    |     help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` on by default
+
+warning: `creature_3d_studio` (example "p23_kinematic_controller") generated 3 warnings (run `cargo fix --example "p23_kinematic_controller"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running `target/debug/examples/p23_kinematic_controller --repro`

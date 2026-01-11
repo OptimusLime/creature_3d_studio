@@ -131,19 +131,22 @@ impl MoonConfig {
     /// so that objects at different positions perpendicular to the light direction
     /// map to different UV coordinates in the shadow map.
     ///
-    /// The standard look_at with Y-up doesn't work well when the light direction
-    /// is in the XY plane (Z≈0), because it makes the shadow map X axis align
-    /// with world Z, causing world X variations to only affect depth, not UV.
+    /// Special care is needed when:
+    /// 1. Light is nearly vertical (looking straight down/up) - use Z as up
+    /// 2. Light is in XY plane (Z≈0) - use Z as up to keep shadow X ≈ world X
+    /// 3. Normal case - use Y as up
     fn light_view_matrix(&self, direction: Vec3, scene_center: Vec3) -> Mat4 {
         let light_distance = self.shadow_size * 2.0;
         let light_pos = scene_center - direction * light_distance;
 
-        // Compute a good up vector that keeps shadow coordinates intuitive:
-        // - For lights in the XY plane (Z≈0), use Z as up so that shadow X ≈ world X
-        // - For lights with Z component, use Y as up (standard)
-        let up = if direction.z.abs() < 0.01 {
-            // Light is in XY plane - cross product with Y gives us the right vector
-            // We want right to be along X, so we need up to be along Z
+        // Compute a good up vector that avoids degeneracy:
+        // The up vector must NOT be parallel to the view direction (light direction)
+        let up = if direction.y.abs() > 0.99 {
+            // Light is nearly vertical (at zenith or nadir)
+            // Use Z as up to avoid degeneracy with Y
+            Vec3::Z
+        } else if direction.z.abs() < 0.01 {
+            // Light is in XY plane - use Z as up so that shadow X ≈ world X
             if direction.x > 0.0 {
                 Vec3::NEG_Z // Light from +X, shadow goes to -X, up is -Z
             } else {
@@ -259,11 +262,20 @@ pub struct DirectionalShadowUniforms {
     pub moon2_color_intensity: [f32; 4],
     /// Shadow softness: x = directional, y = point, z = lighting_debug_mode, w = unused.
     pub shadow_softness: [f32; 4],
+    /// Height fog params: x = density, y = base, z = falloff, w = unused.
+    pub height_fog_params: [f32; 4],
 }
 
 impl DirectionalShadowUniforms {
-    /// Create uniforms from MoonConfig with debug mode.
-    pub fn from_config(config: &MoonConfig, scene_center: Vec3, lighting_debug_mode: i32) -> Self {
+    /// Create uniforms from MoonConfig with debug mode and height fog.
+    pub fn from_config(
+        config: &MoonConfig,
+        scene_center: Vec3,
+        lighting_debug_mode: i32,
+        height_fog_density: f32,
+        height_fog_base: f32,
+        height_fog_falloff: f32,
+    ) -> Self {
         Self {
             moon1_view_proj: config
                 .moon1_view_projection(scene_center)
@@ -301,6 +313,7 @@ impl DirectionalShadowUniforms {
                 lighting_debug_mode as f32,
                 0.0,
             ],
+            height_fog_params: [height_fog_density, height_fog_base, height_fog_falloff, 0.0],
         }
     }
 }

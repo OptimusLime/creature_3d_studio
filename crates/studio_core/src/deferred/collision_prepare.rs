@@ -12,6 +12,7 @@ use bevy::render::{
 };
 
 use super::collision_extract::{ExtractedFragments, ExtractedTerrainChunks};
+use crate::voxel::VoxelScaleConfig;
 use crate::voxel_collision_gpu::{
     CollisionUniforms, GpuCollisionPipeline, GpuFragmentData, GpuWorldOccupancy,
     MAX_FRAGMENT_OCCUPANCY_U32S, MAX_GPU_CHUNKS, MAX_GPU_CONTACTS,
@@ -112,7 +113,11 @@ pub fn prepare_collision_bind_groups(
     gpu_occupancy: Option<Res<GpuWorldOccupancy>>,
     collision_pipeline: Option<Res<GpuCollisionPipeline>>,
     mut collision_state: Option<ResMut<GpuCollisionState>>,
+    scale_config: Option<Res<VoxelScaleConfig>>,
 ) {
+    // Get voxel scale (default to 1.0 if not configured)
+    let voxel_scale = scale_config.map(|c| c.scale).unwrap_or(1.0);
+
     let Some(gpu_occupancy) = gpu_occupancy else {
         return;
     };
@@ -200,12 +205,13 @@ pub fn prepare_collision_bind_groups(
     );
 
     // Write initial uniforms (fragment_index will be updated per dispatch in collision_node)
-    let uniforms = CollisionUniforms {
-        max_contacts: MAX_GPU_CONTACTS,
-        chunk_index_size: MAX_GPU_CHUNKS * 4, // Hash table size
-        fragment_index: 0,
-        fragment_count: gpu_fragments.len() as u32,
-    };
+    let uniforms = CollisionUniforms::with_scale(
+        MAX_GPU_CONTACTS,
+        MAX_GPU_CHUNKS * 4, // Hash table size
+        0,
+        gpu_fragments.len() as u32,
+        voxel_scale,
+    );
     render_queue.write_buffer(
         &collision_pipeline.uniform_buffer,
         0,

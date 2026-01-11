@@ -1295,6 +1295,47 @@ pub fn compute_terrain_collision_force(
     total_force
 }
 
+/// Compute terrain collision force with voxel scale support.
+///
+/// This is the scale-aware version of `compute_terrain_collision_force`. It:
+/// 1. Converts world position/velocity to voxel space
+/// 2. Performs collision force computation in voxel space
+/// 3. Converts force back to world space
+///
+/// # Arguments
+/// * `world_pos` - Particle position in world coordinates
+/// * `world_vel` - Particle velocity in world units/second
+/// * `occupancy` - World occupancy data for terrain
+/// * `config` - Physics configuration (particle_diameter is in world units)
+/// * `voxel_scale` - Scale factor (1.0 = 1 voxel = 1 world unit)
+///
+/// # Returns
+/// Collision force in world space
+pub fn compute_terrain_collision_force_scaled(
+    world_pos: Vec3,
+    world_vel: Vec3,
+    occupancy: &WorldOccupancy,
+    config: &PhysicsConfig,
+    voxel_scale: f32,
+) -> Vec3 {
+    // Convert to voxel space
+    let voxel_pos = world_pos / voxel_scale;
+    let voxel_vel = world_vel / voxel_scale;
+
+    // Create a scaled config for voxel-space physics
+    let mut voxel_config = config.clone();
+    voxel_config.particle_diameter /= voxel_scale;
+
+    // Compute force in voxel space
+    let voxel_force =
+        compute_terrain_collision_force(voxel_pos, voxel_vel, occupancy, &voxel_config);
+
+    // Force direction stays the same, but magnitude needs scaling
+    // Since F = k * penetration, and penetration is in voxel units,
+    // we scale the force to world units
+    voxel_force * voxel_scale
+}
+
 // =============================================================================
 // KINEMATIC COLLISION SUPPORT
 // =============================================================================
@@ -1416,6 +1457,45 @@ pub fn detect_terrain_collisions(
                 }
             }
         }
+    }
+
+    contacts
+}
+
+/// Detect all terrain collisions for a particle with voxel scale support.
+///
+/// This is the scale-aware version of `detect_terrain_collisions`. It:
+/// 1. Converts world position to voxel space (divide by scale)
+/// 2. Performs collision detection in voxel space
+/// 3. Converts results back to world space (multiply by scale)
+///
+/// # Arguments
+/// * `world_pos` - Particle position in world coordinates
+/// * `occupancy` - Voxel world occupancy data
+/// * `world_diameter` - Particle diameter in world units
+/// * `voxel_scale` - Scale factor (1.0 = 1 voxel = 1 world unit)
+///
+/// # Returns
+/// Contacts with penetration and points in world space
+pub fn detect_terrain_collisions_scaled(
+    world_pos: Vec3,
+    occupancy: &WorldOccupancy,
+    world_diameter: f32,
+    voxel_scale: f32,
+) -> Vec<TerrainContact> {
+    // Convert world position to voxel space
+    let voxel_pos = world_pos / voxel_scale;
+    // Scale diameter to voxel space
+    let voxel_diameter = world_diameter / voxel_scale;
+
+    // Perform collision detection in voxel space
+    let mut contacts = detect_terrain_collisions(voxel_pos, occupancy, voxel_diameter);
+
+    // Convert results back to world space
+    for contact in &mut contacts {
+        contact.penetration *= voxel_scale;
+        contact.point *= voxel_scale;
+        // Normal direction stays the same (unit vector)
     }
 
     contacts

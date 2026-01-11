@@ -299,6 +299,7 @@ pub fn prepare_directional_shadow_uniforms(
     moon_config: Option<Res<MoonConfig>>,
     shadow_pipeline: Option<Res<ShadowPipeline>>,
     debug_modes: Option<Res<crate::debug_screenshot::DebugModes>>,
+    lighting_config: Option<Res<super::lighting::DeferredLightingConfig>>,
     cameras: Query<Entity, With<super::DeferredCamera>>,
 ) {
     let Some(moon_config) = moon_config else {
@@ -313,9 +314,27 @@ pub fn prepare_directional_shadow_uniforms(
     // Get lighting debug mode from DebugModes resource (extracted from main world)
     let lighting_debug_mode = debug_modes.map(|dm| dm.lighting_debug_mode).unwrap_or(0);
 
+    // Get height fog params from lighting config (or use defaults)
+    let (height_fog_density, height_fog_base, height_fog_falloff) =
+        if let Some(ref config) = lighting_config {
+            (
+                config.height_fog_density,
+                config.height_fog_base,
+                config.height_fog_falloff,
+            )
+        } else {
+            (0.03, 0.0, 0.08) // Defaults
+        };
+
     // Create full uniforms for lighting pass (includes debug mode in shadow_softness.z)
-    let uniforms =
-        DirectionalShadowUniforms::from_config(&moon_config, scene_center, lighting_debug_mode);
+    let uniforms = DirectionalShadowUniforms::from_config(
+        &moon_config,
+        scene_center,
+        lighting_debug_mode,
+        height_fog_density,
+        height_fog_base,
+        height_fog_falloff,
+    );
 
     // Create individual view uniforms for each moon's shadow pass
     let moon1_uniform = ShadowViewUniform {

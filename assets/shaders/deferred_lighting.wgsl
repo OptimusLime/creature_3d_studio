@@ -27,7 +27,8 @@ struct DirectionalShadowUniforms {
     moon1_color_intensity: vec4<f32>, // rgb = color, a = intensity
     moon2_direction: vec4<f32>,
     moon2_color_intensity: vec4<f32>,
-    shadow_softness: vec4<f32>,      // x = directional, y = point, zw = unused
+    shadow_softness: vec4<f32>,      // x = directional, y = point, z = debug_mode, w = unused
+    height_fog_params: vec4<f32>,    // x = density, y = base, z = falloff, w = unused
 }
 @group(2) @binding(0) var<uniform> shadow_uniforms: DirectionalShadowUniforms;
 
@@ -126,19 +127,12 @@ const FILL_COLOR: vec3<f32> = vec3<f32>(0.5, 0.6, 0.8);  // Cool blue
 const FILL_INTENSITY: f32 = 0.4;
 
 // --- Dark World Mode (DARK_WORLD_MODE = 1) ---
-// Purple Moon - from back-left, moderate height
-const MOON1_DIRECTION: vec3<f32> = vec3<f32>(0.6, -0.6, 0.55);  // Back-left
-const MOON1_COLOR: vec3<f32> = vec3<f32>(0.4, 0.15, 0.7);  // Deep purple
-const MOON1_INTENSITY: f32 = 0.15;  // Very dim - let point lights dominate
+// Moon direction, color, and intensity now come from uniforms (shadow_uniforms)
+// These constants are kept as fallbacks but should not be used
 
-// Orange Moon - from front-right, similar height (lights opposite faces)
-const MOON2_DIRECTION: vec3<f32> = vec3<f32>(-0.6, -0.6, -0.55);  // Front-right
-const MOON2_COLOR: vec3<f32> = vec3<f32>(1.0, 0.45, 0.1);  // Deep orange
-const MOON2_INTENSITY: f32 = 0.12;  // Very dim
-
-// Dark world ambient - near zero (very dark scene)
-const DARK_AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.01, 0.005, 0.02);
-const DARK_AMBIENT_INTENSITY: f32 = 0.05;
+// Dark world ambient - base values, modified by moon positions at runtime
+const DARK_AMBIENT_BASE_COLOR: vec3<f32> = vec3<f32>(0.02, 0.015, 0.03);
+const DARK_AMBIENT_BASE_INTENSITY: f32 = 0.08;  // Base visibility even when both moons are down
 
 // --- Fog Settings ---
 const FOG_COLOR: vec3<f32> = vec3<f32>(0.02, 0.01, 0.03);  // Near black for dark world
@@ -190,6 +184,123 @@ const POISSON_DISK: array<vec2<f32>, 16> = array<vec2<f32>, 16>(
 // Debug mode accessor - reads from shadow_uniforms.shadow_softness.z
 fn get_debug_mode() -> i32 {
     return i32(shadow_uniforms.shadow_softness.z);
+}
+
+// ============================================================================
+// Moon Environment Lighting Functions
+// These provide dynamic terrain lighting based on moon positions
+// ============================================================================
+
+// Calculate moon altitude factor for intensity scaling
+// Returns 0.0 when moon is well below horizon, scales up as moon rises
+// NOTE: moon_dir is direction FROM moon TO scene, so negative Y means moon is ABOVE
+fn moon_altitude_factor(moon_dir: vec3<f32>) -> f32 {
+    // moon_dir.y is negative when moon is above horizon (light pointing down)
+    // -moon_dir.y gives us: +1 when moon at zenith, -1 when at nadir
+    let altitude = -moon_dir.y;
+    // Moon lighting should persist until moon disc fully sets below horizon
+    // -0.15 = moon center well below horizon (disc gone)
+    // 0.1 = moon just above horizon (still rising, full intensity)
+    // This keeps lighting effects strong while moon is near/at horizon
+    return smoothstep(-0.15, 0.1, altitude);
+}
+
+// Calculate horizon warmth - color shifts warmer when moon is near horizon
+// NOTE: moon_dir is direction FROM moon TO scene, so negative Y means moon is ABOVE
+fn horizon_warmth(moon_dir: vec3<f32>, base_color: vec3<f32>) -> vec3<f32> {
+    let altitude = -moon_dir.y;  // Flip sign: positive = above horizon
+    // Horizon proximity: 1.0 at horizon, 0.0 at zenith/nadir
+    let horizon_proximity = 1.0 - abs(altitude);
+    let warmth = horizon_proximity * horizon_proximity;
+    
+    // Shift toward warm (add red/yellow, reduce blue)
+    let warm_shift = vec3<f32>(0.15, 0.05, -0.1) * warmth;
+    return base_color + warm_shift;
+}
+
+// Calculate zenith-darkness: how dark should the scene be based on moon positions
+// Returns 1.0 when at least one moon is visible, drops toward 0.25 when both are below
+// NOTE: moon_dir.y values passed here - negative Y means moon ABOVE (light pointing down)
+fn calculate_darkness_factor(moon1_dir_y: f32, moon2_dir_y: f32) -> f32 {
+    // Convert to altitude (positive = above horizon)
+    let moon1_alt = -moon1_dir_y;
+    let moon2_alt = -moon2_dir_y;
+    
+    // How far below horizon is each moon? 
+    // Use -0.15 as the "gone" threshold (matches moon_altitude_factor)
+    // 0 if still providing light, positive if truly below
+    let moon1_below = max(0.0, -0.15 - moon1_alt);
+    let moon2_below = max(0.0, -0.15 - moon2_alt);
+    
+    // Night depth: only deep when BOTH moons are well below horizon
+    // Use minimum because we need both to be down for true darkness
+    let night_depth = min(moon1_below, moon2_below) * 3.0;  // Scale so 0.33 below = full night
+    let clamped_depth = clamp(night_depth, 0.0, 1.0);
+    
+    // Darkness factor: 1.0 = normal brightness, 0.25 = dim but visible
+    // We want enough base visibility to see the terrain even in full darkness
+    return 1.0 - clamped_depth * 0.75;
+}
+
+// Calculate dynamic ambient color based on which moon is more visible
+// NOTE: moon_dir is direction FROM moon TO scene, so negative Y means moon is ABOVE
+fn calculate_dynamic_ambient(moon1_dir: vec3<f32>, moon1_color: vec3<f32>,
+                             moon2_dir: vec3<f32>, moon2_color: vec3<f32>) -> vec3<f32> {
+    // Convert to altitude (positive = above horizon)
+    let moon1_alt = -moon1_dir.y;
+    let moon2_alt = -moon2_dir.y;
+    
+    // Contribution based on visibility - use -0.15 threshold to match altitude_factor
+    // Moons contribute until they're well below horizon
+    let moon1_contrib = max(0.0, moon1_alt + 0.15);
+    let moon2_contrib = max(0.0, moon2_alt + 0.15);
+    let total = moon1_contrib + moon2_contrib + 0.001;  // Avoid div by zero
+    
+    // Blend colors based on relative visibility
+    let blend = moon1_contrib / total;
+    let blended_color = mix(moon2_color, moon1_color, blend);
+    
+    // Desaturate and dim for ambient (ambient shouldn't be as saturated as direct light)
+    let ambient_color = blended_color * 0.3 + DARK_AMBIENT_BASE_COLOR;
+    
+    // Intensity scales with highest visible moon
+    // Use smoothstep for gradual falloff matching moon_altitude_factor
+    let max_visible = max(moon1_alt, moon2_alt);
+    let visibility = smoothstep(-0.15, 0.1, max_visible);
+    let intensity = DARK_AMBIENT_BASE_INTENSITY + visibility * 0.1;
+    
+    return ambient_color * intensity;
+}
+
+// Full moon lighting contribution with altitude scaling and horizon warmth
+fn calculate_moon_light(
+    moon_dir: vec3<f32>,
+    moon_color: vec3<f32>,
+    moon_intensity: f32,
+    world_normal: vec3<f32>,
+    shadow: f32
+) -> vec3<f32> {
+    // Altitude-based intensity scaling
+    let alt_factor = moon_altitude_factor(moon_dir);
+    
+    // Skip if moon not contributing (below horizon)
+    if alt_factor < 0.01 {
+        return vec3<f32>(0.0);
+    }
+    
+    // Apply horizon warmth to color
+    let warmed_color = horizon_warmth(moon_dir, moon_color);
+    
+    // Standard N.L lighting (direction TO the light)
+    let light_dir = normalize(-moon_dir);
+    let n_dot_l = max(dot(world_normal, light_dir), 0.0);
+    
+    // Scale down intensity slightly - moons should be moody, not blinding
+    // Base intensity comes from MoonConfig (0.5 for moon1, 0.45 for moon2)
+    let scaled_intensity = moon_intensity * 0.7;
+    
+    // Combine: color * base_intensity * altitude_scale * N.L * shadow
+    return warmed_color * scaled_intensity * alt_factor * n_dot_l * shadow;
 }
 
 // Calculate point light contribution at a world position.
@@ -576,24 +687,37 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var total_light = vec3<f32>(0.0);
     
     if DARK_WORLD_MODE == 1 {
-        // === DARK WORLD MODE: Dual colored moons with independent shadows ===
+        // === DARK WORLD MODE: Dual colored moons with dynamic environment lighting ===
+        // Moon positions now affect terrain lighting intensity, color, and ambient
         
-        // Very dim ambient
-        total_light = DARK_AMBIENT_COLOR * DARK_AMBIENT_INTENSITY;
-        
-        // Moon 1 (Purple) - uses uniform data from MoonConfig
-        let moon1_dir = normalize(-shadow_uniforms.moon1_direction.xyz);
+        // Get moon data from uniforms (dynamic, changes with T/Y keys)
+        let moon1_dir = normalize(shadow_uniforms.moon1_direction.xyz);
         let moon1_color = shadow_uniforms.moon1_color_intensity.rgb;
         let moon1_intensity = shadow_uniforms.moon1_color_intensity.a;
-        let n_dot_moon1 = max(dot(world_normal, moon1_dir), 0.0);
-        total_light += moon1_color * moon1_intensity * n_dot_moon1 * moon1_shadow;
         
-        // Moon 2 (Orange) - now with its own shadow!
-        let moon2_dir = normalize(-shadow_uniforms.moon2_direction.xyz);
+        let moon2_dir = normalize(shadow_uniforms.moon2_direction.xyz);
         let moon2_color = shadow_uniforms.moon2_color_intensity.rgb;
         let moon2_intensity = shadow_uniforms.moon2_color_intensity.a;
-        let n_dot_moon2 = max(dot(world_normal, moon2_dir), 0.0);
-        total_light += moon2_color * moon2_intensity * n_dot_moon2 * moon2_shadow;
+        
+        // Dynamic ambient based on which moon is more visible
+        // Blends moon colors and scales with altitude
+        total_light = calculate_dynamic_ambient(moon1_dir, moon1_color, moon2_dir, moon2_color);
+        
+        // Moon 1 (Purple) - with altitude scaling and horizon warmth
+        total_light += calculate_moon_light(
+            moon1_dir, moon1_color, moon1_intensity,
+            world_normal, moon1_shadow
+        );
+        
+        // Moon 2 (Orange) - with altitude scaling and horizon warmth
+        total_light += calculate_moon_light(
+            moon2_dir, moon2_color, moon2_intensity,
+            world_normal, moon2_shadow
+        );
+        
+        // Apply zenith-darkness: when both moons are below horizon, go nearly black
+        let darkness_factor = calculate_darkness_factor(moon1_dir.y, moon2_dir.y);
+        total_light *= darkness_factor;
         
     } else {
         // === CLASSIC SUN MODE ===
@@ -670,10 +794,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         final_color += albedo * emit_factor * 0.5;
     }
     
-    // --- Fog (Bonsai-style) ---
-    // Exponential fog for more natural falloff
-    let fog_factor = smoothstep(FOG_START, FOG_END, depth);
-    final_color = mix(final_color, FOG_COLOR, fog_factor);
+    // --- Fog (Distance + Height) ---
+    // Distance fog: exponential falloff with distance
+    let distance_fog = smoothstep(FOG_START, FOG_END, depth);
+    
+    // Height fog: ground-hugging mist that objects emerge from
+    // density controls thickness, base is where fog is densest, falloff controls vertical spread
+    let height_fog_density = shadow_uniforms.height_fog_params.x;
+    let height_fog_base = shadow_uniforms.height_fog_params.y;
+    let height_fog_falloff = shadow_uniforms.height_fog_params.z;
+    
+    // Height above fog base - objects above this emerge from mist
+    let height_above_base = world_pos.y - height_fog_base;
+    // Exponential decay with height - thicker near base, thins with altitude
+    let height_fog = height_fog_density * exp(-height_above_base * height_fog_falloff);
+    // Clamp to reasonable range
+    let height_fog_clamped = clamp(height_fog, 0.0, 0.9);
+    
+    // Combine: use maximum of distance and height fog
+    // This means objects can be fogged by either being far away OR low to the ground
+    let combined_fog = max(distance_fog, height_fog_clamped);
+    
+    final_color = mix(final_color, FOG_COLOR, combined_fog);
     
     // HDR output - values can exceed 1.0 for bloom
     return vec4<f32>(final_color, 1.0);

@@ -590,7 +590,7 @@ impl UserData for MjLuaGrid {
 
             let colors = colors_for_grid(&this.inner);
             let img = if this.inner.mz == 1 {
-                render_2d(&this.inner, &colors, pixel_size)
+                render_2d(&this.inner, &colors, pixel_size, None)
             } else {
                 render_3d_isometric(&this.inner, &colors, pixel_size)
             };
