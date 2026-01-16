@@ -30,6 +30,7 @@ pub mod all_node;
 pub mod convchain_node;
 pub mod convolution_node;
 pub mod field;
+pub mod grid_ops;
 pub mod helper;
 pub mod interpreter;
 pub mod loader;
@@ -60,6 +61,7 @@ pub use all_node::AllNode;
 pub use convchain_node::ConvChainNode;
 pub use convolution_node::{ConvolutionNode, ConvolutionRule};
 pub use field::{delta_pointwise, Field};
+pub use grid_ops::MjGridOps;
 pub use interpreter::Interpreter;
 pub use loader::{load_model, load_model_str, LoadError, LoadedModel};
 pub use map_node::{MapNode, ScaleFactor};
@@ -358,6 +360,73 @@ impl MjGrid {
                 None
             }
         })
+    }
+}
+
+// ============================================================================
+// MjGridOps trait implementation for MjGrid
+// ============================================================================
+
+impl grid_ops::MjGridOps for MjGrid {
+    fn len(&self) -> usize {
+        self.state.len()
+    }
+
+    fn is_2d(&self) -> bool {
+        self.mz == 1
+    }
+
+    fn get_state(&self, idx: usize) -> u8 {
+        self.state[idx]
+    }
+
+    fn set_state(&mut self, idx: usize, value: u8) {
+        self.state[idx] = value;
+    }
+
+    fn state(&self) -> &[u8] {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut [u8] {
+        &mut self.state
+    }
+
+    fn num_values(&self) -> u8 {
+        self.c
+    }
+
+    fn value_for_char(&self, ch: char) -> Option<u8> {
+        self.values.get(&ch).copied()
+    }
+
+    fn char_for_value(&self, val: u8) -> Option<char> {
+        self.characters.get(val as usize).copied()
+    }
+
+    fn wave_for_char(&self, ch: char) -> Option<u32> {
+        self.waves.get(&ch).copied()
+    }
+
+    fn wave(&self, chars: &str) -> u32 {
+        // Delegate to existing method on MjGrid
+        MjGrid::wave(self, chars)
+    }
+
+    fn get_mask(&self, idx: usize) -> bool {
+        self.mask[idx]
+    }
+
+    fn set_mask(&mut self, idx: usize, value: bool) {
+        self.mask[idx] = value;
+    }
+
+    fn clear_mask(&mut self) {
+        self.mask.fill(false);
+    }
+
+    fn dimensions(&self) -> (usize, usize, usize) {
+        (self.mx, self.my, self.mz)
     }
 }
 

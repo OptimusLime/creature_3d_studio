@@ -7,15 +7,19 @@
 //!
 //! C# Reference: Node.cs (lines 7-111)
 
+use super::grid_ops::MjGridOps;
 use super::rng::MjRng;
 use super::MjGrid;
 
 /// Shared execution context passed to all nodes during execution.
 ///
 /// Contains the grid, RNG, and change tracking for incremental matching.
-pub struct ExecutionContext<'a> {
+///
+/// The generic parameter `G` allows different grid types (Cartesian, Spherical).
+/// Default is `MjGrid` for backward compatibility.
+pub struct ExecutionContext<'a, G: MjGridOps = MjGrid> {
     /// The grid being modified
-    pub grid: &'a mut MjGrid,
+    pub grid: &'a mut G,
     /// Random number generator (deterministic with seed).
     /// Uses MjRng trait to support both StdRandom and DotNetRandom.
     pub random: &'a mut dyn MjRng,
@@ -30,9 +34,9 @@ pub struct ExecutionContext<'a> {
     pub gif: bool,
 }
 
-impl<'a> ExecutionContext<'a> {
+impl<'a, G: MjGridOps> ExecutionContext<'a, G> {
     /// Create a new execution context.
-    pub fn new(grid: &'a mut MjGrid, random: &'a mut dyn MjRng) -> Self {
+    pub fn new(grid: &'a mut G, random: &'a mut dyn MjRng) -> Self {
         Self {
             grid,
             random,
@@ -44,7 +48,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     /// Create a new execution context with gif mode enabled.
-    pub fn with_gif(grid: &'a mut MjGrid, random: &'a mut dyn MjRng, gif: bool) -> Self {
+    pub fn with_gif(grid: &'a mut G, random: &'a mut dyn MjRng, gif: bool) -> Self {
         Self {
             grid,
             random,
