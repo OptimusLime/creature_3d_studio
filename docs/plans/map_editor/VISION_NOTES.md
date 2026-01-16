@@ -608,11 +608,306 @@ We need to:
 
 ---
 
-## 28. Next Steps
+## 28. TikTok Exemplars: End-to-End Experiences
 
-- Another brain dump to append more notes about our demo North Stars
-- What they are
-- How to incorporate them
+### Core Question
+
+What full end-to-end experience do I want to convey in a TikTok ad? What is the core thing I want to convey?
+
+---
+
+## 29. TikTok Idea #1: Physics-Based Mana (PBM) System
+
+### The Benefit
+
+Solves many problems with magic systems if it existed.
+
+### Problem with Typical Magic
+
+Magic in most games is **unbounded**:
+- "I regenerate 50 mana per second" simplifies to time- and mana-based management
+- It's easy: blue bar full = cast
+- All spells draw from the same pool
+- Generic, limited, artist-constructed
+- Often lacking personality and creativity
+- **Balance is a nightmare** (e.g., massively powerful spell with modest mana cost becomes dominant)
+
+### Opposite Extreme: Purely User-Generated Spells
+
+Devolves into bullet hell:
+- "More shit" dominates
+- Real world has capacity limits (you can't manufacture infinite bullets)
+
+### Our PBM Solution
+
+- Small particles can't go far; they burn out quickly
+- Minimum voxel size and minimum energy per voxel
+- **1,000 small voxels cost more energy than one object of 1,000 combined voxels**
+- Efficiency discourages bullet hell
+- Large "spirit bomb" is possible but has tradeoffs:
+  - Limited range
+  - Charge-up locks you in place
+  - Makes you vulnerable (Goku spirit bomb principle)
+
+### TikTok Execution
+
+- "Watch me make a spirit bomb" from scratch
+- Explain tradeoffs; if missing tradeoffs, then massive mana costs
+- "Watch me edit a spell" live: make something creative with constraints
+
+---
+
+## 30. TikTok Idea #2: Flexifying a Spell
+
+### Progression
+
+Show iterative complexity:
+1. Simple fireball
+2. Splitting fireball
+3. Artillery-shell fireball
+4. MIRV (multiple independently targetable reentry vehicle)
+5. Heat-seeking fireball
+
+### The Point
+
+Show the iterative process of making it more interesting and complex.
+
+---
+
+## 31. TikTok Idea #3: Weird Shit
+
+### Concept
+
+Make a weird creature/spell/world/material:
+- E.g., diamond-looking something
+- Must be **attention-grabbing weird**
+- I don't know exactly what yet, but it's gotta be weird
+
+---
+
+## 32. TikTok Idea #4: What's Wrong with Harry Potter (HPP)
+
+### The Problem
+
+"Magic actually sucks" in HP:
+- Makes no sense
+- But charm/whimsy is why we like it
+
+### Investigate
+
+Why do we like HP despite failures?
+
+### Present "The Harry Potter Problem" (HPP)
+
+Spells are basically unlimited.
+
+### Our Solution
+
+Physics-based magic (PBM).
+
+### Need Better Acronym
+
+PBM is descriptive but not exciting. Candidates:
+- PIM
+- PAM (Physical Alchemy Magic)
+- RBM (Reality-Based Magic)
+
+We need a term that conveys physics + magic cleanly.
+
+---
+
+## 33. TikTok Idea #5: Map Editor (with AI Angle)
+
+### Basic Angle (Probably Not Compelling)
+
+"Come with me while I make two warring nations on a tundra planet."
+
+### Better Angle: Why Gamers Hate AI in Games
+
+**The Reason:**
+- It doesn't give them shit
+- It doesn't do anything for them
+
+**As a Coder vs Gamer:**
+- As a coder, AI helps
+- For gamers, misaligned incentives
+- What excites executives about AI is diametrically opposed to what excites gamers
+- The AI we're seeing is not the AI we want
+- But we DO want AI—just not the executive version
+
+**Show Our Solution:**
+- Positive AI that expands player creativity, doesn't limit
+- Augments devs instead of replacing them
+- Makes devs more ambitious
+
+**On Visual Artists:**
+- Visual artists in 3D aren't currently at risk (rigging/designing is hard)
+- But it will get there
+- We want artists supercharged: from one piece/week to one piece/day
+- More styles, expression unlocked
+
+---
+
+## 34. TikTok Idea #6: Bleak AI Future vs Cool Tech
+
+### The Premise
+
+The world that's coming (AI) is not the one we want. Especially true in games.
+
+**Bleak future, cool tech.**
+
+### Our Vision
+
+- Strap AI to gamers and developers to build incredibly ambitious games
+- Explain what that ambition looks like
+- How we unlock it
+
+---
+
+## 35. TikTok Idea #7: "Three Most Ambitious Things About My Game"
+
+### Format (I Don't Love It, But...)
+
+Example claims with hypothesis → evidence → conclusion (x3):
+- E.g., full map editor with AI assistance
+- Etc.
+
+---
+
+## 36. What Resonates in TikTok Ads?
+
+### Key Themes
+
+- **Ambition** and "simulator of your wildest dreams"
+- **Control with thoughts**
+- Depth of simulation tied to personal interest and expression
+- No hard walls
+
+### Requirements
+
+Requires key systems (philosophical, not just technical).
+
+---
+
+## 37. Heady Philosophical Video: Expression in Simulation
+
+### Core Topic
+
+Expression in simulation and the difficulty curve of creating in Minecraft.
+
+### "What Minecraft Gets Wrong"
+
+**The Problem:**
+- The fundamental difficulty of making something nice is a learning bottleneck
+- Too steep a curve means work doesn't get done
+- Manual work in Minecraft is hard
+
+**Why Don't More Simulation Nerds Play It?**
+- Difficulty of making nice/interesting things is too high
+
+**Counterargument:**
+- "That's the charm"
+- Sure, philosophically valid—but practically, AI tools matter
+
+### Coding as Metaphor
+
+**Software runs the world:**
+- Few coders relative to impact
+- Massive wealth concentrated in orgs good at coding/distributed systems
+
+**Why isn't 90% of the world coding?**
+- Because it's fucking hard
+- Hard doesn't equal motivating
+
+**Minecraft's "hard to make pretty" ≈ coding:**
+- Huge, beautiful things only a few can achieve
+- Discouraging for most
+
+**AI in coding is unlocking creators:**
+- Coders will quadruple in two years
+- Non-coders writing code (sales, business, managers, doctors) via AI
+
+### So Why Not Bring That to Games?
+
+**Imagine:**
+- An authoring tool that builds whatever you want in Minecraft
+
+**Key Insight:**
+- Games need constraints
+- Minecraft does constraints well (you find tiles/resources)
+- But it's also very limiting
+- Resource farming/building is hard
+
+**Use This Critique as Inspiration:**
+- AI puts us on the most interesting precipice
+- Build that into our game
+
+---
+
+## 38. TikTok Idea #8: Day-Night Cycle with Two Moons
+
+### Hook
+
+"What's better than one moon? Two moons. Check it out."
+
+Simple, visual, immediate.
+
+---
+
+## 39. TikTok Idea #9: Markov Jr. and Procedural Generation
+
+### Hook (Unclear, But Focus Is...)
+
+Whole video on Markov Jr./Markov models/wave function collapse/procedural gen.
+
+### Structure
+
+1. **Start with most interesting view:** Rendered apartment complex in an environment
+2. **Reveal:** "Would you believe this apartment comes from something as simple as this?"
+3. **Show:** The simple growth model/cellular automata
+
+### Key Insight
+
+Cellular automata shine when combined with simulation + voxels.
+
+### Example Execution
+
+- Toss an object
+- Upon landing, it grows an apartment complex
+- Two moons, strong time-of-day
+- Side details, PBR
+- **Make it sexy**
+
+---
+
+## 40. TikTok Summary: Candidate Ideas
+
+| # | Idea | Hook/Core |
+|---|------|-----------|
+| 1 | Physics-Based Mana | "Watch me make a spirit bomb" - tradeoffs and constraints |
+| 2 | Flexifying a Spell | Fireball → MIRV progression |
+| 3 | Weird Shit | Attention-grabbing strange creation |
+| 4 | Harry Potter Problem | "Magic sucks in HP" → our solution |
+| 5 | Map Editor / AI for Gamers | "Why gamers hate AI" → our positive AI |
+| 6 | Bleak AI Future | Cool tech, bad trajectory → our vision |
+| 7 | Three Ambitious Things | Hypothesis → evidence → conclusion format |
+| 8 | Two Moons | Simple visual hook |
+| 9 | Markov Jr. Procedural | Object lands → apartment grows |
+
+---
+
+## 41. Meta: What These Notes Are
+
+This is super unorganized. Dumping it here to think about and create from.
+
+**Purpose:**
+- Raw material for demos
+- Raw material for marketing
+- Raw material for roadmap prioritization
+
+**Next:**
+- More rants may follow
+- Will organize into actionable docs later
 
 ---
 
