@@ -453,18 +453,98 @@ impl Renderable2D for SphericalMjGrid {
 }
 ```
 
-### 14.3 Tests to Migrate (4 tests)
+### 14.3 Tests to Migrate (4 tests) - DONE
 
-- [ ] `test_polar_to_cartesian`
-- [ ] `test_cartesian_quarter_circle`
-- [ ] `test_total_voxels`
-- [ ] `test_count_nonzero`
+- [x] `test_polar_to_cartesian`
+- [x] `test_cartesian_quarter_circle`
+- [x] `test_total_voxels`
+- [x] `test_count_nonzero`
+- [x] `test_recordable_grid_trait` (NEW)
 
-### 14.4 Verification
+### 14.4 Verification - DONE
 
 ```bash
-cargo test -p studio_core markov_junior::spherical_grid::render
+cargo test -p studio_core markov_junior::spherical_grid::tests::level_6_rendering
+# Result: 5 tests passed
 ```
+
+### 14.5 MP4/Video Verification (PENDING)
+
+The rendering pipeline is already complete in `recording/video.rs`:
+- `VideoExporter::render_polar_2d()` renders frames from `GridType::Polar2D`
+- `SphericalMjGrid` implements `RecordableGrid` returning `GridType::Polar2D`
+
+**To verify rendering works end-to-end, regenerate all polar model MP4s:**
+
+```bash
+# Run integration tests that generate MP4s
+cargo test -p studio_core markov_junior::spherical_grid::tests::level_7_integration --release -- --nocapture
+
+# Or run individually:
+cargo test test_spherical_ring_growth_video --release -- --nocapture
+cargo test test_spherical_geological_layers_video --release -- --nocapture
+```
+
+**Tests to add to `spherical_grid.rs`:**
+
+```rust
+// Level 7: Integration tests with video export
+mod level_7_integration {
+    use super::*;
+    use crate::markov_junior::recording::{SimulationRecorder, VideoExporter};
+
+    fn output_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap()
+            .parent().unwrap()
+            .join("screenshots/spherical")
+    }
+
+    #[test]
+    fn test_spherical_ring_growth_video() {
+        // Port test_model_ring_growth from polar_grid.rs
+        // 1. Create SphericalMjGrid
+        // 2. Define rules using SphericalRule
+        // 3. Run model, record frames with SimulationRecorder
+        // 4. Export to screenshots/spherical/ring_growth.mp4
+    }
+
+    #[test]
+    fn test_spherical_geological_layers_video() {
+        // Port test_model_geological_layers from polar_grid.rs
+        // 1. Create SphericalMjGrid with BMSDG palette
+        // 2. Define geological layering rules
+        // 3. Run model, record frames
+        // 4. Export to screenshots/spherical/geological_layers.mp4
+    }
+
+    #[test]
+    fn test_run_all_spherical_models() {
+        // Master test that runs all polar models and generates summary
+    }
+}
+```
+
+**Output files to verify:**
+```
+screenshots/spherical/
+├── ring_growth.mp4
+├── ring_growth.mjsim
+├── ring_growth.png
+├── geological_layers.mp4
+├── geological_layers.mjsim
+├── geological_layers.png
+├── angular_spread.mp4
+├── wave_pattern.png
+├── checkerboard.png
+├── spiral.png
+└── voronoi.png
+```
+
+**Visual verification checklist:**
+- [ ] ring_growth.mp4 - Concentric rings filling outward from center
+- [ ] geological_layers.mp4 - Layered rings: magma → stone → dirt → grass
+- [ ] All PNGs render as polar/circular images (not rectangles)
 
 ---
 

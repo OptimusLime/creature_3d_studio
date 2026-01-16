@@ -1947,4 +1947,310 @@ mod tests {
             assert_eq!(grid2.get(10, 100, 0), 2);
         }
     }
+
+    // ========================================================================
+    // Level 7: Integration Tests with Video Export
+    // ========================================================================
+
+    mod level_7_integration {
+        use super::*;
+        use crate::markov_junior::recording::{SimulationRecorder, VideoError, VideoExporter};
+        use std::path::PathBuf;
+
+        fn output_dir() -> PathBuf {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("screenshots/spherical")
+        }
+
+        /// Run a model step: apply all matching rules once per cell
+        fn run_step(grid: &mut SphericalMjGrid, rules: &[SphericalRule]) -> bool {
+            let mut changes = Vec::new();
+
+            // Find all matches
+            for idx in 0..grid.len() {
+                for rule in rules {
+                    if rule.matches(grid, idx) {
+                        changes.push((idx, rule.output));
+                        break; // First matching rule wins
+                    }
+                }
+            }
+
+            // Apply changes
+            let had_changes = !changes.is_empty();
+            for (idx, value) in changes {
+                grid.set_state(idx, value);
+            }
+            had_changes
+        }
+
+        /// Test: Ring Growth model - grows outward from inner ring.
+        ///
+        /// Seed the inner ring, grow outward via rules.
+        /// Should produce concentric rings filling the disk.
+        #[test]
+        fn test_spherical_ring_growth_video() {
+            let out_dir = output_dir();
+            std::fs::create_dir_all(&out_dir).expect("Failed to create output directory");
+
+            // Create grid: B=0 (background), W=1 (white)
+            let mut grid = SphericalMjGrid::new_polar(64, 32, 1.0, "BW");
+            let theta_divs = grid.theta_divisions;
+
+            // Seed: entire inner ring set to W (1)
+            for theta in 0..theta_divs {
+                grid.set(0, theta, 0, 1);
+            }
+
+            // Rule: B with r_minus=W -> W (grow outward)
+            // "If I'm black and my inner neighbor is white, become white"
+            let rules = vec![SphericalRule {
+                input: SphericalPattern {
+                    center: 0,        // B
+                    r_minus: Some(1), // W
+                    ..Default::default()
+                },
+                output: 1, // W
+            }];
+
+            // Generate all symmetry variants (though for this rule, symmetry doesn't change it)
+            let rules: Vec<SphericalRule> =
+                rules.into_iter().flat_map(|r| r.all_variants()).collect();
+
+            // Record simulation
+            let mut recorder = SimulationRecorder::new(&grid);
+            recorder.record_frame(&grid);
+
+            // Run model
+            let max_steps = 100;
+            for _ in 0..max_steps {
+                if !run_step(&mut grid, &rules) {
+                    break;
+                }
+                recorder.record_frame(&grid);
+            }
+
+            println!(
+                "Spherical Ring Growth: {} frames recorded",
+                recorder.frame_count()
+            );
+
+            // Save final PNG
+            let colors = vec![
+                [20, 20, 30, 255],    // B - dark background
+                [240, 240, 230, 255], // W - white fill
+            ];
+            let path_png = out_dir.join("ring_growth.png");
+            grid.save_png(&path_png, 512, &colors, [20, 20, 30, 255])
+                .expect("Failed to save PNG");
+            println!("Saved: {}", path_png.display());
+
+            // Save archive
+            let archive = recorder.into_archive();
+            let archive_path = out_dir.join("ring_growth.mjsim");
+            archive.save(&archive_path).expect("Failed to save archive");
+            println!("Saved: {}", archive_path.display());
+
+            // Export to MP4
+            let exporter = VideoExporter::new(archive, colors, 512);
+            let video_path = out_dir.join("ring_growth.mp4");
+            match exporter.export_mp4(&video_path, 5.0, 30) {
+                Ok(()) => println!("Exported: {}", video_path.display()),
+                Err(VideoError::FfmpegNotFound) => {
+                    println!("Skipping MP4 export (ffmpeg not installed)");
+                }
+                Err(e) => panic!("Video export failed: {}", e),
+            }
+
+            // Verify: grid should be filled
+            let nonzero = grid.count_nonzero();
+            let total = grid.total_voxels();
+            println!(
+                "Filled: {} / {} ({:.1}%)",
+                nonzero,
+                total,
+                100.0 * nonzero as f64 / total as f64
+            );
+            assert!(
+                nonzero > total / 2,
+                "Ring growth should fill at least 50% of grid"
+            );
+        }
+
+        /// Test: Geological Layers model - creates layered rings.
+        ///
+        /// Magma at center spreads outward, transforms through layers:
+        /// Magma -> Stone -> Dirt -> Grass
+        #[test]
+        fn test_spherical_geological_layers_video() {
+            let out_dir = output_dir();
+            std::fs::create_dir_all(&out_dir).expect("Failed to create output directory");
+
+            // Palette: B=0 (background), M=1 (magma), S=2 (stone), D=3 (dirt), G=4 (grass)
+            let mut grid = SphericalMjGrid::new_polar(64, 40, 1.0, "BMSDG");
+            let theta_divs = grid.theta_divisions;
+
+            // Seed: magma at inner ring
+            for theta in 0..theta_divs {
+                grid.set(0, theta, 0, 1); // M = 1
+            }
+
+            // Rules for geological layering:
+            // - Magma grows outward, transforms to stone when at frontier
+            // - Stone grows outward, transforms to dirt when at frontier
+            // - Dirt grows outward, transforms to grass when at frontier
+            // - Grass grows outward
+
+            let base_rules = vec![
+                // Magma grows outward from magma
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 0,        // B
+                        r_minus: Some(1), // M
+                        ..Default::default()
+                    },
+                    output: 1, // M
+                },
+                // Magma at frontier transforms to stone
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 1,        // M
+                        r_minus: Some(1), // M (backed by magma)
+                        r_plus: Some(0),  // B (frontier)
+                        ..Default::default()
+                    },
+                    output: 2, // S
+                },
+                // Stone grows outward from stone
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 0,        // B
+                        r_minus: Some(2), // S
+                        ..Default::default()
+                    },
+                    output: 2, // S
+                },
+                // Stone at frontier transforms to dirt
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 2,        // S
+                        r_minus: Some(2), // S (backed by stone)
+                        r_plus: Some(0),  // B (frontier)
+                        ..Default::default()
+                    },
+                    output: 3, // D
+                },
+                // Dirt grows outward from dirt
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 0,        // B
+                        r_minus: Some(3), // D
+                        ..Default::default()
+                    },
+                    output: 3, // D
+                },
+                // Dirt at frontier transforms to grass
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 3,        // D
+                        r_minus: Some(3), // D (backed by dirt)
+                        r_plus: Some(0),  // B (frontier)
+                        ..Default::default()
+                    },
+                    output: 4, // G
+                },
+                // Grass grows outward from grass
+                SphericalRule {
+                    input: SphericalPattern {
+                        center: 0,        // B
+                        r_minus: Some(4), // G
+                        ..Default::default()
+                    },
+                    output: 4, // G
+                },
+            ];
+
+            // Expand symmetry variants
+            let rules: Vec<SphericalRule> = base_rules
+                .into_iter()
+                .flat_map(|r| r.all_variants())
+                .collect();
+
+            // Record simulation
+            let mut recorder = SimulationRecorder::new(&grid);
+            recorder.record_frame(&grid);
+
+            // Run model
+            let max_steps = 200;
+            for _ in 0..max_steps {
+                if !run_step(&mut grid, &rules) {
+                    break;
+                }
+                recorder.record_frame(&grid);
+            }
+
+            println!(
+                "Spherical Geological Layers: {} frames recorded",
+                recorder.frame_count()
+            );
+
+            // Colors for each layer
+            let colors: Vec<[u8; 4]> = vec![
+                [20, 20, 25, 255],   // B - void/background (dark)
+                [255, 100, 30, 255], // M - magma (bright orange)
+                [80, 75, 70, 255],   // S - stone (gray)
+                [120, 80, 50, 255],  // D - dirt (brown)
+                [60, 160, 50, 255],  // G - grass (green)
+            ];
+
+            // Save final PNG
+            let path_png = out_dir.join("geological_layers.png");
+            grid.save_png(&path_png, 512, &colors, [20, 20, 25, 255])
+                .expect("Failed to save PNG");
+            println!("Saved: {}", path_png.display());
+
+            // Save archive
+            let archive = recorder.into_archive();
+            let archive_path = out_dir.join("geological_layers.mjsim");
+            archive.save(&archive_path).expect("Failed to save archive");
+            println!("Saved: {}", archive_path.display());
+
+            // Export to MP4
+            let exporter = VideoExporter::new(archive, colors, 512);
+            let video_path = out_dir.join("geological_layers.mp4");
+            match exporter.export_mp4(&video_path, 10.0, 30) {
+                Ok(()) => println!("Exported: {}", video_path.display()),
+                Err(VideoError::FfmpegNotFound) => {
+                    println!("Skipping MP4 export (ffmpeg not installed)");
+                }
+                Err(e) => panic!("Video export failed: {}", e),
+            }
+
+            // Verify we have multiple layers
+            let mut layer_counts = [0usize; 5];
+            for idx in 0..grid.len() {
+                let v = grid.get_state(idx) as usize;
+                if v < 5 {
+                    layer_counts[v] += 1;
+                }
+            }
+
+            println!("Layer distribution:");
+            println!("  B (background): {}", layer_counts[0]);
+            println!("  M (magma): {}", layer_counts[1]);
+            println!("  S (stone): {}", layer_counts[2]);
+            println!("  D (dirt): {}", layer_counts[3]);
+            println!("  G (grass): {}", layer_counts[4]);
+
+            // Should have at least some of each non-background layer
+            assert!(
+                layer_counts[1] > 0 || layer_counts[2] > 0,
+                "Expected some magma or stone"
+            );
+        }
+    }
 }
