@@ -193,7 +193,7 @@ impl Node for PathNode {
         while generations[penx as usize + peny as usize * mx + penz as usize * mx * my] != 0 {
             let i = penx as usize + peny as usize * mx + penz as usize * mx * my;
             ctx.grid.state[i] = self.value;
-            ctx.record_change(penx, peny, penz);
+            ctx.record_change(i);
 
             let (dx, dy, dz) = find_direction(
                 penx,

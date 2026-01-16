@@ -55,7 +55,8 @@ impl AllNode {
         let mut scored: Vec<(usize, f64)> = Vec::new();
 
         for m in 0..self.data.match_count {
-            let (r, x, y, z) = self.data.matches[m];
+            let (r, idx) = self.data.matches[m];
+            let (x, y, z) = ctx.grid.index_to_coord(idx);
 
             let heuristic = delta_pointwise(
                 &ctx.grid.state,
@@ -150,7 +151,7 @@ impl AllNode {
                         ctx.grid.mask[si] = true;
                         // Apply change
                         ctx.grid.state[si] = new_value;
-                        ctx.record_change(sx as i32, sy as i32, sz as i32);
+                        ctx.record_change(si);
                     }
                 }
             }
@@ -192,11 +193,11 @@ impl Node for AllNode {
         let changes_start = ctx.changes.len();
 
         for k in ordered {
-            let (r, x, y, z) = self.data.matches[k];
+            let (r, idx) = self.data.matches[k];
+            let (x, y, z) = ctx.grid.index_to_coord(idx);
 
             // Clear mask entry for this match position
-            let i = x as usize + y as usize * mx + z as usize * mx * my;
-            self.data.match_mask[r][i] = false;
+            self.data.match_mask[r][idx] = false;
 
             // Try to fit (will skip if overlapping with already-applied matches)
             self.fit(r, x, y, z, ctx);
@@ -205,9 +206,8 @@ impl Node for AllNode {
         // Clear mask for all changed cells (prepare for next step)
         // C# Reference: AllNode.Go() lines 99-103
         for n in changes_start..ctx.changes.len() {
-            let (x, y, z) = ctx.changes[n];
-            let i = x as usize + y as usize * mx + z as usize * mx * my;
-            ctx.grid.mask[i] = false;
+            let idx = ctx.changes[n];
+            ctx.grid.mask[idx] = false;
         }
 
         self.data.counter += 1;

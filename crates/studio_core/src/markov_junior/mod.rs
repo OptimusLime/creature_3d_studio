@@ -30,6 +30,7 @@ pub mod all_node;
 pub mod convchain_node;
 pub mod convolution_node;
 pub mod field;
+pub mod grid_ops;
 pub mod helper;
 pub mod interpreter;
 pub mod loader;
@@ -43,11 +44,14 @@ pub mod observation;
 pub mod one_node;
 pub mod parallel_node;
 pub mod path_node;
+pub mod polar_grid;
+pub mod recording;
 pub mod render;
 pub mod rng;
 pub mod rule;
 pub mod rule_node;
 pub mod search;
+pub mod spherical_grid;
 pub mod symmetry;
 pub mod verification;
 pub mod voxel_bridge;
@@ -58,6 +62,7 @@ pub use all_node::AllNode;
 pub use convchain_node::ConvChainNode;
 pub use convolution_node::{ConvolutionNode, ConvolutionRule};
 pub use field::{delta_pointwise, Field};
+pub use grid_ops::MjGridOps;
 pub use interpreter::Interpreter;
 pub use loader::{load_model, load_model_str, LoadError, LoadedModel};
 pub use map_node::{MapNode, ScaleFactor};
@@ -70,10 +75,20 @@ pub use path_node::PathNode;
 pub use rule::{MjRule, RuleParseError};
 pub use rule_node::RuleNodeData;
 pub use search::{run_search, Board};
+pub use spherical_grid::SphericalMjGrid;
 pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
 pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
 pub use write_target::{MjWriteTarget, VoxelLayerTarget};
+
+// Polar coordinate extension
+pub use polar_grid::{PolarMjGrid, PolarNeighbors, PolarPattern, PolarRule, PolarSymmetry};
+
+// Recording and video export
+pub use recording::{
+    default_colors_for_palette, ArchiveError, GridType, GridTypeId, RecordableGrid, Renderable2D,
+    Renderable3D, SimulationArchive, SimulationRecorder, VideoError, VideoExporter, VoxelData,
+};
 
 // RNG abstraction (for C# compatibility testing)
 pub use rng::{DotNetRandom, MjRng, StdRandom};
@@ -302,6 +317,37 @@ impl MjGrid {
         }
     }
 
+    /// Convert (x, y, z) signed coordinates to flat index.
+    /// Returns None if out of bounds (including negative values).
+    #[inline]
+    pub fn coord_to_index(&self, x: i32, y: i32, z: i32) -> Option<usize> {
+        if x >= 0 && y >= 0 && z >= 0 {
+            let xu = x as usize;
+            let yu = y as usize;
+            let zu = z as usize;
+            if xu < self.mx && yu < self.my && zu < self.mz {
+                return Some(xu + yu * self.mx + zu * self.mx * self.my);
+            }
+        }
+        None
+    }
+
+    /// Convert (x, y, z) signed coordinates to flat index, unchecked.
+    /// SAFETY: Caller must ensure coordinates are valid.
+    #[inline]
+    pub fn coord_to_index_unchecked(&self, x: i32, y: i32, z: i32) -> usize {
+        x as usize + y as usize * self.mx + z as usize * self.mx * self.my
+    }
+
+    /// Convert flat index to (x, y, z) coordinates.
+    #[inline]
+    pub fn index_to_coord(&self, idx: usize) -> (i32, i32, i32) {
+        let x = (idx % self.mx) as i32;
+        let y = ((idx / self.mx) % self.my) as i32;
+        let z = (idx / (self.mx * self.my)) as i32;
+        (x, y, z)
+    }
+
     /// Get the value at (x, y, z), or None if out of bounds.
     #[inline]
     pub fn get(&self, x: usize, y: usize, z: usize) -> Option<u8> {
@@ -347,6 +393,183 @@ impl MjGrid {
                 None
             }
         })
+    }
+}
+
+// ============================================================================
+// MjGridOps trait implementation for MjGrid
+// ============================================================================
+
+impl grid_ops::MjGridOps for MjGrid {
+    fn len(&self) -> usize {
+        self.state.len()
+    }
+
+    fn is_2d(&self) -> bool {
+        self.mz == 1
+    }
+
+    fn get_state(&self, idx: usize) -> u8 {
+        self.state[idx]
+    }
+
+    fn set_state(&mut self, idx: usize, value: u8) {
+        self.state[idx] = value;
+    }
+
+    fn state(&self) -> &[u8] {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut [u8] {
+        &mut self.state
+    }
+
+    fn num_values(&self) -> u8 {
+        self.c
+    }
+
+    fn value_for_char(&self, ch: char) -> Option<u8> {
+        self.values.get(&ch).copied()
+    }
+
+    fn char_for_value(&self, val: u8) -> Option<char> {
+        self.characters.get(val as usize).copied()
+    }
+
+    fn wave_for_char(&self, ch: char) -> Option<u32> {
+        self.waves.get(&ch).copied()
+    }
+
+    fn wave(&self, chars: &str) -> u32 {
+        // Delegate to existing method on MjGrid
+        MjGrid::wave(self, chars)
+    }
+
+    fn get_mask(&self, idx: usize) -> bool {
+        self.mask[idx]
+    }
+
+    fn set_mask(&mut self, idx: usize, value: bool) {
+        self.mask[idx] = value;
+    }
+
+    fn clear_mask(&mut self) {
+        self.mask.fill(false);
+    }
+
+    fn dimensions(&self) -> (usize, usize, usize) {
+        (self.mx, self.my, self.mz)
+    }
+
+    fn center_index(&self) -> usize {
+        // Cartesian center: mx/2 + (my/2)*mx + (mz/2)*mx*my
+        self.mx / 2 + (self.my / 2) * self.mx + (self.mz / 2) * self.mx * self.my
+    }
+}
+
+// ============================================================================
+// RecordableGrid and Renderable2D/3D trait implementations for MjGrid
+// ============================================================================
+
+impl recording::RecordableGrid for MjGrid {
+    fn grid_type(&self) -> recording::GridType {
+        if self.mz == 1 {
+            recording::GridType::Cartesian2D {
+                width: self.mx as u32,
+                height: self.my as u32,
+            }
+        } else {
+            recording::GridType::Cartesian3D {
+                width: self.mx as u32,
+                height: self.my as u32,
+                depth: self.mz as u32,
+            }
+        }
+    }
+
+    fn palette(&self) -> String {
+        self.characters.iter().collect()
+    }
+
+    fn state_to_bytes(&self) -> Vec<u8> {
+        self.state.clone()
+    }
+
+    fn state_from_bytes(&mut self, bytes: &[u8]) -> bool {
+        if bytes.len() != self.state.len() {
+            return false;
+        }
+        self.state.copy_from_slice(bytes);
+        true
+    }
+}
+
+impl recording::Renderable2D for MjGrid {
+    fn render_to_image(
+        &self,
+        image_size: u32,
+        colors: &[[u8; 4]],
+        background: [u8; 4],
+    ) -> image::RgbaImage {
+        use image::{ImageBuffer, Rgba};
+
+        let mut img: image::RgbaImage =
+            ImageBuffer::from_pixel(image_size, image_size, Rgba(background));
+
+        if self.mz != 1 {
+            // Only 2D grids can be rendered as 2D images
+            // For 3D, return empty image with background
+            return img;
+        }
+
+        let width = self.mx as f32;
+        let height = self.my as f32;
+
+        // Scale to fit image
+        let scale_x = image_size as f32 / width;
+        let scale_y = image_size as f32 / height;
+        let scale = scale_x.min(scale_y) * 0.95; // 5% margin
+
+        let offset_x = (image_size as f32 - width * scale) / 2.0;
+        let offset_y = (image_size as f32 - height * scale) / 2.0;
+
+        // Draw each cell
+        for y in 0..self.my {
+            for x in 0..self.mx {
+                let idx = x + y * self.mx;
+                let value = self.state[idx] as usize;
+
+                if value >= colors.len() || colors[value][3] == 0 {
+                    continue;
+                }
+
+                let color = Rgba(colors[value]);
+
+                // Fill the cell rectangle
+                let px_start = (offset_x + x as f32 * scale) as u32;
+                let py_start = (offset_y + y as f32 * scale) as u32;
+                let px_end = (offset_x + (x + 1) as f32 * scale) as u32;
+                let py_end = (offset_y + (y + 1) as f32 * scale) as u32;
+
+                for py in py_start..py_end.min(image_size) {
+                    for px in px_start..px_end.min(image_size) {
+                        img.put_pixel(px, py, color);
+                    }
+                }
+            }
+        }
+
+        img
+    }
+}
+
+impl recording::Renderable3D for MjGrid {
+    fn render_to_voxels(&self, _colors: &[[u8; 4]]) -> recording::VoxelData {
+        recording::VoxelData {
+            dimensions: (self.mx as u32, self.my as u32, self.mz as u32),
+            values: self.state.clone(),
+        }
     }
 }
 
@@ -419,6 +642,38 @@ mod tests {
         assert_eq!(grid.index(0, 1, 0), Some(3)); // y=1 -> +mx
         assert_eq!(grid.index(0, 0, 1), Some(9)); // z=1 -> +mx*my
         assert_eq!(grid.index(3, 0, 0), None); // out of bounds
+    }
+
+    #[test]
+    fn test_grid_coord_conversion() {
+        let grid = MjGrid::new(3, 4, 2); // mx=3, my=4, mz=2
+
+        // Test coord_to_index with valid coords
+        assert_eq!(grid.coord_to_index(0, 0, 0), Some(0));
+        assert_eq!(grid.coord_to_index(2, 0, 0), Some(2));
+        assert_eq!(grid.coord_to_index(0, 1, 0), Some(3)); // y=1 -> +mx
+        assert_eq!(grid.coord_to_index(0, 0, 1), Some(12)); // z=1 -> +mx*my (3*4=12)
+        assert_eq!(grid.coord_to_index(2, 3, 1), Some(2 + 3 * 3 + 1 * 12)); // 2+9+12=23
+
+        // Test out of bounds
+        assert_eq!(grid.coord_to_index(-1, 0, 0), None);
+        assert_eq!(grid.coord_to_index(0, -1, 0), None);
+        assert_eq!(grid.coord_to_index(3, 0, 0), None); // x >= mx
+        assert_eq!(grid.coord_to_index(0, 4, 0), None); // y >= my
+        assert_eq!(grid.coord_to_index(0, 0, 2), None); // z >= mz
+
+        // Test index_to_coord
+        assert_eq!(grid.index_to_coord(0), (0, 0, 0));
+        assert_eq!(grid.index_to_coord(2), (2, 0, 0));
+        assert_eq!(grid.index_to_coord(3), (0, 1, 0));
+        assert_eq!(grid.index_to_coord(12), (0, 0, 1));
+        assert_eq!(grid.index_to_coord(23), (2, 3, 1));
+
+        // Test roundtrip
+        for idx in 0..24 {
+            let (x, y, z) = grid.index_to_coord(idx);
+            assert_eq!(grid.coord_to_index(x, y, z), Some(idx));
+        }
     }
 
     #[test]
