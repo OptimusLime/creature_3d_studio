@@ -445,4 +445,175 @@ From this brain dump, key milestones are:
 
 ---
 
+## 21. Core Game Loop Vision
+
+### Terraforming a World
+
+Part of the game is the ability to terraform a world:
+- Some world parameters are fixed (e.g., number of moons)
+- Others are changeable through gameplay
+
+### Example World: Tundra River World
+
+A rich example to illustrate the vision:
+
+**Geography:**
+- Tundra world with a river down the center
+- Along the river it's very tropical
+- As soon as you exit the tropical region, you hit tundra
+- The only habitable region is the river
+- Gutters of hot steaming water where volcanic activity happens under the surface
+
+**Underground:**
+- Dig down: lots of lava and "lava mana" that you can mine
+
+**Tundra Resources:**
+- Outside in the tundra are "hard mana"
+- Soul stones: rocky objects holding dense mana
+- If you can find and tolerate that area, you can live there
+- The closer you get to the poles or certain regions, the more soul stone and more powerful objects
+
+**Creatures:**
+- Tundra monsters that murder anything that enters; very powerful
+
+**Factions:**
+- River people live on the water
+- They're terrorized by the tundra
+- Castles along the river representing the river people
+
+**Story/Conflict:**
+- Some areas getting pummeled by coordinated attacks from two sides of the tundra
+- This is unusual - they've never cooperated before
+- Two enemies working together:
+  - **Tundra Necromancer** - raises ice zombies from death; if you kill somebody, he can rise up
+  - **Ice King** - cools things; the big boss
+
+**Goal of the simulation:**
+- You start as a river person
+- Your goal is to kill the Ice King
+
+---
+
+## 22. World Building with AI
+
+### The Vision
+
+I want to be able to design that story:
+- People
+- Things
+- Timelines
+- All the stuff that creates a rich atmosphere
+
+### What "Playing God" Means
+
+The AI-assisted map editor is "playing God":
+1. Describe the story and worldbuild
+2. Build the world
+3. Define key players
+4. Populate the world with stuff (tundra monsters, etc.)
+5. Run the simulation
+6. Then drop yourself into it and play it out
+
+---
+
+## 23. RTS-Style Automation Concepts
+
+### Automatic Operations
+
+- Objects that mine automatically
+- Miners operate automatically
+- "How'd you get that?" - Lua scripts that operate these guys according to our API
+
+### Code Logic Into Objects
+
+Idea: code a lot of the logic directly into the game, directly into the objects.
+
+---
+
+## 24. Efficiency as Game Mechanic
+
+### Objects Take Power to Operate
+
+Objects might take power to operate because they're not efficient.
+
+**Example: Harvester Brain**
+- If I make a better harvester brain, I can put it on the object and have a better harvester
+- It doesn't need to run A* every frame and cost a bajillion mana
+- A physically based system means we can compute costs
+- Costs proportional to compute costs
+
+### Alignment of Player and Game Goals
+
+More efficient things are better things:
+- They use less energy
+- Call fewer frames
+- **This aligns players and the game: efficiency matters**
+
+Players are incentivized to write better code because better code = less mana cost = competitive advantage.
+
+---
+
+## 25. AI That Understands the Code
+
+### Starting Point: Map Editor
+
+It all starts from a map editor where you build the fantasy with an AI that understands the code underneath:
+- It knows the systems
+- If it doesn't, it can study them
+- It potentially has direct access to the source code
+- You can peer behind the wall and see what's going on
+
+**This is super duper cool, but it's tricky business.**
+
+---
+
+## 26. The Problem: End-to-End Experience
+
+### My Typical Problem
+
+I imagine part of a thing, not the full end-to-end thing. I can't maintain the full end-to-end player experience in my mind.
+
+### What We Need
+
+We need to:
+- Make a storyboard
+- Make a TikTok ad
+- Communicate to ourselves and others: what happens in this game? What's interesting and compelling?
+
+---
+
+## 27. Exemplars as North Stars
+
+### We Need Exemplars
+
+- The player story
+- Break that down into what functionality we need
+- If the loop is wildly complex, produce a better (simpler) exemplar that still has the minimum core gameplay loop
+
+### Defining Characteristics for Constructing the Roadmap
+
+1. **Build our exemplars**
+2. **Iterate the shit out of our exemplars**
+3. For each idea, **list the systems needed** to support it
+4. Identify the **critical system** we want to communicate
+5. Create a new example with **just that**; cut, cut, cut to show that functionality
+6. **Pick a demo to produce**
+7. Once we have the demo, the roadmap is clear: **incrementally complexify until we reach that demo**
+
+### Demos as North Stars
+
+- Think about our demos as our North Stars
+- Each demo represents a concrete, achievable goal
+- The roadmap flows backward from the demo
+
+---
+
+## 28. Next Steps
+
+- Another brain dump to append more notes about our demo North Stars
+- What they are
+- How to incorporate them
+
+---
+
 *More notes to be appended...*
