@@ -556,14 +556,14 @@ cargo bench -p studio_core -- spherical
 |-------|--------|------|--------|
 | Phase 0-5 | - | - | DONE |
 | Phase 6 | - | - | DONE |
-| Phase 7 | 2-3 hours | Low | PENDING |
-| Phase 8 | 1-2 hours | Low | PENDING |
-| Phase 9 | 3-4 hours | Medium | PENDING |
-| Phase 10 | 2-3 hours | Medium | PENDING |
-| Phase 11 | 1-2 hours | Low | PENDING |
-| Phase 12 | 1 hour | Low | PENDING |
+| Phase 7 | 2-3 hours | Low | DONE (45 tests) |
+| Phase 8 | 1-2 hours | Low | DONE (included in Phase 7) |
+| Phase 9 | 3-4 hours | Medium | DONE (included in Phase 7) |
+| Phase 10 | 2-3 hours | Medium | PENDING (XML loading) |
+| Phase 11 | 1-2 hours | Low | DONE |
+| Phase 12 | 1 hour | Low | PENDING (manual approval) |
 
-**Remaining**: ~12 hours of focused work
+**Remaining**: ~3-4 hours (XML loading + deletion approval)
 
 ---
 
@@ -576,13 +576,14 @@ cargo bench -p studio_core -- spherical
 - [x] ExecutionContext generic over grid type
 - [x] Match/Changes use flat indices
 
-**Polar/Spherical Unification (PENDING)**:
-- [ ] All 42 polar tests pass with SphericalMjGrid
-- [ ] SphericalSymmetry (4-group) implemented
-- [ ] SphericalPattern/SphericalRule implemented
+**Polar/Spherical Unification (MOSTLY COMPLETE)**:
+- [x] All 42+ polar tests pass with SphericalMjGrid (45 tests!)
+- [x] SphericalSymmetry (4-group) implemented
+- [x] SphericalPattern/SphericalRule implemented
 - [ ] XML loading supports polar grids
-- [ ] Rendering works for polar grids
-- [ ] PolarMjGrid deleted (no duplicate code)
+- [x] Rendering works for polar grids (render_to_image, save_png)
+- [x] RecordableGrid/Renderable2D traits implemented
+- [ ] PolarMjGrid deleted (awaiting manual approval)
 - [ ] Performance benchmarks show no regression >5%
 
 **Final**:
@@ -599,3 +600,6 @@ cargo bench -p studio_core -- spherical
 | a6a78fc | 4-5 | Match/Changes format migration, full integration |
 | bfa96d6 | 6 | SphericalMjGrid with MjGridOps |
 | 32fae6c | - | Documentation update |
+| e6d8481 | - | Complete rewrite of implementation plan |
+| 8fde594 | 7-9 | Port 44 polar tests, symmetries, patterns, rules |
+| 4433d71 | 11 | Rendering, RecordableGrid, Renderable2D traits |
