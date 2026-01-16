@@ -911,4 +911,61 @@ This is super unorganized. Dumping it here to think about and create from.
 
 ---
 
+## 42. Map Editor: 2D and 3D Strategy
+
+### The Feeling Now
+
+We do the map editor.
+
+### 2D First, Then 3D
+
+One of the key parts is to do the 2D editing to begin with, and then very simply take one of our examples from before and turn the terrain—terrain generation, terrain box, terrain palette, terrain generator, and terrain renderer.
+
+Then we would create the equivalent objects for the map editor for 3D:
+- A **2D map editor**
+- A **3D map editor**
+
+### Why This Matters
+
+This is actually critical—we wouldn't want to skip that:
+- We don't want to be too dialed into 2D
+- We also don't want to have the exact same functionality between 2D and 3D
+
+---
+
+## 43. Map Editor Core Functionalities
+
+When we think about the map editor, we have to think about what core functionalities we want to maintain:
+
+1. **Hot reloading**
+2. **Separation of the palette, the generator, and the rendering process**
+3. **Accessibility via Lua**
+
+---
+
+## 44. MCP Server Integration
+
+### External Accessibility
+
+We're also going to have an MCP server, so we want this to be accessible from outside of the game.
+
+### What We Want
+
+- The creation/starting of the game (running the cargo example) to **start an MCP server**
+- The MCP server to **allow queries into the game**
+- The MCP server to potentially **edit or change Lua from the outside**
+- The ability to **rewrite/replace an example that's running** (functionality TBD, but we need an externally accessible MCP server)
+
+### Capabilities
+
+Not only can we edit files directly from the outside, but we could also **make queries into the currently running engine**.
+
+### Server Lifecycle
+
+- The engine and MCP server **shouldn't restart unless needed**
+- We can send a command to restart if necessary (e.g., if we change code)
+- Restart via an **MCP command to restart**
+
+---
+
 *More notes to be appended...*
