@@ -356,6 +356,101 @@ impl SphericalMjGrid {
     pub fn iter_nonzero(&self) -> impl Iterator<Item = (u16, u16, u16, u8)> + '_ {
         self.iter().filter(|(_, _, _, v)| *v != 0)
     }
+
+    // =========================================================================
+    // Rendering
+    // =========================================================================
+
+    /// Render the polar grid to an RGBA image.
+    ///
+    /// The image shows the polar grid as a ring/disk with the inner radius
+    /// at the center and the outer radius at the edge.
+    ///
+    /// Uses pixel-based rendering: for each pixel, determine which cell it
+    /// belongs to and color it accordingly.
+    ///
+    /// # Arguments
+    /// * `image_size` - Width and height of the output image in pixels
+    /// * `colors` - Color palette mapping value index to RGBA
+    /// * `background` - Background color for empty areas
+    ///
+    /// # Returns
+    /// RGBA image buffer
+    pub fn render_to_image(
+        &self,
+        image_size: u32,
+        colors: &[[u8; 4]],
+        background: [u8; 4],
+    ) -> image::RgbaImage {
+        use image::{ImageBuffer, Rgba};
+
+        let mut img: image::RgbaImage =
+            ImageBuffer::from_pixel(image_size, image_size, Rgba(background));
+
+        let center = image_size as f32 / 2.0;
+        let r_min_actual = self.r_min as f32;
+        let r_max_actual = (self.r_min + self.r_depth as u32) as f32;
+
+        // Scale factor: map r_max_actual to image edge (with small margin)
+        let scale = (image_size as f32 * 0.48) / r_max_actual;
+
+        // Pixel-based rendering: for each pixel, find which cell it belongs to
+        for py in 0..image_size {
+            for px in 0..image_size {
+                // Convert pixel to cartesian coords relative to center
+                let x = px as f32 - center;
+                let y = py as f32 - center;
+
+                // Convert to polar coordinates
+                let pixel_r = (x * x + y * y).sqrt() / scale;
+
+                // Check if within our ring bounds
+                if pixel_r < r_min_actual || pixel_r >= r_max_actual {
+                    continue;
+                }
+
+                // Calculate r index
+                let r_index = (pixel_r - r_min_actual) as u16;
+                if r_index >= self.r_depth {
+                    continue;
+                }
+
+                // Calculate theta (angle from positive x-axis)
+                let mut angle = y.atan2(x);
+                if angle < 0.0 {
+                    angle += 2.0 * PI;
+                }
+
+                // Convert angle to theta index
+                let theta_index = ((angle / (2.0 * PI)) * self.theta_divisions as f32) as u16;
+                let theta_index = theta_index % self.theta_divisions;
+
+                // Get cell value and color (phi=0 for 2D polar)
+                let value = self.get(r_index, theta_index, 0) as usize;
+
+                // Skip transparent/background
+                if value >= colors.len() || colors[value][3] == 0 {
+                    continue;
+                }
+
+                img.put_pixel(px, py, Rgba(colors[value]));
+            }
+        }
+
+        img
+    }
+
+    /// Save the grid as a PNG image.
+    pub fn save_png(
+        &self,
+        path: &std::path::Path,
+        image_size: u32,
+        colors: &[[u8; 4]],
+        background: [u8; 4],
+    ) -> Result<(), image::ImageError> {
+        let img = self.render_to_image(image_size, colors, background);
+        img.save(path)
+    }
 }
 
 /// Neighbor coordinates for a spherical grid cell (coordinate form).
@@ -737,6 +832,59 @@ impl MjGridOps for SphericalMjGrid {
             self.phi_divisions as usize,
             self.r_depth as usize,
         )
+    }
+}
+
+// ============================================================================
+// RecordableGrid and Renderable2D trait implementations
+// ============================================================================
+
+use super::recording::{GridType, RecordableGrid, Renderable2D};
+
+impl RecordableGrid for SphericalMjGrid {
+    fn grid_type(&self) -> GridType {
+        if self.phi_divisions == 1 {
+            GridType::Polar2D {
+                r_min: self.r_min,
+                r_depth: self.r_depth,
+                theta_divisions: self.theta_divisions,
+            }
+        } else {
+            GridType::Polar3D {
+                r_min: self.r_min,
+                r_depth: self.r_depth,
+                theta_divisions: self.theta_divisions,
+                phi_divisions: self.phi_divisions,
+            }
+        }
+    }
+
+    fn palette(&self) -> String {
+        self.characters.iter().collect()
+    }
+
+    fn state_to_bytes(&self) -> Vec<u8> {
+        self.state.clone()
+    }
+
+    fn state_from_bytes(&mut self, bytes: &[u8]) -> bool {
+        if bytes.len() != self.state.len() {
+            return false;
+        }
+        self.state.copy_from_slice(bytes);
+        true
+    }
+}
+
+impl Renderable2D for SphericalMjGrid {
+    fn render_to_image(
+        &self,
+        image_size: u32,
+        colors: &[[u8; 4]],
+        background: [u8; 4],
+    ) -> image::RgbaImage {
+        // Delegate to the existing method
+        SphericalMjGrid::render_to_image(self, image_size, colors, background)
     }
 }
 
@@ -1764,6 +1912,39 @@ mod tests {
             // Clear and verify
             grid.clear();
             assert_eq!(grid.count_nonzero(), 0);
+        }
+
+        #[test]
+        fn test_recordable_grid_trait() {
+            let mut grid = SphericalMjGrid::new_polar(256, 32, 1.0, "BWR");
+
+            // Test grid_type
+            let grid_type = grid.grid_type();
+            match grid_type {
+                GridType::Polar2D {
+                    r_min,
+                    r_depth,
+                    theta_divisions,
+                } => {
+                    assert_eq!(r_min, 256);
+                    assert_eq!(r_depth, 32);
+                    assert!(theta_divisions > 0);
+                }
+                _ => panic!("Expected Polar2D grid type"),
+            }
+
+            // Test palette
+            assert_eq!(grid.palette(), "BWR");
+
+            // Test state roundtrip
+            grid.set(0, 0, 0, 1);
+            grid.set(10, 100, 0, 2);
+            let bytes = grid.state_to_bytes();
+
+            let mut grid2 = SphericalMjGrid::new_polar(256, 32, 1.0, "BWR");
+            assert!(grid2.state_from_bytes(&bytes));
+            assert_eq!(grid2.get(0, 0, 0), 1);
+            assert_eq!(grid2.get(10, 100, 0), 2);
         }
     }
 }
