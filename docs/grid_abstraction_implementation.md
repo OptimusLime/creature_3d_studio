@@ -1,5 +1,28 @@
 # Grid Abstraction Implementation Plan
 
+## Current Status
+
+**Phases 0-6 COMPLETE** - Core grid abstraction is done.
+**Phases 7-12 PENDING** - Polar/Spherical unification and full feature parity.
+
+### Critical Issue: Duplicate Polar Implementations
+
+We have TWO polar grid implementations that need to be unified:
+
+| File | Lines | Has MjGridOps | Has Rules/Patterns | Has Symmetries | Tests |
+|------|-------|---------------|-------------------|----------------|-------|
+| `polar_grid.rs` | 2543 | NO | YES (PolarRule, PolarPattern) | YES (PolarSymmetry) | 42 |
+| `spherical_grid.rs` | 572 | YES | NO | NO | 12 |
+
+**The Problem**: `SphericalMjGrid` implements `MjGridOps` (so it can work with existing nodes), but it has no rule system. `PolarMjGrid` has a complete rule system but doesn't implement `MjGridOps`.
+
+**The Solution**: `SphericalMjGrid` subsumes `PolarMjGrid`. A 2D polar grid is just `SphericalMjGrid` with `phi_divisions=1`. We need to:
+1. Port all polar functionality (rules, patterns, symmetries) to work with `SphericalMjGrid`
+2. Port all 42 polar tests to use `SphericalMjGrid`
+3. Delete `PolarMjGrid` once verified
+
+---
+
 ## 1. Research Summary
 
 ### 1.1 Test Infrastructure
@@ -11,7 +34,7 @@
 |----------|-------|---------|
 | `loader` | 43 | XML parsing, model loading |
 | `wfc` | 44 | Wave Function Collapse |
-| `polar_grid` | 42 | Polar coordinate system |
+| `polar_grid` | 42 | Polar coordinate system (TO BE MIGRATED) |
 | `render` | 31 | PNG/image rendering |
 | `convchain_node` | 16 | MCMC texture synthesis |
 | `convolution_node` | 15 | Cellular automata |
@@ -19,648 +42,560 @@
 | `node_tests` | 8 | Core node behavior |
 | `interpreter` | 5 | Execution loop |
 
-**Critical Test Subsets for Verification**:
-```bash
-# Tier 1: Core abstractions (must pass first)
-cargo test -p studio_core markov_junior::node
+### 1.2 Polar Grid Functionality to Migrate
 
-# Tier 2: Rule nodes (next)
-cargo test -p studio_core markov_junior::one_node
-cargo test -p studio_core markov_junior::all_node
-cargo test -p studio_core markov_junior::parallel_node
+From `polar_grid.rs`, the following must be ported to `spherical_grid.rs`:
 
-# Tier 3: Interpreter (integration)
-cargo test -p studio_core markov_junior::interpreter
-
-# Tier 4: Parity (C# compatibility)
-cargo test -p studio_core markov_junior::verification
-```
-
-### 1.2 Code Access Patterns
-
-**Grid Dimension Access** (49 occurrences):
 ```rust
-ctx.grid.mx  // 20 times
-ctx.grid.my  // 19 times  
-ctx.grid.mz  // 10 times
+// Types to port
+pub struct PolarNeighbors { ... }      // -> SphericalNeighbors
+pub enum PolarSymmetry { ... }         // -> SphericalSymmetry (4-group for 2D, larger for 3D)
+pub struct PolarPattern { ... }        // -> SphericalPattern
+pub struct PolarRule { ... }           // -> SphericalRule
+pub struct PolarModel { ... }          // -> Use existing interpreter with SphericalMjGrid
+
+// Traits implemented
+impl RecordableGrid for PolarMjGrid    // -> impl for SphericalMjGrid
+impl Renderable2D for PolarMjGrid      // -> impl for SphericalMjGrid
 ```
 
-**Grid State Access** (93 occurrences):
-```rust
-ctx.grid.state[idx]      // Direct indexing
-ctx.grid.state.iter()    // Iteration
-ctx.grid.state.len()     // Size
-```
+### 1.3 Test Categories to Migrate (42 tests)
 
-**Grid Method Calls**:
-```rust
-ctx.grid.matches(&rule, x, y, z)  // 11 occurrences
-ctx.grid.values.get(&ch)          // Value lookups
-ctx.grid.wave(chars)              // Wave bitmask
-```
-
-### 1.3 Parity Infrastructure
-
-The `verification.rs` module provides:
-- `capture_model_state()` - Run model and capture final state
-- `compare_states()` - Diff two states cell-by-cell
-- `DotNetRandom` - C#-compatible RNG for reproducibility
-- JSON output format for cross-language comparison
-
-**Key Parity Tests**:
-- `test_basic_model_matches_reference` - Uses DotNetRandom
-- `test_flowers_bisect` - Binary search for divergence
-- `test_river_bisect` - Another bisection test
+| Level | Tests | Description |
+|-------|-------|-------------|
+| 0 | 5 | Data structures (grid creation, read/write) |
+| 1 | 4 | Geometry (theta divisions, distortion) |
+| 2 | 6 | Neighbors (angular, radial, boundary) |
+| 3 | 7 | Symmetries (Klein four-group) |
+| 4 | 5 | Single-step rules |
+| 5 | 3 | Multi-step models |
+| 6 | 4 | Rendering |
+| 7 | 8 | Integration (full model execution) |
 
 ---
 
 ## 2. Implementation Phases
 
-### Overview
+### Overview (Updated)
 
 ```
-Phase 0: Baseline (no code changes)
-    └── Run all tests, record baseline
+COMPLETED:
+  Phase 0: Baseline established
+  Phase 1: MjGridOps trait definition
+  Phase 2: MjGrid trait implementation  
+  Phase 3: ExecutionContext generic
+  Phase 4: Match/Changes format migration
+  Phase 5: Full integration verification
+  Phase 6: SphericalMjGrid storage + MjGridOps
 
-Phase 1: Trait Definition (additive only)
-    └── Define MjGridOps trait
-    └── Tests: Compilation only
-
-Phase 2: MjGrid Implementation (minimal change)
-    └── impl MjGridOps for MjGrid
-    └── Tests: markov_junior::tests (grid-specific)
-
-Phase 3: ExecutionContext Migration
-    └── Add trait bound to ExecutionContext
-    └── Tests: markov_junior::node
-
-Phase 4: Match Format Migration
-    └── Change Match type to use indices
-    └── Tests: markov_junior::rule_node, one_node, all_node
-
-Phase 5: Full Integration
-    └── Run all 388 tests
-    └── Run parity verification
-
-Phase 6: SphericalMjGrid (new code)
-    └── Implement SphericalMjGrid
-    └── Tests: markov_junior::polar_grid (adapted)
+PENDING:
+  Phase 7: Polar->Spherical Test Migration (port 42 tests)
+  Phase 8: Spherical Symmetry System
+  Phase 9: Spherical Pattern/Rule System
+  Phase 10: Spherical XML Loading
+  Phase 11: Spherical Rendering
+  Phase 12: Delete PolarMjGrid, Performance Benchmarks
 ```
 
 ---
 
-## 3. Phase 0: Establish Baseline
+## 3-8. Phases 0-5: COMPLETE
 
-### 3.0.1 Run All Tests
-
-```bash
-# Record baseline test results
-cargo test -p studio_core markov_junior 2>&1 | tee baseline_tests.log
-
-# Count passing tests
-grep -c "test result: ok" baseline_tests.log
-```
-
-**Expected**: All 388 tests pass.
-
-### 3.0.2 Run Parity Verification
-
-```bash
-cargo test -p studio_core markov_junior::verification -- --nocapture
-```
-
-**Expected**: Basic, Flowers, River models match C# output.
-
-### 3.0.3 Create Snapshot
-
-```bash
-git stash  # If needed
-git checkout -b feature/grid-abstraction
-```
-
-**Checkpoint**: We have a known-good baseline to compare against.
+See git history for implementation details:
+- Phase 1-3: commit `8ef8cc3`
+- Phase 4-5: commit `a6a78fc`
+- Phase 6: commit `bfa96d6`
 
 ---
 
-## 4. Phase 1: Trait Definition
+## 9. Phase 6: SphericalMjGrid Storage (COMPLETE)
 
-### 4.1.1 Create New File
+Created `spherical_grid.rs` with:
+- Flat storage (`Vec<u8>` state, `Vec<bool>` mask)
+- `MjGridOps` trait implementation
+- Coordinate conversion (`r,theta,phi` <-> flat index)
+- Basic neighbor lookup
+- 12 unit tests
 
-Create `crates/studio_core/src/markov_junior/grid_ops.rs`:
-
-```rust
-//! Grid operations trait for abstracting over coordinate systems.
-
-use std::collections::HashMap;
-
-/// Core operations that any MJ-compatible grid must support.
-pub trait MjGridOps {
-    /// Total number of cells in the grid
-    fn len(&self) -> usize;
-    
-    /// Whether grid is empty
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    
-    /// Whether grid is 2D (for symmetry selection)
-    fn is_2d(&self) -> bool;
-    
-    /// Get cell value at flat index
-    fn get_state(&self, idx: usize) -> u8;
-    
-    /// Set cell value at flat index
-    fn set_state(&mut self, idx: usize, value: u8);
-    
-    /// Get entire state as slice
-    fn state(&self) -> &[u8];
-    
-    /// Get mutable state as slice
-    fn state_mut(&mut self) -> &mut [u8];
-    
-    /// Number of distinct values/colors
-    fn num_values(&self) -> u8;
-    
-    /// Get index for character
-    fn value_for_char(&self, ch: char) -> Option<u8>;
-    
-    /// Get character for index
-    fn char_for_value(&self, val: u8) -> Option<char>;
-    
-    /// Get wave bitmask for character
-    fn wave_for_char(&self, ch: char) -> Option<u32>;
-    
-    /// Get combined wave for string
-    fn wave(&self, chars: &str) -> u32;
-    
-    /// Get mask value at flat index
-    fn get_mask(&self, idx: usize) -> bool;
-    
-    /// Set mask value at flat index
-    fn set_mask(&mut self, idx: usize, value: bool);
-    
-    /// Clear all mask values
-    fn clear_mask(&mut self);
-    
-    /// Dimension sizes (interpretation varies by grid type)
-    fn dimensions(&self) -> (usize, usize, usize);
-}
-```
-
-### 4.1.2 Add Module
-
-In `mod.rs`, add:
-```rust
-pub mod grid_ops;
-pub use grid_ops::MjGridOps;
-```
-
-### 4.1.3 Verify
-
-```bash
-cargo build -p studio_core
-```
-
-**Expected**: Compiles with no errors. No tests affected (trait not used yet).
-
-**Checkpoint**: Trait exists, zero functional changes.
+**What's Missing**: Rules, patterns, symmetries, rendering, XML loading.
 
 ---
 
-## 5. Phase 2: MjGrid Implementation
+## 10. Phase 7: Polar Test Migration
 
-### 5.2.1 Implement Trait for MjGrid
+### 10.1 Goal
 
-In `mod.rs`, add impl block:
+Port all 42 polar tests from `PolarMjGrid` to `SphericalMjGrid`. Tests should pass with the new implementation before we add any new functionality.
 
+### 10.2 Test Migration Strategy
+
+For each test level, migrate tests in order:
+
+**Level 0: Data Structures (5 tests)**
 ```rust
-impl MjGridOps for MjGrid {
-    fn len(&self) -> usize {
-        self.state.len()
-    }
-    
-    fn is_2d(&self) -> bool {
-        self.mz == 1
-    }
-    
-    fn get_state(&self, idx: usize) -> u8 {
-        self.state[idx]
-    }
-    
-    fn set_state(&mut self, idx: usize, value: u8) {
-        self.state[idx] = value;
-    }
-    
-    fn state(&self) -> &[u8] {
-        &self.state
-    }
-    
-    fn state_mut(&mut self) -> &mut [u8] {
-        &mut self.state
-    }
-    
-    fn num_values(&self) -> u8 {
-        self.c
-    }
-    
-    fn value_for_char(&self, ch: char) -> Option<u8> {
-        self.values.get(&ch).copied()
-    }
-    
-    fn char_for_value(&self, val: u8) -> Option<char> {
-        self.characters.get(val as usize).copied()
-    }
-    
-    fn wave_for_char(&self, ch: char) -> Option<u32> {
-        self.waves.get(&ch).copied()
-    }
-    
-    fn wave(&self, chars: &str) -> u32 {
-        // Delegate to existing method
-        MjGrid::wave(self, chars)
-    }
-    
-    fn get_mask(&self, idx: usize) -> bool {
-        self.mask[idx]
-    }
-    
-    fn set_mask(&mut self, idx: usize, value: bool) {
-        self.mask[idx] = value;
-    }
-    
-    fn clear_mask(&mut self) {
-        self.mask.fill(false);
-    }
-    
-    fn dimensions(&self) -> (usize, usize, usize) {
-        (self.mx, self.my, self.mz)
-    }
+// Before (polar_grid.rs)
+let grid = PolarMjGrid::new(256, 256, 1.0);
+
+// After (spherical_grid.rs)
+let grid = SphericalMjGrid::new_polar(256, 256, 1.0, "BW");
+```
+
+Tests to migrate:
+- [ ] `test_grid_creation`
+- [ ] `test_cell_read_write`
+- [ ] `test_theta_wrapping`
+- [ ] `test_memory_layout`
+- [ ] `test_theta_divisions_formula`
+
+**Level 1: Geometry (4 tests)**
+- [ ] `test_no_distortion_between_rings`
+- [ ] `test_arc_length_varies_by_radius`
+- [ ] `test_angular_range`
+- [ ] (already have `test_coord_conversion_2d`)
+
+**Level 2: Neighbors (6 tests)**
+
+Need to add `SphericalNeighbors` struct and `neighbors()` method:
+```rust
+pub struct SphericalNeighbors {
+    pub theta_minus: Option<usize>,  // flat index
+    pub theta_plus: Option<usize>,
+    pub r_minus: Option<usize>,
+    pub r_plus: Option<usize>,
+    pub phi_minus: Option<usize>,    // None for 2D
+    pub phi_plus: Option<usize>,     // None for 2D
 }
 ```
 
-### 5.2.2 Add Unit Tests for Trait
+Tests to migrate:
+- [ ] `test_angular_neighbors`
+- [ ] `test_angular_neighbor_wrapping`
+- [ ] `test_radial_neighbors_bounded`
+- [ ] `test_radial_neighbor_alignment`
+- [ ] `test_boundary_neighbors`
+- [ ] `test_neighbor_symmetry`
 
-```rust
-#[cfg(test)]
-mod grid_ops_tests {
-    use super::*;
-    
-    #[test]
-    fn test_mjgrid_implements_ops() {
-        let grid = MjGrid::with_values(4, 4, 1, "BW");
-        
-        // Test trait methods
-        assert_eq!(grid.len(), 16);
-        assert!(grid.is_2d());
-        assert_eq!(grid.get_state(0), 0);
-        assert_eq!(grid.num_values(), 2);
-        assert_eq!(grid.value_for_char('B'), Some(0));
-        assert_eq!(grid.value_for_char('W'), Some(1));
-        assert_eq!(grid.dimensions(), (4, 4, 1));
-    }
-    
-    #[test]
-    fn test_mjgrid_ops_3d() {
-        let grid = MjGrid::with_values(2, 2, 2, "BWR");
-        
-        assert_eq!(grid.len(), 8);
-        assert!(!grid.is_2d());
-        assert_eq!(grid.dimensions(), (2, 2, 2));
-    }
-}
-```
+**Level 3: Symmetries (7 tests)** - See Phase 8
 
-### 5.2.3 Verify
+**Level 4: Single-Step Rules (5 tests)** - See Phase 9
+
+**Level 5-7: Models, Rendering, Integration** - See Phases 9-11
+
+### 10.3 Verification
 
 ```bash
-# Run new tests
-cargo test -p studio_core grid_ops_tests
+# After each level migration
+cargo test -p studio_core markov_junior::spherical_grid
 
-# Run existing grid tests (should still pass)
-cargo test -p studio_core markov_junior::tests
+# Target: 42+ tests in spherical_grid (12 existing + 30+ migrated)
 ```
-
-**Expected**: New tests pass. Existing tests unchanged.
-
-**Checkpoint**: Trait implemented for MjGrid, existing behavior preserved.
 
 ---
 
-## 6. Phase 3: ExecutionContext Migration
+## 11. Phase 8: Spherical Symmetry System
 
-### 6.3.1 Current ExecutionContext
+### 11.1 Goal
+
+Port `PolarSymmetry` to work with `SphericalMjGrid`. For 2D polar (phi_divisions=1), this is the Klein four-group (4 symmetries). For 3D spherical, this may be larger.
+
+### 11.2 Implementation
+
+Add to `spherical_grid.rs`:
 
 ```rust
-pub struct ExecutionContext<'a> {
-    pub grid: &'a mut MjGrid,  // Concrete type
-    pub random: &'a mut dyn MjRng,
-    pub changes: Vec<(i32, i32, i32)>,
-    pub first: Vec<usize>,
-    pub counter: usize,
-    pub gif: bool,
+/// Symmetries for polar/spherical grids.
+/// 
+/// For 2D polar (phi_divisions=1): Klein four-group (4 symmetries)
+/// - Identity
+/// - ThetaFlip: (dr, dtheta) -> (dr, -dtheta)
+/// - RFlip: (dr, dtheta) -> (-dr, dtheta)
+/// - BothFlip: (dr, dtheta) -> (-dr, -dtheta)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SphericalSymmetry {
+    Identity,
+    ThetaFlip,
+    RFlip,
+    BothFlip,
+    // Future: Add phi symmetries for 3D
 }
-```
 
-### 6.3.2 Strategy: Backward Compatible
-
-Rather than changing `ExecutionContext` immediately, we add a **second constructor** that accepts `&mut dyn MjGridOps`:
-
-```rust
-impl<'a> ExecutionContext<'a> {
-    // Existing constructors unchanged
-    
-    /// Create context with any grid implementing MjGridOps
-    /// For now, this just casts - later we'll make grid generic
-    pub fn with_grid_ops(
-        grid: &'a mut MjGrid,  // Still concrete for now
-        random: &'a mut dyn MjRng
-    ) -> Self {
-        Self::new(grid, random)
-    }
-}
-```
-
-### 6.3.3 Verify
-
-```bash
-# Core node tests
-cargo test -p studio_core markov_junior::node
-
-# Node implementation tests
-cargo test -p studio_core markov_junior::node_tests
-```
-
-**Expected**: All 8 node tests pass.
-
-**Checkpoint**: ExecutionContext has trait-aware constructor, but no breaking changes.
-
----
-
-## 7. Phase 4: Match Format Migration
-
-This is the **highest risk** phase. We change the Match type from coordinate-based to index-based.
-
-### 7.4.1 Current Match Type
-
-```rust
-// In rule_node.rs
-pub type Match = (usize, i32, i32, i32);  // (rule_idx, x, y, z)
-```
-
-### 7.4.2 New Match Type
-
-```rust
-pub type Match = (usize, usize);  // (rule_idx, flat_index)
-```
-
-### 7.4.3 Migration Steps
-
-**Step 1**: Add index conversion to MjGrid (if not exists)
-```rust
-impl MjGrid {
-    pub fn coord_to_index(&self, x: i32, y: i32, z: i32) -> usize {
-        x as usize + y as usize * self.mx + z as usize * self.mx * self.my
+impl SphericalSymmetry {
+    /// All symmetries for 2D polar grids
+    pub fn all_2d() -> &'static [SphericalSymmetry] {
+        &[Self::Identity, Self::ThetaFlip, Self::RFlip, Self::BothFlip]
     }
     
-    pub fn index_to_coord(&self, idx: usize) -> (i32, i32, i32) {
-        let x = (idx % self.mx) as i32;
-        let y = ((idx / self.mx) % self.my) as i32;
-        let z = (idx / (self.mx * self.my)) as i32;
-        (x, y, z)
-    }
-}
-```
-
-**Step 2**: Update RuleNodeData
-```rust
-// Old
-pub matches: Vec<(usize, i32, i32, i32)>,
-
-// New  
-pub matches: Vec<(usize, usize)>,
-
-// Update add_match
-pub fn add_match(&mut self, r: usize, idx: usize) {
-    // Simplified - no coordinate conversion needed
-    if !self.match_mask[r][idx] {
-        self.match_mask[r][idx] = true;
-        if self.match_count < self.matches.len() {
-            self.matches[self.match_count] = (r, idx);
-        } else {
-            self.matches.push((r, idx));
+    /// Transform a relative offset (dr, dtheta, dphi)
+    pub fn transform(&self, dr: i8, dtheta: i8, dphi: i8) -> (i8, i8, i8) {
+        match self {
+            Self::Identity => (dr, dtheta, dphi),
+            Self::ThetaFlip => (dr, -dtheta, dphi),
+            Self::RFlip => (-dr, dtheta, dphi),
+            Self::BothFlip => (-dr, -dtheta, dphi),
         }
-        self.match_count += 1;
     }
 }
 ```
 
-**Step 3**: Update callers (one at a time)
+### 11.3 Tests to Migrate (7 tests)
 
-### 7.4.4 Incremental Verification
+- [ ] `test_identity_symmetry`
+- [ ] `test_theta_flip_symmetry`
+- [ ] `test_r_flip_symmetry`
+- [ ] `test_both_flip_symmetry`
+- [ ] `test_symmetry_group_closure`
+- [ ] `test_pattern_symmetry_variants`
+- [ ] `test_symmetric_pattern_fewer_variants`
 
-After EACH file change:
+### 11.4 Verification
+
 ```bash
-cargo test -p studio_core markov_junior::rule_node
-cargo test -p studio_core markov_junior::one_node
-cargo test -p studio_core markov_junior::all_node
+cargo test -p studio_core markov_junior::spherical_grid::symmetry
 ```
-
-### 7.4.5 Full Rule Node Tests
-
-```bash
-cargo test -p studio_core markov_junior::rule_node
-cargo test -p studio_core markov_junior::one_node  
-cargo test -p studio_core markov_junior::all_node
-cargo test -p studio_core markov_junior::parallel_node
-```
-
-**Expected**: All rule node tests pass.
-
-**Checkpoint**: Match format is index-based, all rule nodes work.
 
 ---
 
-## 8. Phase 5: Full Integration
+## 12. Phase 9: Spherical Pattern/Rule System
 
-### 8.5.1 Run All MJ Tests
+### 12.1 Goal
 
-```bash
-cargo test -p studio_core markov_junior 2>&1 | tee post_migration_tests.log
+Port `PolarPattern` and `PolarRule` to work with `SphericalMjGrid`. This enables MarkovJunior rules to run on polar grids.
 
-# Compare with baseline
-diff baseline_tests.log post_migration_tests.log
-```
-
-**Expected**: Identical results (all 388 tests pass).
-
-### 8.5.2 Run Parity Verification
-
-```bash
-cargo test -p studio_core markov_junior::verification -- --nocapture
-```
-
-**Expected**: C# parity maintained.
-
-### 8.5.3 Run Recording Tests
-
-```bash
-cargo test -p studio_core markov_junior::recording
-```
-
-**Expected**: Video export still works.
-
-**Checkpoint**: Full regression test passed.
-
----
-
-## 9. Phase 6: SphericalMjGrid
-
-### 9.6.1 Create SphericalMjGrid
-
-This is NEW code - doesn't affect Cartesian.
+### 12.2 Implementation
 
 ```rust
-pub struct SphericalMjGrid {
-    pub state: Vec<u8>,
-    pub mask: Vec<bool>,
-    pub r_depth: u16,
-    pub theta_divisions: u16,
-    pub phi_divisions: u16,  // 1 for 2D polar
-    pub r_min: u32,
-    pub target_arc_length: f32,
-    pub c: u8,
-    pub characters: Vec<char>,
-    pub values: HashMap<char, u8>,
-    pub waves: HashMap<char, u32>,
+/// Pattern for matching cells in a spherical grid.
+/// Uses flat indices internally, but pattern definition uses relative offsets.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SphericalPattern {
+    /// Center cell value (required)
+    pub center: u8,
+    /// Neighbor requirements (None = wildcard)
+    pub theta_minus: Option<u8>,
+    pub theta_plus: Option<u8>,
+    pub r_minus: Option<u8>,
+    pub r_plus: Option<u8>,
+    pub phi_minus: Option<u8>,  // For 3D
+    pub phi_plus: Option<u8>,   // For 3D
 }
 
-impl MjGridOps for SphericalMjGrid {
-    // Implementation...
+impl SphericalPattern {
+    /// Check if pattern matches at given flat index
+    pub fn matches(&self, grid: &SphericalMjGrid, idx: usize) -> bool {
+        // Check center
+        if grid.get_state(idx) != self.center {
+            return false;
+        }
+        // Check neighbors
+        let neighbors = grid.neighbors_at(idx);
+        // ... check each neighbor requirement
+    }
+    
+    /// Generate all symmetry variants of this pattern
+    pub fn symmetry_variants(&self) -> Vec<SphericalPattern> {
+        SphericalSymmetry::all_2d()
+            .iter()
+            .map(|s| self.transform(*s))
+            .collect()
+    }
+}
+
+/// Rewrite rule for spherical grids
+pub struct SphericalRule {
+    pub input: SphericalPattern,
+    pub output: u8,
 }
 ```
 
-### 9.6.2 Adapt Polar Tests
+### 12.3 Integration with Existing Nodes
 
-Update existing `polar_grid.rs` tests to use new structure.
+The key insight: `SphericalMjGrid` implements `MjGridOps`, so it can already be used with `ExecutionContext`. But the existing `MjRule` uses Cartesian coordinates. We need either:
 
-### 9.6.3 Verify
+**Option A**: Create `SphericalRule` that works with `SphericalMjGrid` directly
+**Option B**: Make `MjRule` generic over coordinate systems
+
+For now, **Option A** is simpler and maintains separation.
+
+### 12.4 Tests to Migrate (5 tests)
+
+- [ ] `test_simple_rule_matching`
+- [ ] `test_rule_application`
+- [ ] `test_conditional_rule`
+- [ ] `test_rule_with_symmetries`
+- [ ] `test_multiple_rules_priority`
+
+### 12.5 Verification
 
 ```bash
+cargo test -p studio_core markov_junior::spherical_grid::rules
+```
+
+---
+
+## 13. Phase 10: Spherical XML Loading
+
+### 13.1 Goal
+
+Enable loading polar/spherical models from XML, with the same syntax as Cartesian models but with polar-specific attributes.
+
+### 13.2 XML Format
+
+```xml
+<!-- Polar model definition -->
+<model name="PolarRings" type="polar">
+  <!-- Grid definition -->
+  <grid r_min="256" r_depth="64" target_arc="1.0" values="BWR"/>
+  
+  <!-- Rules work the same as Cartesian, but use polar symmetries -->
+  <rule in="B" out="W" symmetry="polar"/>
+  
+  <!-- Patterns can specify polar neighbors -->
+  <rule>
+    <input>
+      <pattern center="B" r_plus="W"/>
+    </input>
+    <output>R</output>
+  </rule>
+</model>
+```
+
+### 13.3 Implementation
+
+Extend `loader.rs` to handle polar grids:
+
+```rust
+// In loader.rs
+fn load_grid(elem: &Element) -> Result<Box<dyn MjGridOps>, LoadError> {
+    if elem.has_attribute("r_min") || elem.has_attribute("r_depth") {
+        // Polar/Spherical grid
+        let r_min = elem.get_attr("r_min")?.parse()?;
+        let r_depth = elem.get_attr("r_depth")?.parse()?;
+        let target_arc = elem.get_attr("target_arc").unwrap_or("1.0").parse()?;
+        let values = elem.get_attr("values")?;
+        
+        if elem.has_attribute("phi_divisions") {
+            // 3D spherical
+            let phi_divisions = elem.get_attr("phi_divisions")?.parse()?;
+            Ok(Box::new(SphericalMjGrid::new_spherical(...)))
+        } else {
+            // 2D polar
+            Ok(Box::new(SphericalMjGrid::new_polar(r_min, r_depth, target_arc, values)))
+        }
+    } else {
+        // Cartesian grid (existing code)
+        let mx = elem.get_attr("mx")?.parse()?;
+        let my = elem.get_attr("my")?.parse()?;
+        let mz = elem.get_attr("mz").unwrap_or("1").parse()?;
+        Ok(Box::new(MjGrid::with_values(mx, my, mz, values)))
+    }
+}
+```
+
+### 13.4 Symmetry Loading
+
+Extend symmetry parsing to handle polar symmetries:
+
+```rust
+fn parse_symmetry(s: &str, is_polar: bool) -> Vec<Box<dyn Symmetry>> {
+    if is_polar {
+        match s {
+            "polar" | "all" => SphericalSymmetry::all_2d().to_vec(),
+            "identity" => vec![SphericalSymmetry::Identity],
+            "theta" => vec![SphericalSymmetry::Identity, SphericalSymmetry::ThetaFlip],
+            "r" => vec![SphericalSymmetry::Identity, SphericalSymmetry::RFlip],
+            _ => vec![SphericalSymmetry::Identity],
+        }
+    } else {
+        // Existing Cartesian symmetry parsing
+    }
+}
+```
+
+### 13.5 Tests
+
+- [ ] `test_load_polar_grid_from_xml`
+- [ ] `test_load_polar_rule_from_xml`
+- [ ] `test_load_polar_model_from_xml`
+- [ ] `test_polar_symmetry_parsing`
+
+### 13.6 Verification
+
+```bash
+cargo test -p studio_core markov_junior::loader::polar
+```
+
+---
+
+## 14. Phase 11: Spherical Rendering
+
+### 14.1 Goal
+
+Implement `Renderable2D` for `SphericalMjGrid` to render polar grids to images.
+
+### 14.2 Implementation
+
+Port from `polar_grid.rs`:
+
+```rust
+impl Renderable2D for SphericalMjGrid {
+    fn render_to_image(&self, palette: &[Color]) -> Image {
+        // Convert polar to Cartesian for rendering
+        let (cartesian, width, height) = self.to_cartesian_image();
+        
+        let mut image = Image::new(width, height);
+        for (idx, &value) in cartesian.iter().enumerate() {
+            let x = idx % width;
+            let y = idx / width;
+            image.set_pixel(x, y, palette[value as usize]);
+        }
+        image
+    }
+}
+```
+
+### 14.3 Tests to Migrate (4 tests)
+
+- [ ] `test_polar_to_cartesian`
+- [ ] `test_cartesian_quarter_circle`
+- [ ] `test_total_voxels`
+- [ ] `test_count_nonzero`
+
+### 14.4 Verification
+
+```bash
+cargo test -p studio_core markov_junior::spherical_grid::render
+```
+
+---
+
+## 15. Phase 12: Cleanup and Benchmarks
+
+### 15.1 Delete PolarMjGrid
+
+Once all 42 tests pass with `SphericalMjGrid`:
+
+1. Verify no code depends on `PolarMjGrid`
+2. Delete `polar_grid.rs`
+3. Update module exports
+
+```bash
+# Find any remaining references
+grep -r "PolarMjGrid\|polar_grid" crates/studio_core/src/
+
+# Delete if clean
+rm crates/studio_core/src/markov_junior/polar_grid.rs
+```
+
+### 15.2 Performance Benchmarks
+
+Create benchmarks to verify no regression:
+
+```rust
+// benches/grid_bench.rs
+#[bench]
+fn bench_spherical_neighbor_lookup(b: &mut Bencher) {
+    let grid = SphericalMjGrid::new_polar(256, 256, 1.0, "BW");
+    b.iter(|| {
+        for idx in 0..grid.len() {
+            black_box(grid.neighbors_at(idx));
+        }
+    });
+}
+
+#[bench]
+fn bench_spherical_pattern_match(b: &mut Bencher) {
+    let grid = SphericalMjGrid::new_polar(256, 256, 1.0, "BW");
+    let pattern = SphericalPattern::center_only(0);
+    b.iter(|| {
+        for idx in 0..grid.len() {
+            black_box(pattern.matches(&grid, idx));
+        }
+    });
+}
+```
+
+### 15.3 Verification
+
+```bash
+# All spherical tests (should be 42+)
+cargo test -p studio_core markov_junior::spherical_grid
+
+# No polar_grid tests (module deleted)
 cargo test -p studio_core markov_junior::polar_grid
+# Expected: 0 tests
+
+# Benchmarks
+cargo bench -p studio_core -- spherical
 ```
 
-**Expected**: All 42 polar tests pass.
+---
+
+## 16. Verification Checkpoints Summary (Updated)
+
+| Phase | Tests | Command | Expected | Status |
+|-------|-------|---------|----------|--------|
+| 0 | Baseline | `cargo test markov_junior` | 388 pass | DONE |
+| 1 | Compile | `cargo build` | No errors | DONE |
+| 2 | Trait impl | `cargo test grid_ops` | 11 pass | DONE |
+| 3 | Context | `cargo test node` | 8 pass | DONE |
+| 4 | Match format | `cargo test rule_node one_node all_node` | 13 pass | DONE |
+| 5 | Full suite | `cargo test markov_junior` | 388 pass | DONE |
+| 6 | Spherical storage | `cargo test spherical_grid` | 12 pass | DONE |
+| 7 | Test migration | `cargo test spherical_grid` | 42+ pass | PENDING |
+| 8 | Symmetries | `cargo test spherical_grid::symmetry` | 7 pass | PENDING |
+| 9 | Rules | `cargo test spherical_grid::rules` | 5 pass | PENDING |
+| 10 | XML loading | `cargo test loader::polar` | 4 pass | PENDING |
+| 11 | Rendering | `cargo test spherical_grid::render` | 4 pass | PENDING |
+| 12 | Cleanup | `cargo test markov_junior` | 388+ pass | PENDING |
 
 ---
 
-## 10. Verification Checkpoints Summary
+## 17. Timeline Estimate (Updated)
 
-| Phase | Tests | Command | Expected |
-|-------|-------|---------|----------|
-| 0 | Baseline | `cargo test -p studio_core markov_junior` | 388 pass |
-| 1 | Compile | `cargo build -p studio_core` | No errors |
-| 2 | Trait impl | `cargo test grid_ops_tests` | New tests pass |
-| 3 | Context | `cargo test markov_junior::node` | 8 pass |
-| 4a | RuleNodeData | `cargo test markov_junior::rule_node` | Pass |
-| 4b | OneNode | `cargo test markov_junior::one_node` | Pass |
-| 4c | AllNode | `cargo test markov_junior::all_node` | Pass |
-| 4d | ParallelNode | `cargo test markov_junior::parallel_node` | Pass |
-| 5a | Full suite | `cargo test markov_junior` | 388 pass |
-| 5b | Parity | `cargo test verification` | C# match |
-| 6 | Polar | `cargo test polar_grid` | 42 pass |
+| Phase | Effort | Risk | Status |
+|-------|--------|------|--------|
+| Phase 0-5 | - | - | DONE |
+| Phase 6 | - | - | DONE |
+| Phase 7 | 2-3 hours | Low | PENDING |
+| Phase 8 | 1-2 hours | Low | PENDING |
+| Phase 9 | 3-4 hours | Medium | PENDING |
+| Phase 10 | 2-3 hours | Medium | PENDING |
+| Phase 11 | 1-2 hours | Low | PENDING |
+| Phase 12 | 1 hour | Low | PENDING |
 
----
-
-## 11. Rollback Strategy
-
-At each phase, if tests fail:
-
-1. **Stop immediately** - Don't proceed to next phase
-2. **Identify failure** - Which specific test(s) failed?
-3. **Minimal fix** - Fix only what's broken
-4. **Re-run** - Verify fix doesn't break other tests
-5. **If stuck** - `git stash && git checkout main` to return to baseline
+**Remaining**: ~12 hours of focused work
 
 ---
 
-## 12. Risk Mitigation
+## 18. Definition of Done (Updated)
 
-### 12.1 Feature Flags (Optional)
+**Core Abstraction (COMPLETE)**:
+- [x] All 388 MarkovJunior tests pass
+- [x] Parity verification matches C# output
+- [x] MjGridOps trait defined and implemented
+- [x] ExecutionContext generic over grid type
+- [x] Match/Changes use flat indices
 
-If changes are too risky, use compile-time flags:
+**Polar/Spherical Unification (PENDING)**:
+- [ ] All 42 polar tests pass with SphericalMjGrid
+- [ ] SphericalSymmetry (4-group) implemented
+- [ ] SphericalPattern/SphericalRule implemented
+- [ ] XML loading supports polar grids
+- [ ] Rendering works for polar grids
+- [ ] PolarMjGrid deleted (no duplicate code)
+- [ ] Performance benchmarks show no regression >5%
 
-```rust
-#[cfg(feature = "new_match_format")]
-pub type Match = (usize, usize);
-
-#[cfg(not(feature = "new_match_format"))]
-pub type Match = (usize, i32, i32, i32);
-```
-
-### 12.2 Parallel Implementations
-
-Keep old code alongside new:
-
-```rust
-// Old (keep until new is verified)
-pub fn add_match_xyz(&mut self, r: usize, x: i32, y: i32, z: i32, mx: usize, my: usize) {
-    let idx = x as usize + y as usize * mx + z as usize * mx * my;
-    self.add_match(r, idx);
-}
-
-// New
-pub fn add_match(&mut self, r: usize, idx: usize) {
-    // ...
-}
-```
-
-### 12.3 Test-First Changes
-
-For each function being modified:
-1. Write a test that exercises current behavior
-2. Run test (should pass)
-3. Make change
-4. Run test (should still pass)
-
----
-
-## 13. Timeline Estimate
-
-| Phase | Effort | Risk |
-|-------|--------|------|
-| Phase 0 | 10 min | None |
-| Phase 1 | 30 min | None |
-| Phase 2 | 1 hour | Low |
-| Phase 3 | 30 min | Low |
-| Phase 4 | 2-3 hours | **Medium** |
-| Phase 5 | 30 min | Low |
-| Phase 6 | 2-3 hours | Low |
-
-**Total**: ~8 hours of focused work
-
----
-
-## 14. Definition of Done
-
-- [x] All 388 MarkovJunior tests pass (verified 2026-01-15)
-- [x] Parity verification matches C# output (8 passed, 3 ignored)
-- [x] SphericalMjGrid implements MjGridOps (12 tests, commit bfa96d6)
-- [x] Polar tests pass with new structure (42 passed)
-- [ ] No performance regression >5% (not yet benchmarked)
-- [x] Documentation updated
+**Final**:
+- [ ] Documentation updated
 - [ ] Code reviewed and merged
 
-## 15. Implementation Status
+---
 
-**Completed Phases:**
-| Phase | Description | Commit | Tests |
-|-------|-------------|--------|-------|
-| 0 | Baseline established | - | 388 pass |
-| 1 | MjGridOps trait definition | 8ef8cc3 | Compile |
-| 2 | MjGrid trait implementation | 8ef8cc3 | 11 pass |
-| 3 | ExecutionContext generic | 8ef8cc3 | 8 pass |
-| 4 | Match/Changes format migration | a6a78fc | 13 pass |
-| 5 | Full integration verification | a6a78fc | 388 pass |
-| 6 | SphericalMjGrid implementation | bfa96d6 | 12 pass |
+## 19. Commit History
 
-**All core phases complete.** The grid abstraction layer is fully implemented and tested.
+| Commit | Phase | Description |
+|--------|-------|-------------|
+| 8ef8cc3 | 1-3 | MjGridOps trait, MjGrid impl, ExecutionContext generic |
+| a6a78fc | 4-5 | Match/Changes format migration, full integration |
+| bfa96d6 | 6 | SphericalMjGrid with MjGridOps |
+| 32fae6c | - | Documentation update |
