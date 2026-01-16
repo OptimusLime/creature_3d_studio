@@ -507,169 +507,244 @@ This ensures backwards compatibility with existing voxel data.
 
 ---
 
-## 8. Terrain Generation Pipeline
+## 8. Generator API
 
-### 8.1 Markov Models for Terrain
+*See `API_DESIGN.md` for full API specification.*
 
-Terrain is generated using Markov models (via MarkovJunior integration). The model defines:
-- What voxel types can exist
-- Rules for how they can be placed adjacent to each other
-- Patterns that emerge from rule application
+### 8.1 Philosophy
 
-### 8.2 Terrain Definition File
+Generators are **classes**, not configuration files. You extend a base class and implement methods:
 
-```lua
--- terrain.lua
-return {
-  name = "haunted_graveyard",
-  palette = "dark_fantasy",  -- reference to palette file
-  
-  size = { x = 64, y = 32, z = 64 },
-  
-  -- MarkovJunior model reference
-  model = "graveyard.xml",
-  
-  -- Or inline rules
-  rules = {
-    { pattern = "air/stone", weight = 1.0 },
-    { pattern = "stone/dirt", weight = 0.8 },
-    { pattern = "dirt/air", weight = 0.3 },
-  },
-  
-  -- Overrides and post-processing
-  post_process = {
-    -- Add crystals at random positions
-    { type = "scatter", voxel = "purple_crystal", density = 0.001, height_min = 5 },
-    -- Erode terrain edges
-    { type = "erode", iterations = 2 },
-  }
+- `init(ctx)` - Setup, returns "ready" or "error"
+- `step(ctx)` - Run one step, returns "done", "continue", or "error"
+- `post_process(ctx)` - Optional, after all steps
+- `teardown(ctx)` - Cleanup
+
+This supports ANY generation method:
+- Direct voxel writing
+- Markov Jr. models
+- Random placement/scatter
+- Noise functions
+- Compute shaders
+- Live/streaming generation
+- Custom algorithms
+
+### 8.2 Rust Trait
+
+```rust
+pub trait VoxelGenerator {
+    fn init(&mut self, ctx: &mut GeneratorContext) -> GeneratorState;
+    fn step(&mut self, ctx: &mut GeneratorContext) -> StepResult;
+    fn teardown(&mut self, ctx: &mut GeneratorContext);
+    fn post_process(&mut self, _ctx: &mut GeneratorContext) {}
+}
+
+pub enum StepResult {
+    Done,
+    Continue,
+    Error(String),
 }
 ```
 
-### 8.3 Terrain Generation Flow
+### 8.3 Lua Base Class
+
+```lua
+local Generator = {}
+Generator.__index = Generator
+
+function Generator:new()
+    return setmetatable({}, self)
+end
+
+function Generator:init(ctx) return "ready" end
+function Generator:step(ctx) return "done" end
+function Generator:post_process(ctx) end
+function Generator:teardown(ctx) end
+
+-- Utilities available to all generators
+function Generator:set_voxel(ctx, x, y, z, material_id)
+    _rust_voxel_set(ctx.voxels, x, y, z, material_id)
+end
+
+function Generator:get_voxel(ctx, x, y, z)
+    return _rust_voxel_get(ctx.voxels, x, y, z)
+end
+
+return Generator
+```
+
+### 8.4 Example: Direct Writer
+
+```lua
+local Generator = require("generator")
+local DirectWriter = Generator:new()
+
+function DirectWriter:step(ctx)
+    for x = ctx.bounds.min.x, ctx.bounds.max.x do
+        for z = ctx.bounds.min.z, ctx.bounds.max.z do
+            self:set_voxel(ctx, x, 0, z, self.ground_material)
+        end
+    end
+    return "done"
+end
+
+return DirectWriter
+```
+
+### 8.5 Example: Markov Jr. Wrapper
+
+```lua
+local Generator = require("generator")
+local MarkovGenerator = Generator:new()
+
+function MarkovGenerator:new(model_name)
+    local instance = Generator.new(self)
+    instance.model_name = model_name
+    return instance
+end
+
+function MarkovGenerator:init(ctx)
+    self.state = _rust_markov_init(self.model_name, ctx.seed, ctx.bounds)
+    return self.state and "ready" or "error: failed to load model"
+end
+
+function MarkovGenerator:step(ctx)
+    local result = _rust_markov_step(self.state)
+    if result == "done" then
+        _rust_markov_copy_to_voxels(self.state, ctx.voxels)
+    end
+    return result
+end
+
+function MarkovGenerator:teardown(ctx)
+    _rust_markov_destroy(self.state)
+end
+
+return MarkovGenerator
+```
+
+### 8.6 Example: Composed Sequence
+
+```lua
+local Sequence = require("generators/sequence")
+local Markov = require("generators/markov")
+local Scatter = require("generators/scatter")
+
+local terrain = Sequence:new({
+    Markov:new("base_terrain.xml"),
+    Scatter:new(crystal_id, 0.01, true),  -- surface scatter
+})
+```
+
+### 8.7 Generation Flow
 
 ```
-Terrain File (disk)
+Lua Script (defines Generator subclass)
        ↓
-   Lua Parser
+Generator:init(ctx)
        ↓
-TerrainDefinition (CPU)
+Generator:step(ctx) [loops until "done"]
        ↓
-MarkovJunior Solver
-  - Applies rules iteratively
-  - Produces voxel grid (u16 per cell)
+Generator:post_process(ctx)
        ↓
-Post-Processing
-  - Scatter, erode, etc.
+Generator:teardown(ctx)
        ↓
-VoxelWorld (CPU)
-  - 3D array of voxel IDs
-       ↓
-Mesh Generation
-  - Greedy meshing with material lookup
-       ↓
-Rendered Terrain
+VoxelBuffer ready for rendering
 ```
 
-### 8.4 Hot Reloading Terrain
+### 8.8 Hot Reloading
 
-When `terrain.lua` changes:
-1. Re-parse terrain definition
-2. Re-run generation (may be slow for large terrains)
-3. Re-mesh affected chunks
-4. Update GPU buffers
-
-For rapid iteration, support:
-- Small preview terrain (16x16x16) for instant feedback
-- Full terrain generation as separate "bake" step
-- Incremental re-generation where possible
+When a generator script changes:
+1. Teardown current generator
+2. Re-load Lua script
+3. Re-instantiate generator class
+4. Re-run from init with same seed (reproducible)
 
 ---
 
 ## 9. Hot Reloading Architecture
 
-### 9.1 File Watcher
+### 9.1 Two Reload Triggers
 
-A background system monitors relevant directories:
+Hot reload is triggered by TWO mechanisms:
 
-```rust
-pub struct FileWatcher {
-    watcher: notify::RecommendedWatcher,
-    receiver: Receiver<notify::Event>,
-    watched_paths: HashSet<PathBuf>,
-}
-```
+1. **Database writes** (for materials)
+   - MCP call → MaterialStore write → MaterialChangedEvent
+   - No file watching needed
 
-Watched paths:
-- `assets/palettes/*.lua`
-- `assets/terrain/*.lua`
-- `assets/config/*.lua`
+2. **File changes** (for generator scripts, config)
+   - File watcher detects `.lua` changes
+   - Script re-loaded, class re-instantiated
 
-### 9.2 Change Detection
-
-Each frame, check for file events:
+### 9.2 Material Reload (Database-Triggered)
 
 ```rust
-fn check_file_changes(
-    file_watcher: Res<FileWatcher>,
-    mut reload_events: EventWriter<ReloadEvent>,
-) {
-    while let Ok(event) = file_watcher.receiver.try_recv() {
-        match event.kind {
-            EventKind::Modify(_) | EventKind::Create(_) => {
-                for path in event.paths {
-                    reload_events.send(ReloadEvent { path });
-                }
-            }
-            _ => {}
-        }
-    }
-}
-```
-
-### 9.3 Reload Handlers
-
-Different handlers for different file types:
-
-```rust
-fn handle_palette_reload(
-    mut events: EventReader<ReloadEvent>,
-    mut palette: ResMut<VoxelPalette>,
-    // ... other resources
+fn handle_material_change(
+    mut events: EventReader<MaterialChangedEvent>,
+    material_db: Res<MaterialDatabase>,
+    mut terrain: ResMut<Terrain>,
 ) {
     for event in events.read() {
-        if event.path.extension() == Some("lua") 
-           && event.path.parent().unwrap().ends_with("palettes") 
-        {
-            match load_palette(&event.path) {
-                Ok(new_palette) => {
-                    *palette = new_palette;
-                    // Trigger re-mesh of all terrain
-                }
-                Err(e) => {
-                    error!("Failed to reload palette: {}", e);
-                    // Keep old palette, show error in UI
-                }
-            }
+        // Refresh in-memory cache
+        material_db.refresh_cache(event.material_id);
+        
+        // Re-mesh if material is in use
+        if terrain.uses_material(event.material_id) {
+            terrain.schedule_remesh();
         }
     }
 }
 ```
 
-### 9.4 Cascading Reloads
+### 9.3 Generator Reload (File-Triggered)
 
-Some changes cascade:
-- Palette change → re-mesh all terrain using that palette
-- Terrain definition change → re-generate that terrain
-- Lighting config change → update shader uniforms (no re-mesh)
+```rust
+fn handle_generator_reload(
+    mut events: EventReader<ScriptChangedEvent>,
+    mut generator_manager: ResMut<GeneratorManager>,
+) {
+    for event in events.read() {
+        if event.path.ends_with(".lua") {
+            // Teardown current generator
+            generator_manager.teardown_current();
+            
+            // Re-load script
+            generator_manager.load_script(&event.path);
+            
+            // Re-run with same seed (reproducible)
+            generator_manager.run_with_seed(generator_manager.last_seed);
+        }
+    }
+}
+```
 
-### 9.5 What Requires Restart
+### 9.4 Watched Paths
 
-Some changes cannot be hot reloaded (require new Rust code):
+File watcher monitors:
+- `assets/generators/*.lua` - Generator class definitions
+- `assets/renderers/*.lua` - Renderer class definitions
+- `assets/config/*.lua` - Configuration scripts
+
+**NOT watched** (uses database instead):
+- Materials (via MaterialStore)
+- Palettes (via PaletteStore)
+
+### 9.5 Cascading Reloads
+
+| Change | Effect |
+|--------|--------|
+| Material updated | Re-mesh terrain if material in use |
+| Generator script changed | Teardown, reload, re-run from init |
+| Renderer script changed | Teardown, reload, re-init |
+| Config changed | Update uniforms immediately |
+
+### 9.6 What Requires Restart
+
+Changes requiring app restart (new Rust code):
+- New Rust traits / API methods
 - New vertex attributes
 - New G-buffer formats
-- New shader entry points
-- New ECS systems
+- New render pipeline stages
 
 These should be rare once the system is mature.
 
@@ -677,85 +752,126 @@ These should be rare once the system is mature.
 
 ## 10. Scripting Model
 
-### 10.1 Why Scripting
+*See `API_DESIGN.md` for full API specification.*
 
-Scripting enables:
-- External file editing (by AI or human)
-- Hot reloading without recompilation
-- Safer iteration (syntax errors don't crash the app)
-- Future in-game scripting (console commands, modding)
+### 10.1 Philosophy: Classes, Not Data Tables
 
-### 10.2 Language Choice: Lua
+Scripts define **classes that extend base classes**, not data tables.
 
-Lua is chosen because:
-- Lightweight, embeddable, fast
-- Well-understood by AI models
-- Existing Bevy integration (`bevy_mod_scripting`)
-- Simple syntax for data definition
-- Can also express logic if needed
-
-### 10.3 Script Types
-
-**Data Scripts:** Define static data (palettes, terrain params)
+**Wrong approach (shitty JSON):**
 ```lua
--- Pure data, no logic
+-- DON'T do this - it's just a config file
 return {
-  voxels = { ... }
+  name = "terrain",
+  model = "dungeon.xml",
+  post_process = { ... }
 }
 ```
 
-**Config Scripts:** Define runtime parameters
+**Right approach (extensible classes):**
 ```lua
--- May include simple expressions
-return {
-  fog_density = 0.02,
-  moon1_color = rgb(0.6, 0.3, 0.8),  -- helper function
-}
-```
+-- DO this - it's a class with behavior
+local Generator = require("generator")
+local MyTerrain = Generator:new()
 
-**Logic Scripts (future):** Define behavior
-```lua
--- Full logic, called per-frame or on events
-function on_voxel_placed(x, y, z, type)
-  if type == "water" then
-    spread_water(x, y, z)
-  end
+function MyTerrain:init(ctx)
+    self.markov = _rust_markov_init("dungeon.xml", ctx.seed)
+    return "ready"
 end
+
+function MyTerrain:step(ctx)
+    return _rust_markov_step(self.markov)
+end
+
+return MyTerrain
 ```
 
-### 10.4 Script Execution
+### 10.2 Why Classes
+
+Classes enable:
+- Method overriding (customize behavior)
+- Composition (combine generators)
+- State management (instance variables)
+- Rust trait mapping (Lua class ↔ Rust trait)
+
+Data tables are just config. Classes are behavior.
+
+### 10.3 Base Classes (Provided by Engine)
+
+```lua
+-- generator.lua (base class)
+local Generator = {}
+Generator.__index = Generator
+function Generator:new() return setmetatable({}, self) end
+function Generator:init(ctx) return "ready" end
+function Generator:step(ctx) return "done" end
+function Generator:post_process(ctx) end
+function Generator:teardown(ctx) end
+return Generator
+
+-- renderer.lua (base class)
+local Renderer = {}
+Renderer.__index = Renderer
+function Renderer:new() return setmetatable({}, self) end
+function Renderer:init(ctx) return "ready" end
+function Renderer:render(ctx) return "ok" end
+function Renderer:teardown(ctx) end
+return Renderer
+```
+
+### 10.4 User Scripts (Extend Base Classes)
+
+```lua
+-- my_terrain.lua
+local Generator = require("generator")
+local Scatter = require("generators/scatter")
+
+local MyTerrain = Generator:new()
+
+function MyTerrain:init(ctx)
+    -- Direct voxel access - nothing stopping you
+    for x = 0, ctx.bounds.max.x do
+        self:set_voxel(ctx, x, 0, 0, 1)  -- ground layer
+    end
+    return "ready"
+end
+
+function MyTerrain:step(ctx)
+    -- Could use Markov, noise, shaders, anything
+    return "done"
+end
+
+return MyTerrain
+```
+
+### 10.5 Rust Bindings
+
+Lua classes call into Rust via exposed functions:
 
 ```rust
-pub struct ScriptEngine {
-    lua: Lua,
-    loaded_scripts: HashMap<PathBuf, ScriptState>,
+// Exposed to Lua as _rust_voxel_set
+fn lua_voxel_set(voxels: &mut VoxelBuffer, x: i32, y: i32, z: i32, id: u16) {
+    voxels.set(x, y, z, id);
 }
 
-impl ScriptEngine {
-    pub fn load_data_script<T: FromLua>(&mut self, path: &Path) -> Result<T> {
-        let source = std::fs::read_to_string(path)?;
-        let value: LuaValue = self.lua.load(&source).eval()?;
-        T::from_lua(value, &self.lua)
-    }
-    
-    pub fn reload_script(&mut self, path: &Path) -> Result<()> {
-        // Re-execute and update cached state
-    }
+// Exposed to Lua as _rust_markov_init
+fn lua_markov_init(model: &str, seed: u64, bounds: Bounds3D) -> MarkovState {
+    MarkovState::new(model, seed, bounds)
 }
 ```
 
-### 10.5 Error Handling
+### 10.6 Error Handling
 
-Script errors should:
-- Be logged clearly with file/line information
-- Be displayed in the UI
-- NOT crash the application
-- Keep the previous valid state
+Script errors:
+- Logged with file/line information
+- Displayed in UI
+- Do NOT crash the application
+- Keep previous valid state
 
 ```
-[ERROR] Failed to load palette.lua:
-  Line 15: attempt to index nil value 'voxels'
-  Keeping previous palette.
+[ERROR] my_terrain.lua:15
+  attempt to call nil value 'set_voxel'
+  Generator unchanged.
 ```
 
 ---
@@ -990,126 +1106,101 @@ Shows:
 
 ---
 
-## 14. File Format Specifications
+## 14. API Summary
 
-### 14.1 Palette File Format
+*Full specification in `API_DESIGN.md`.*
 
-**Location:** `assets/palettes/<name>.lua`
+### 14.1 Core APIs
 
-**Schema:**
-```lua
-return {
-  -- Required
-  name = "string",           -- Unique palette name
-  version = number,          -- Schema version (currently 1)
-  voxels = {                 -- Array of voxel definitions
-    {
-      -- Required
-      id = number,           -- Unique ID (1-65535, 0 reserved for air)
-      name = "string",       -- Unique name within palette
-      color = { r, g, b },   -- RGB values 0.0-1.0
-      
-      -- Optional (defaults shown)
-      roughness = 0.5,       -- 0.0-1.0
-      metallic = 0.0,        -- 0.0-1.0
-      emission = 0.0,        -- 0.0-1.0
-      emission_color = nil,  -- defaults to color if emission > 0
-      tags = {},             -- array of strings
-    },
-    -- ... more voxels
-  },
-  
-  -- Optional
-  metadata = {
-    author = "string",
-    description = "string",
-    created = "ISO date",
-    modified = "ISO date",
-  }
+| API | Rust Trait | Lua Class | Purpose |
+|-----|------------|-----------|---------|
+| **MaterialAPI** | `MaterialStore` | `Material` | Create/query/update materials in database |
+| **GeneratorAPI** | `VoxelGenerator` | `Generator` | Produce voxel data via any method |
+| **RendererAPI** | `VoxelRenderer` | `Renderer` | Display voxel data to screen/texture |
+
+### 14.2 MaterialAPI (Database-Based)
+
+```rust
+// Rust trait
+pub trait MaterialStore {
+    fn create(&mut self, def: MaterialDef) -> MaterialId;
+    fn get(&self, id: MaterialId) -> Option<&Material>;
+    fn search(&self, query: &str, limit: usize) -> Vec<Material>;
+    fn find_by_tag(&self, tag: &str) -> Vec<Material>;
+    fn create_palette(&mut self, name: &str, ids: &[MaterialId]) -> PaletteId;
 }
 ```
 
-### 14.2 Terrain File Format
-
-**Location:** `assets/terrain/<name>.lua`
-
-**Schema:**
 ```lua
-return {
-  -- Required
-  name = "string",
-  palette = "string",        -- Name of palette file (without .lua)
-  size = { x = n, y = n, z = n },
-  
-  -- Generation method (one of these)
-  model = "string",          -- MarkovJunior .xml file name
-  -- OR
-  rules = {                  -- Inline rules
-    { pattern = "a/b", weight = 1.0 },
-  },
-  -- OR
-  heightmap = "string",      -- PNG file for heightmap-based generation
-  
-  -- Optional
-  seed = number,             -- Random seed (default: random)
-  post_process = {           -- Post-processing steps
-    { type = "scatter", voxel = "name", density = 0.01 },
-    { type = "erode", iterations = 2 },
-    { type = "smooth", passes = 1 },
-  },
+-- Lua usage
+local mat = require("materials")
+local id = mat.Material.create({ name = "stone", color = {0.5,0.5,0.5} })
+local found = mat.Material.search("wood", 10)
+```
+
+### 14.3 GeneratorAPI (Class-Based)
+
+```rust
+// Rust trait
+pub trait VoxelGenerator {
+    fn init(&mut self, ctx: &mut GeneratorContext) -> GeneratorState;
+    fn step(&mut self, ctx: &mut GeneratorContext) -> StepResult;
+    fn post_process(&mut self, ctx: &mut GeneratorContext) {}
+    fn teardown(&mut self, ctx: &mut GeneratorContext);
 }
 ```
 
-### 14.3 Config File Format
-
-**Location:** `assets/config/world.lua`
-
-**Schema:**
 ```lua
-return {
-  -- Lighting
-  lighting = {
-    moon1 = {
-      color = { r, g, b },
-      intensity = 0.5,
-      direction = { x, y, z },  -- or use orbit parameters
-    },
-    moon2 = { ... },
-    ambient = {
-      color = { r, g, b },
-      intensity = 0.1,
-    },
-  },
-  
-  -- Atmosphere
-  atmosphere = {
-    fog = {
-      color = { r, g, b },
-      density = 0.02,
-      height_falloff = 0.1,
-    },
-    sky_color = { r, g, b },
-  },
-  
-  -- Post-processing
-  post_process = {
-    bloom = { intensity = 0.5, threshold = 0.8 },
-    film_grain = { strength = 0.02 },
-    vignette = { strength = 0.3 },
-  },
+-- Lua usage
+local Generator = require("generator")
+local MyGen = Generator:new()
+function MyGen:step(ctx)
+    self:set_voxel(ctx, 0, 0, 0, stone_id)
+    return "done"
+end
+```
+
+### 14.4 RendererAPI (Class-Based)
+
+```rust
+// Rust trait
+pub trait VoxelRenderer {
+    fn init(&mut self, ctx: &mut RenderContext) -> RendererState;
+    fn render(&mut self, ctx: &mut RenderContext) -> RenderResult;
+    fn teardown(&mut self, ctx: &mut RenderContext);
+    fn get_output(&self) -> Option<&RenderOutput>;
 }
 ```
 
-### 14.4 Validation
+```lua
+-- Lua usage
+local Renderer = require("renderer")
+local MyRenderer = Renderer:new()
+function MyRenderer:render(ctx)
+    -- Custom rendering logic
+    return "ok"
+end
+```
 
-On load, validate:
-- Required fields present
-- Types correct
-- Values in valid ranges
-- No duplicate IDs or names
-- Referenced files exist
+### 14.5 MCP Tools (AI Access)
 
-Report errors clearly with file/line numbers.
+All APIs exposed via MCP for external AI:
+
+```
+// Materials
+create_material(def) -> MaterialId
+search_materials(query, limit) -> Material[]
+create_palette(name, material_ids) -> PaletteId
+
+// Generation
+run_generator(script_path, seed, bounds) -> void
+stop_generator() -> void
+get_voxel(x, y, z) -> MaterialId
+
+// Rendering
+get_render_output() -> bytes (PNG)
+set_camera(pos, target, up) -> void
+```
 
 ---
 
@@ -1279,134 +1370,348 @@ async fn ask_ai(
 
 ---
 
-## 18. Implementation Phases
+## 18. Implementation Phases (API-Driven)
 
-### 18.1 Philosophy: Incremental Progress
+*Each phase introduces or extends APIs. See `API_DESIGN.md` for full specification.*
 
-Each phase delivers working functionality:
+### 18.1 Philosophy: API-First, Incremental Progress
+
+Each phase:
+1. **Introduces or extends an API** (Rust trait + Lua class)
+2. **Delivers working functionality** that uses that API
+3. **Is independently testable** and demonstrable
+4. **Builds on previous phases** without breaking them
+
 ```
-Functionality → Test → Functionality → Test → ...
+API → Implementation → Test → API → Implementation → Test → ...
 ```
-
-No phase should leave the system broken. Each phase should be:
-- Independently testable
-- Demonstrable to stakeholders
-- A foundation for the next phase
 
 ### 18.2 Phase Overview
 
-| Phase | Name | Deliverable | Est. Time |
-|-------|------|-------------|-----------|
-| P1 | Palette Loader | Load palette from Lua, use in mesh gen | 1 day |
-| P2 | Material Pipeline | Roughness/metallic in vertex → G-buffer → lighting | 2 days |
-| P3 | Hot Reload | File watcher + palette reload | 1 day |
-| P4 | Palette UI | ImGui panel showing palette | 0.5 day |
-| P5 | Voxel Samples | 3D preview of voxel types | 0.5 day |
-| P6 | Terrain Definition | Load terrain from Lua | 1 day |
-| P7 | Terrain Hot Reload | Regenerate on file change | 1 day |
-| P8 | Config Hot Reload | Lighting/atmosphere from files | 0.5 day |
-| P9 | Demo Polish | Full demo scenario working | 1 day |
-| P10 | Documentation | User-facing docs, API reference | 0.5 day |
+| Phase | Name | API Introduced/Extended | Deliverable |
+|-------|------|------------------------|-------------|
+| P1 | Material Database | `MaterialStore` (Rust) | SQLite DB for materials |
+| P2 | Material Lua Bindings | `Material` (Lua) | Create/search materials from Lua |
+| P3 | PBR Pipeline | (extends vertex/shader) | Roughness/metallic rendering |
+| P4 | Generator Base | `VoxelGenerator` (Rust), `Generator` (Lua) | Base class for all generators |
+| P5 | Direct Writer | `DirectWriter` (Lua) | First generator implementation |
+| P6 | 2D Renderer | `VoxelRenderer` (Rust), `Renderer` (Lua) | 2D grid renderer |
+| P7 | Hot Reload | `on_change` events | Script/database change detection |
+| P8 | MCP Server | MCP tools for all APIs | External AI access |
+| P9 | Markov Generator | `MarkovGenerator` (Lua) | Markov Jr. integration |
+| P10 | Composed Generators | `SequenceGenerator`, etc. | Generator composition |
+| P11 | 3D Renderer | `DeferredRenderer3D` (Lua) | Full 3D rendering |
+| P12 | Live Generators | `LiveGenerator` (Lua) | Never-ending generators |
 
-**Total: ~9 days of focused work**
+### 18.3 Phase P1: Material Database
 
-### 18.3 Phase P1: Palette Loader
+**API Introduced:** `MaterialStore` (Rust trait)
 
-**Goal:** Load voxel palette from Lua file, use in mesh generation.
+```rust
+pub trait MaterialStore {
+    fn create(&mut self, def: MaterialDef) -> MaterialId;
+    fn get(&self, id: MaterialId) -> Option<&Material>;
+    fn update(&mut self, id: MaterialId, def: MaterialDef) -> Result<()>;
+    fn search(&self, query: &str, limit: usize) -> Vec<Material>;
+    fn find_by_tag(&self, tag: &str) -> Vec<Material>;
+}
+```
 
 **Tasks:**
-1. Add `mlua` crate for Lua parsing
-2. Create `VoxelPalette` struct in Rust
-3. Write palette loader function
-4. Modify mesh generation to look up color from palette
-5. Test with sample palette file
+1. Add `rusqlite` crate
+2. Implement `SqliteMaterialStore`
+3. Create database schema (materials, palettes, palette_materials)
+4. Add embedding column for semantic search (optional V1)
+5. Create `MaterialDatabase` Bevy resource
 
 **Verification:**
-- Load `dark_fantasy.lua`
-- Generate terrain mesh
-- Voxels have correct colors from palette
+- Create material via Rust API
+- Query it back
+- Search by tag works
 
 **Files:**
-- `crates/studio_core/src/voxel_palette.rs` (new)
-- `crates/studio_core/src/voxel_mesh.rs` (modify)
-- `assets/palettes/dark_fantasy.lua` (new)
+- `crates/studio_core/src/materials/mod.rs` (new)
+- `crates/studio_core/src/materials/store.rs` (new)
+- `crates/studio_core/src/materials/sqlite.rs` (new)
 
-### 18.4 Phase P2: Material Pipeline
+### 18.4 Phase P2: Material Lua Bindings
 
-**Goal:** Roughness and metallic flow from palette through rendering.
+**API Introduced:** `Material` (Lua class)
+
+```lua
+local mat = require("materials")
+local id = mat.Material.create({ name = "stone", color = {0.5, 0.5, 0.5} })
+local found = mat.Material.search("wood", 10)
+```
 
 **Tasks:**
-1. Extend `GBufferVertex` with roughness, metallic
-2. Update vertex buffer layout (44 → 52 bytes)
-3. Add 4th G-buffer MRT for materials (or pack into existing)
-4. Modify `gbuffer.wgsl` to output materials
-5. Port GGX specular functions to `deferred_lighting.wgsl`
-6. Read materials in lighting pass, calculate specular
+1. Add `mlua` crate
+2. Expose `MaterialStore` methods to Lua
+3. Create `materials.lua` helper module
+4. Test from Lua REPL
 
 **Verification:**
-- Place wet stone (roughness 0.3) and dry stone (roughness 0.7) side by side
-- Wet stone has visible specular highlights
-- Dry stone is matte
-- Metal voxels reflect colored highlights correctly
+- Create material from Lua
+- Query it back
+- Search works
+
+**Files:**
+- `crates/studio_core/src/scripting/mod.rs` (new)
+- `crates/studio_core/src/scripting/materials.rs` (new)
+- `assets/lua/materials.lua` (new)
+
+### 18.5 Phase P3: PBR Pipeline
+
+**API Extended:** Vertex format, G-buffer, lighting shader
+
+**Tasks:**
+1. Extend `GBufferVertex` with roughness, metallic (44 → 52 bytes)
+2. Add 4th G-buffer MRT or pack into existing
+3. Modify `gbuffer.wgsl` to output materials
+4. Port GGX specular to `deferred_lighting.wgsl`
+5. Mesh generation looks up material from database
+
+**Verification:**
+- Create wet material (roughness 0.3) and dry material (roughness 0.7)
+- Render side by side
+- Wet has specular highlights, dry is matte
 
 **Files:**
 - `crates/studio_core/src/deferred/gbuffer_geometry.rs`
-- `crates/studio_core/src/deferred/gbuffer.rs`
-- `crates/studio_core/src/voxel_mesh.rs`
 - `assets/shaders/gbuffer.wgsl`
 - `assets/shaders/deferred_lighting.wgsl`
 
-### 18.5 Phase P3: Hot Reload
+### 18.6 Phase P4: Generator Base Class
 
-**Goal:** Detect palette file changes, reload automatically.
+**API Introduced:** `VoxelGenerator` (Rust), `Generator` (Lua)
+
+```rust
+pub trait VoxelGenerator {
+    fn init(&mut self, ctx: &mut GeneratorContext) -> GeneratorState;
+    fn step(&mut self, ctx: &mut GeneratorContext) -> StepResult;
+    fn post_process(&mut self, ctx: &mut GeneratorContext) {}
+    fn teardown(&mut self, ctx: &mut GeneratorContext);
+}
+```
+
+```lua
+local Generator = {}
+function Generator:init(ctx) return "ready" end
+function Generator:step(ctx) return "done" end
+function Generator:teardown(ctx) end
+```
+
+**Tasks:**
+1. Define `VoxelGenerator` trait in Rust
+2. Create `GeneratorContext` with voxel buffer access
+3. Create `Generator` base class in Lua
+4. Add `_rust_voxel_set`, `_rust_voxel_get` bindings
+5. Create `GeneratorManager` to run generators
+
+**Verification:**
+- Load a generator script
+- Call init/step/teardown
+- Voxels written correctly
+
+**Files:**
+- `crates/studio_core/src/generation/mod.rs` (new)
+- `crates/studio_core/src/generation/trait.rs` (new)
+- `crates/studio_core/src/generation/manager.rs` (new)
+- `assets/lua/generator.lua` (new)
+
+### 18.7 Phase P5: Direct Writer Generator
+
+**API Extended:** First `Generator` subclass
+
+```lua
+local Generator = require("generator")
+local DirectWriter = Generator:new()
+
+function DirectWriter:step(ctx)
+    for x = 0, ctx.bounds.max.x do
+        self:set_voxel(ctx, x, 0, 0, self.ground_id)
+    end
+    return "done"
+end
+```
+
+**Tasks:**
+1. Create `DirectWriter` generator class
+2. Test writing patterns directly
+3. Verify voxel buffer contents
+
+**Verification:**
+- Run DirectWriter
+- Inspect voxel buffer
+- Pattern matches expectations
+
+**Files:**
+- `assets/lua/generators/direct_writer.lua` (new)
+
+### 18.8 Phase P6: 2D Renderer
+
+**API Introduced:** `VoxelRenderer` (Rust), `Renderer` (Lua)
+
+```rust
+pub trait VoxelRenderer {
+    fn init(&mut self, ctx: &mut RenderContext) -> RendererState;
+    fn render(&mut self, ctx: &mut RenderContext) -> RenderResult;
+    fn get_output(&self) -> Option<&RenderOutput>;
+    fn teardown(&mut self, ctx: &mut RenderContext);
+}
+```
+
+**Tasks:**
+1. Define `VoxelRenderer` trait
+2. Create `GridRenderer2D` that renders to texture
+3. Display texture in ImGui window
+4. Create `Renderer` base class in Lua
+
+**Verification:**
+- Generate voxels with DirectWriter
+- Render with GridRenderer2D
+- See colored grid in ImGui
+
+**Files:**
+- `crates/studio_core/src/rendering/mod.rs` (new)
+- `crates/studio_core/src/rendering/grid_2d.rs` (new)
+- `assets/lua/renderer.lua` (new)
+- `assets/lua/renderers/grid_2d.lua` (new)
+
+### 18.9 Phase P7: Hot Reload
+
+**API Extended:** Change events for all systems
 
 **Tasks:**
 1. Add `notify` crate for file watching
-2. Create `FileWatcher` resource
-3. Add system to check for file events
-4. Add system to reload palette on change
-5. Trigger re-mesh when palette changes
+2. Watch `assets/lua/generators/*.lua`
+3. On script change: teardown, reload, re-run
+4. Database changes emit `MaterialChangedEvent`
+5. Material changes trigger re-render
 
 **Verification:**
-- Run game with palette loaded
-- Edit palette file externally (change a color)
+- Edit generator script
 - Save file
-- See terrain update within 1 second
+- See generation re-run automatically
 
 **Files:**
-- `crates/studio_core/src/file_watcher.rs` (new)
-- `crates/studio_core/src/voxel_palette.rs` (modify)
+- `crates/studio_core/src/hot_reload.rs` (new)
 
-### 18.6 Phase P4: Palette UI
+### 18.10 Phase P8: MCP Server
 
-**Goal:** ImGui panel displaying current palette.
+**API Extended:** All APIs exposed via MCP
 
 **Tasks:**
-1. Add ImGui window for palette
-2. List all voxel types
-3. Show color swatches
-4. Show numeric properties
-5. Show load status and errors
+1. Add MCP server crate
+2. Expose `create_material`, `search_materials`, etc.
+3. Expose `run_generator`, `get_render_output`
+4. Start MCP server with example
 
 **Verification:**
-- Open Map Editor example
-- See palette panel on left
-- All voxel types listed with correct properties
-- Error shown if palette has syntax error
+- Run example
+- External AI calls `create_material`
+- Material appears in database
 
 **Files:**
-- `examples/p_map_editor.rs` (new or extend existing)
-- `crates/studio_core/src/ui/palette_ui.rs` (new)
+- `crates/studio_core/src/mcp/mod.rs` (new)
+- `crates/studio_core/src/mcp/tools.rs` (new)
 
-### 18.7 Phase P5: Voxel Samples
+### 18.11 Phase P9: Markov Generator
 
-**Goal:** 3D preview showing each voxel type as a cube.
+**API Extended:** `MarkovGenerator` (wraps Rust Markov Jr.)
+
+```lua
+local MarkovGenerator = Generator:new()
+function MarkovGenerator:init(ctx)
+    self.state = _rust_markov_init(self.model, ctx.seed)
+    return "ready"
+end
+```
 
 **Tasks:**
-1. Generate sample cubes for each voxel type
-2. Arrange in grid above terrain
-3. Add slow rotation for material visibility
-4. Highlight selected voxel
+1. Integrate MarkovJunior Rust port
+2. Create Lua bindings for Markov operations
+3. Create `MarkovGenerator` class
+
+**Verification:**
+- Load a Markov model
+- Run to completion
+- Output matches expected patterns
+
+**Files:**
+- `crates/studio_core/src/generation/markov.rs` (new)
+- `assets/lua/generators/markov.lua` (new)
+
+### 18.12 Phase P10: Composed Generators
+
+**API Extended:** Composition classes
+
+```lua
+local Sequence = require("generators/sequence")
+local terrain = Sequence:new({
+    MarkovGenerator:new("base.xml"),
+    ScatterGenerator:new(crystal_id, 0.01),
+})
+```
+
+**Tasks:**
+1. Create `SequenceGenerator` (run in order)
+2. Create `ScatterGenerator` (random placement)
+3. Test composition
+
+**Verification:**
+- Compose Markov + Scatter
+- Run composed generator
+- Both effects visible
+
+**Files:**
+- `assets/lua/generators/sequence.lua` (new)
+- `assets/lua/generators/scatter.lua` (new)
+
+### 18.13 Phase P11: 3D Renderer
+
+**API Extended:** `DeferredRenderer3D`
+
+**Tasks:**
+1. Wrap existing deferred pipeline in `VoxelRenderer`
+2. Create Lua class for 3D rendering
+3. Connect to existing examples
+
+**Verification:**
+- Generate voxels
+- Render in 3D with PBR materials
+- Matches existing rendering quality
+
+**Files:**
+- `crates/studio_core/src/rendering/deferred_3d.rs` (new)
+- `assets/lua/renderers/deferred_3d.lua` (new)
+
+### 18.14 Phase P12: Live Generators
+
+**API Extended:** `LiveGenerator` (never returns "done")
+
+```lua
+local LiveGenerator = Generator:new()
+function LiveGenerator:step(ctx)
+    -- Called every frame, never "done"
+    self.frame = self.frame + 1
+    -- Update voxels based on frame
+    return "continue"
+end
+```
+
+**Tasks:**
+1. Create `LiveGenerator` base class
+2. Add pause/resume support
+3. Test with animated effects
+
+**Verification:**
+- Run live generator
+- Voxels update each frame
+- Pause stops updates
+
+**Files:**
+- `assets/lua/generators/live.lua` (new)
 
 **Verification:**
 - See floating voxel cubes in 3D view
