@@ -99,29 +99,34 @@ Everything else (MCP server, persistence, search, 3D, sharing) is V2+.
 
 ## Part II: Technical Architecture
 
-### Q5: How do we structure the Lua API?
+### Q5: How do we structure the API for materials and generators?
 
-**Context:** You want Lua to wrap Rust functionality. The API needs to support:
-- Palette definition
+**Context:** Materials should NOT be stored as Lua files—they belong in a database (SQLite/LanceDB) with embeddings for search. The API needs to support:
+- Material creation (returns ID)
+- Material search (semantic query)
+- Palette composition (collection of material IDs)
 - Generator definition (possibly composable, PyTorch-like)
 - Partial execution and caching
-- Queries into game state (via MCP)
 
-**Hypothesis:** The Lua API should be declarative for data (palettes) and imperative for generators. Something like:
+**Hypothesis:** Materials are created via MCP calls, not Lua files:
 
-```lua
--- Declarative palette
-local palette = Palette.new("dark_fantasy")
-palette:add_voxel({ id = 1, name = "stone", color = {0.3, 0.3, 0.3}, roughness = 0.7 })
+```
+// MCP Tool: create_material
+{ "name": "stone", "color": [0.3, 0.3, 0.3], "roughness": 0.7, "tags": ["solid"] }
+// Returns: { "id": 12345 }
 
--- Imperative generator
-local gen = Generator.new()
-gen:add_step(MarkovModel.load("base_terrain.xml"))
-gen:add_step(Scatter.new("crystals", { density = 0.01 }))
-gen:run(seed)
+// MCP Tool: search_materials
+{ "query": "wood-like materials", "limit": 10 }
+// Returns: [{ "id": 101, "name": "dark_wood", ... }, ...]
+
+// MCP Tool: create_palette
+{ "name": "dark_fantasy", "material_ids": [12345, 12346] }
+// Returns: { "palette_id": 1 }
 ```
 
-**Question:** What should the Lua API feel like? Declarative, imperative, or hybrid? Any specific patterns you want to follow?
+Generators might still be Lua (for composition logic), but materials are database records.
+
+**Question:** Does this database-first approach for materials make sense? Should generators also be database records, or is Lua appropriate for their compositional nature?
 
 **[YOUR ANSWER]:**
 
@@ -132,21 +137,21 @@ gen:run(seed)
 
 ### Q6: How does hot reload work technically?
 
-**Context:** You want to edit Lua files outside the game and have changes appear inside. This requires:
-- File watching
-- Lua re-execution
-- State management (what to keep vs. regenerate)
+**Context:** With database-first materials, "hot reload" means something different:
+- Materials: Database write triggers `MaterialChangedEvent`
+- Generators: Could still be Lua files (or also database records)
+- Config: Could be database or files
 
-**Hypothesis:** Hot reload should:
-1. Watch `assets/` directory for `.lua` changes
-2. On change, re-execute the changed script
-3. For palettes: just update the palette resource
-4. For generators: re-run generation (with same seed for reproducibility)
-5. For config: update uniforms immediately
+**Hypothesis:** Hot reload triggers are:
+1. **Materials:** MCP call → database write → event → cache refresh → re-mesh if in use
+2. **Generators:** Either Lua file change OR database record change → re-run generation
+3. **Config:** Database or file change → update uniforms immediately
 
-**Open question:** What about partial state? If I'm mid-generation and I change the palette, do we restart or continue with new palette?
+The key insight: database writes ARE the hot reload trigger for materials, not file watching.
 
-**Question:** What are the hot reload semantics? Specifically, what state survives a reload and what gets regenerated?
+**Open question:** Should generators also be database records for consistency, or is Lua better for their compositional/algorithmic nature?
+
+**Question:** What are the hot reload semantics? Specifically, what triggers what, and what state survives vs. regenerates?
 
 **[YOUR ANSWER]:**
 

@@ -185,20 +185,23 @@ Start MCP server with the game; allow external queries and Lua edits; server per
 
 *Databases, persistence, package management*
 
-### D.1: Databases and Materials (Notes §4)
+### D.1: Database-First Material Storage (Roadmap §6)
+Materials are stored in an embedded database (SQLite with vector extension or LanceDB), NOT as files. This enables semantic search, relationships between materials, custom textures, and proper versioning. A palette is a query result or saved collection, not a monolithic file. AI creates materials via MCP calls and gets IDs back.
+
+### D.2: Databases and Materials (Notes §4)
 The system supports multiple databases (palettes, generators, creatures, spells) with PBR materials as the critical lowest-level building block.
 
-### D.2: Generators and Models (Notes §5)
+### D.3: Generators and Models (Notes §5)
 Markov Jr. and similar generators take palettes and rules to build terrains, creatures, and mana distributions using a consistent layered pattern.
 
-### D.3: Persistence and Search (Notes §16)
+### D.4: Persistence and Search (Notes §16)
 Need save/load for models and generators, embedding-based search (e.g., LanceDB), and documentation attached to saved artifacts.
 
-### D.4: Sharing and Namespacing (Notes §18)
-Namespace everything from the start; support importing others' work like a package manager; organize Lua code in an AI-accessible way with manifests.
+### D.5: Sharing and Namespacing (Notes §18)
+Namespace everything from the start; support importing others' work like a package manager; organize in an AI-accessible way with manifests.
 
-### D.5: Package Manager Questions (Notes §19)
-Research needed on Lua package management options, protocols, and whether we can leverage existing ecosystems.
+### D.6: Package Manager Questions (Notes §19)
+Research needed on package management options, protocols, and whether we can leverage existing ecosystems.
 
 ---
 

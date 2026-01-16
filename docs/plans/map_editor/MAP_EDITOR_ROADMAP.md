@@ -224,15 +224,28 @@ The Map Editor does NOT control (for now):
 
 ---
 
-## 6. Voxel Palette System
+## 6. Voxel Material System (Database-First)
 
-### 6.1 What Is a Palette?
+### 6.1 Why Database, Not Files?
 
-A palette is a collection of voxel type definitions. Each definition specifies:
+Storing materials as Lua files is short-sighted. Materials may have:
+- Custom textures
+- Associated assets (normal maps, etc.)
+- Relationships to other materials
+- Embeddings for semantic search
+- Version history
+
+A file-per-palette approach doesn't scale and makes search/query impossible.
+
+**The correct approach:** Store all materials in an embedded database from the start.
+
+### 6.2 What Is a Material?
+
+A material (voxel type) is a database record with these properties:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| id | u16 | Unique identifier (0-65535) |
+| id | u64 | Unique identifier (auto-generated) |
 | name | string | Human-readable name ("dark_stone", "glowing_crystal") |
 | color | RGB | Base albedo color |
 | roughness | f32 | Surface roughness (0.0 = mirror, 1.0 = matte) |
@@ -240,162 +253,153 @@ A palette is a collection of voxel type definitions. Each definition specifies:
 | emission | f32 | Emission intensity (0.0 = none, 1.0 = full glow) |
 | emission_color | RGB | Color of emission (if different from base) |
 | tags | list | Semantic tags ("solid", "transparent", "liquid") |
+| description | string | Human-readable description for search |
+| embedding | vec<f32> | Semantic embedding for similarity search |
+| texture_id | u64? | Optional reference to custom texture |
+| created_at | timestamp | When this material was created |
+| updated_at | timestamp | When this material was last modified |
 
-### 6.2 Example Palette Definition
+### 6.3 What Is a Palette?
 
-```lua
--- palette.lua
-return {
-  name = "dark_fantasy",
-  version = 1,
-  
-  voxels = {
-    -- Basic terrain
-    {
-      id = 1,
-      name = "stone_outdoor",
-      color = { 0.3, 0.3, 0.35 },
-      roughness = 0.3,  -- wet from rain
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "solid", "natural", "outdoor" }
-    },
-    {
-      id = 2,
-      name = "stone_indoor",
-      color = { 0.35, 0.33, 0.3 },
-      roughness = 0.7,  -- dry
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "solid", "natural", "indoor" }
-    },
-    {
-      id = 3,
-      name = "dark_wood",
-      color = { 0.2, 0.12, 0.08 },
-      roughness = 0.6,
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "solid", "natural", "building" }
-    },
-    {
-      id = 4,
-      name = "iron",
-      color = { 0.5, 0.5, 0.5 },
-      roughness = 0.4,
-      metallic = 0.9,
-      emission = 0.0,
-      tags = { "solid", "metal", "crafted" }
-    },
-    {
-      id = 5,
-      name = "purple_crystal",
-      color = { 0.6, 0.2, 0.8 },
-      roughness = 0.1,  -- very smooth
-      metallic = 0.3,   -- partially reflective
-      emission = 0.7,
-      emission_color = { 0.8, 0.3, 1.0 },
-      tags = { "solid", "magical", "light_source" }
-    },
-    {
-      id = 6,
-      name = "orange_crystal",
-      color = { 0.9, 0.5, 0.2 },
-      roughness = 0.1,
-      metallic = 0.3,
-      emission = 0.6,
-      emission_color = { 1.0, 0.6, 0.2 },
-      tags = { "solid", "magical", "light_source" }
-    },
-    {
-      id = 7,
-      name = "leaves",
-      color = { 0.15, 0.25, 0.1 },
-      roughness = 0.9,  -- very matte
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "solid", "natural", "foliage" }
-    },
-    {
-      id = 8,
-      name = "dirt",
-      color = { 0.3, 0.2, 0.15 },
-      roughness = 0.95,
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "solid", "natural", "terrain" }
-    },
-    
-    -- Special blocks
-    {
-      id = 100,
-      name = "air",
-      color = { 0.0, 0.0, 0.0 },
-      roughness = 0.0,
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "empty" }
-    },
-    {
-      id = 101,
-      name = "water",
-      color = { 0.1, 0.2, 0.4 },
-      roughness = 0.05,  -- very smooth
-      metallic = 0.0,
-      emission = 0.0,
-      tags = { "liquid", "transparent" }
-    },
-  }
-}
+A palette is NOT a file—it's a database query result or a saved collection:
+
+```sql
+-- A palette is just a set of material IDs
+CREATE TABLE palettes (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE palette_materials (
+    palette_id INTEGER REFERENCES palettes(id),
+    material_id INTEGER REFERENCES materials(id),
+    local_id INTEGER,  -- The ID used within this palette (0-255 typically)
+    PRIMARY KEY (palette_id, material_id)
+);
 ```
 
-### 6.3 Palette Storage
+A palette is a construction of individual materials, not a monolithic definition.
 
-Palettes are stored as files on disk:
-```
-assets/palettes/
-├── dark_fantasy.lua
-├── desert.lua
-├── underground.lua
-└── custom/
-    └── player_created.lua
-```
+### 6.4 Database Architecture
 
-### 6.4 Palette Loading
+**Storage:** SQLite with vector extension (for embeddings) or LanceDB
 
-At startup and on file change:
-1. File watcher detects change to `*.lua` in `assets/palettes/`
-2. Lua interpreter parses the file
-3. Voxel definitions extracted into runtime structures
-4. GPU resources updated (palette texture, material buffers)
-5. Terrain re-meshed with new material data
-
-### 6.5 Palette in Memory
+**In-memory:** Loaded at startup, kept in sync with on-disk database
 
 ```rust
-/// Runtime representation of a voxel type
-pub struct VoxelType {
-    pub id: u16,
-    pub name: String,
-    pub color: Vec3,
-    pub roughness: f32,
-    pub metallic: f32,
-    pub emission: f32,
-    pub emission_color: Vec3,
-    pub tags: HashSet<String>,
+/// The material database - constructed at startup, queryable at runtime
+#[derive(Resource)]
+pub struct MaterialDatabase {
+    /// SQLite connection (or LanceDB handle)
+    db: Connection,
+    /// In-memory cache for fast lookup during rendering
+    cache: HashMap<u64, Material>,
+    /// Embedding index for semantic search
+    embedding_index: EmbeddingIndex,
 }
 
-/// Runtime representation of a full palette
-#[derive(Resource)]
-pub struct VoxelPalette {
-    pub name: String,
-    pub version: u32,
-    pub types: HashMap<u16, VoxelType>,
-    pub by_name: HashMap<String, u16>,
-    pub source_path: PathBuf,
-    pub last_modified: SystemTime,
+impl MaterialDatabase {
+    /// Create a new material, returns its ID
+    pub fn create_material(&mut self, material: MaterialDef) -> u64;
+    
+    /// Query materials by semantic similarity
+    pub fn search(&self, query: &str, limit: usize) -> Vec<Material>;
+    
+    /// Query materials by tag
+    pub fn find_by_tag(&self, tag: &str) -> Vec<Material>;
+    
+    /// Get a specific material by ID
+    pub fn get(&self, id: u64) -> Option<&Material>;
+    
+    /// Update a material
+    pub fn update(&mut self, id: u64, material: MaterialDef);
+    
+    /// Create or get a palette
+    pub fn create_palette(&mut self, name: &str) -> u64;
+    
+    /// Add material to palette
+    pub fn add_to_palette(&mut self, palette_id: u64, material_id: u64, local_id: u8);
 }
 ```
+
+### 6.5 MCP Interface for AI
+
+AI interacts with materials via MCP server calls, NOT file edits:
+
+```
+// MCP Tool: create_material
+{
+  "name": "stone_outdoor",
+  "color": [0.3, 0.3, 0.35],
+  "roughness": 0.3,
+  "metallic": 0.0,
+  "tags": ["solid", "natural", "outdoor"],
+  "description": "Wet outdoor stone, darkened by rain"
+}
+// Returns: { "id": 12345 }
+
+// MCP Tool: search_materials
+{
+  "query": "wood",
+  "limit": 10
+}
+// Returns: [{ "id": 101, "name": "dark_wood", ... }, ...]
+
+// MCP Tool: create_palette
+{
+  "name": "dark_fantasy",
+  "material_ids": [12345, 12346, 12347]
+}
+// Returns: { "palette_id": 1 }
+```
+
+### 6.6 Why This Is Better
+
+| File-Based (Old) | Database-Based (New) |
+|------------------|----------------------|
+| Search = grep through files | Search = semantic query |
+| Add material = edit Lua file | Add material = API call, get ID back |
+| Custom textures = ??? | Custom textures = blob storage with foreign key |
+| AI edits files | AI calls MCP tools |
+| No history | Full version history |
+| No relationships | Materials can reference each other |
+| Palettes are monolithic | Palettes are composable queries |
+
+### 6.7 Hot Reload Behavior
+
+Hot reload still works, but the trigger is different:
+- **Old:** File watcher detects `.lua` change
+- **New:** Database write triggers update event
+
+```rust
+// When a material is created/updated via MCP
+fn on_material_changed(
+    mut events: EventReader<MaterialChangedEvent>,
+    mut terrain: ResMut<Terrain>,
+    db: Res<MaterialDatabase>,
+) {
+    for event in events.read() {
+        // Refresh the in-memory cache
+        db.refresh_cache(event.material_id);
+        // Re-mesh terrain if this material is in use
+        if terrain.uses_material(event.material_id) {
+            terrain.schedule_remesh();
+        }
+    }
+}
+```
+
+### 6.8 Migration Path
+
+For existing Lua palette files (if any):
+1. Parse the Lua file
+2. Insert each voxel definition as a material in the database
+3. Create a palette record linking those materials
+4. Delete the Lua file (or keep as backup)
+
+This is a one-time migration, not an ongoing workflow.
 
 ---
 
@@ -468,11 +472,13 @@ New Option B: Add 4th MRT (cleaner)
 ### 7.3 Material Data Flow
 
 ```
-Palette File (disk)
+MCP Call (AI or User)
        ↓
-   Lua Parser
+MaterialDatabase (SQLite/LanceDB)
        ↓
-VoxelPalette (CPU)
+MaterialChangedEvent (Bevy)
+       ↓
+In-Memory Cache Refresh
        ↓
 Mesh Generation (CPU)
   - Looks up material per voxel type
