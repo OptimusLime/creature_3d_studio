@@ -43,6 +43,8 @@ pub mod observation;
 pub mod one_node;
 pub mod parallel_node;
 pub mod path_node;
+pub mod polar_grid;
+pub mod recording;
 pub mod render;
 pub mod rng;
 pub mod rule;
@@ -74,6 +76,15 @@ pub use symmetry::{square_symmetries, SquareSubgroup};
 pub use voxel_bridge::{to_voxel_world, MjPalette};
 pub use wfc::{OverlapNode, TileNode, Wave, WfcNode, WfcState};
 pub use write_target::{MjWriteTarget, VoxelLayerTarget};
+
+// Polar coordinate extension
+pub use polar_grid::{PolarMjGrid, PolarNeighbors, PolarPattern, PolarRule, PolarSymmetry};
+
+// Recording and video export
+pub use recording::{
+    default_colors_for_palette, ArchiveError, GridType, GridTypeId, RecordableGrid, Renderable2D,
+    Renderable3D, SimulationArchive, SimulationRecorder, VideoError, VideoExporter, VoxelData,
+};
 
 // RNG abstraction (for C# compatibility testing)
 pub use rng::{DotNetRandom, MjRng, StdRandom};
@@ -347,6 +358,111 @@ impl MjGrid {
                 None
             }
         })
+    }
+}
+
+// ============================================================================
+// RecordableGrid and Renderable2D/3D trait implementations for MjGrid
+// ============================================================================
+
+impl recording::RecordableGrid for MjGrid {
+    fn grid_type(&self) -> recording::GridType {
+        if self.mz == 1 {
+            recording::GridType::Cartesian2D {
+                width: self.mx as u32,
+                height: self.my as u32,
+            }
+        } else {
+            recording::GridType::Cartesian3D {
+                width: self.mx as u32,
+                height: self.my as u32,
+                depth: self.mz as u32,
+            }
+        }
+    }
+
+    fn palette(&self) -> String {
+        self.characters.iter().collect()
+    }
+
+    fn state_to_bytes(&self) -> Vec<u8> {
+        self.state.clone()
+    }
+
+    fn state_from_bytes(&mut self, bytes: &[u8]) -> bool {
+        if bytes.len() != self.state.len() {
+            return false;
+        }
+        self.state.copy_from_slice(bytes);
+        true
+    }
+}
+
+impl recording::Renderable2D for MjGrid {
+    fn render_to_image(
+        &self,
+        image_size: u32,
+        colors: &[[u8; 4]],
+        background: [u8; 4],
+    ) -> image::RgbaImage {
+        use image::{ImageBuffer, Rgba};
+
+        let mut img: image::RgbaImage =
+            ImageBuffer::from_pixel(image_size, image_size, Rgba(background));
+
+        if self.mz != 1 {
+            // Only 2D grids can be rendered as 2D images
+            // For 3D, return empty image with background
+            return img;
+        }
+
+        let width = self.mx as f32;
+        let height = self.my as f32;
+
+        // Scale to fit image
+        let scale_x = image_size as f32 / width;
+        let scale_y = image_size as f32 / height;
+        let scale = scale_x.min(scale_y) * 0.95; // 5% margin
+
+        let offset_x = (image_size as f32 - width * scale) / 2.0;
+        let offset_y = (image_size as f32 - height * scale) / 2.0;
+
+        // Draw each cell
+        for y in 0..self.my {
+            for x in 0..self.mx {
+                let idx = x + y * self.mx;
+                let value = self.state[idx] as usize;
+
+                if value >= colors.len() || colors[value][3] == 0 {
+                    continue;
+                }
+
+                let color = Rgba(colors[value]);
+
+                // Fill the cell rectangle
+                let px_start = (offset_x + x as f32 * scale) as u32;
+                let py_start = (offset_y + y as f32 * scale) as u32;
+                let px_end = (offset_x + (x + 1) as f32 * scale) as u32;
+                let py_end = (offset_y + (y + 1) as f32 * scale) as u32;
+
+                for py in py_start..py_end.min(image_size) {
+                    for px in px_start..px_end.min(image_size) {
+                        img.put_pixel(px, py, color);
+                    }
+                }
+            }
+        }
+
+        img
+    }
+}
+
+impl recording::Renderable3D for MjGrid {
+    fn render_to_voxels(&self, _colors: &[[u8; 4]]) -> recording::VoxelData {
+        recording::VoxelData {
+            dimensions: (self.mx as u32, self.my as u32, self.mz as u32),
+            values: self.state.clone(),
+        }
     }
 }
 
