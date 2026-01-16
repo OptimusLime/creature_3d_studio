@@ -461,6 +461,11 @@ impl grid_ops::MjGridOps for MjGrid {
     fn dimensions(&self) -> (usize, usize, usize) {
         (self.mx, self.my, self.mz)
     }
+
+    fn center_index(&self) -> usize {
+        // Cartesian center: mx/2 + (my/2)*mx + (mz/2)*mx*my
+        self.mx / 2 + (self.my / 2) * self.mx + (self.mz / 2) * self.mx * self.my
+    }
 }
 
 // ============================================================================

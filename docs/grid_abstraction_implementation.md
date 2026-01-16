@@ -332,97 +332,553 @@ cargo test -p studio_core markov_junior::spherical_grid::rules
 
 ---
 
-## 13. Phase 10: Spherical XML Loading
+## 13. Phase 10: Generic Interpreter and XML Loading
 
 ### 13.1 Goal
 
-Enable loading polar/spherical models from XML, with the same syntax as Cartesian models but with polar-specific attributes.
+Make `Interpreter` and `LoadedModel` generic over `MjGridOps` so they can work with
+any grid type (Cartesian or Spherical). This is the prerequisite for XML loading of
+spherical models.
 
-### 13.2 XML Format
+### 13.2 Dependency Analysis
 
-```xml
-<!-- Polar model definition -->
-<model name="PolarRings" type="polar">
-  <!-- Grid definition -->
-  <grid r_min="256" r_depth="64" target_arc="1.0" values="BWR"/>
-  
-  <!-- Rules work the same as Cartesian, but use polar symmetries -->
-  <rule in="B" out="W" symmetry="polar"/>
-  
-  <!-- Patterns can specify polar neighbors -->
-  <rule>
-    <input>
-      <pattern center="B" r_plus="W"/>
-    </input>
-    <output>R</output>
-  </rule>
-</model>
-```
+**Current grid-specific code in `Interpreter`:**
 
-### 13.3 Implementation
+| Location | Code | Purpose | Solution |
+|----------|------|---------|----------|
+| Lines 143-146 | `self.grid.mx/my/mz` | Calculate center index for `origin` | Add `center_index()` to `MjGridOps` |
+| Lines 181-184 | Same | Same | Same |
+| Line 139, 177 | `self.grid.clear()` | Reset grid state | Add `clear()` to `MjGridOps` |
+| Line 271 | Return `&MjGrid` | Expose grid to callers | Return `&G` where `G: MjGridOps` |
 
-Extend `loader.rs` to handle polar grids:
+**Current grid-specific code in `LoadedModel`:**
+
+| Location | Code | Purpose | Solution |
+|----------|------|---------|----------|
+| Line 115 | `pub grid: MjGrid` | Field type | Make generic `G: MjGridOps` |
+| Line 123 | `(self.grid.mx, my, mz)` | Debug output | Use `dimensions()` |
+
+**Call sites (non-test):** 13 total
+- `model.rs`: 6 calls to `Interpreter::new/with_origin`
+- `verification.rs`: 4 calls
+- `lua_api.rs`: 2 calls
+- `mod.rs`: 1 export
+
+**Impact with default type parameter:** All existing code compiles unchanged because
+`Interpreter<G: MjGridOps = MjGrid>` defaults to `MjGrid`.
+
+### 13.3 Implementation - Phase 10a: Extend MjGridOps
+
+Add two methods to `MjGridOps` trait in `grid_ops.rs`:
 
 ```rust
-// In loader.rs
-fn load_grid(elem: &Element) -> Result<Box<dyn MjGridOps>, LoadError> {
-    if elem.has_attribute("r_min") || elem.has_attribute("r_depth") {
-        // Polar/Spherical grid
-        let r_min = elem.get_attr("r_min")?.parse()?;
-        let r_depth = elem.get_attr("r_depth")?.parse()?;
-        let target_arc = elem.get_attr("target_arc").unwrap_or("1.0").parse()?;
-        let values = elem.get_attr("values")?;
+pub trait MjGridOps {
+    // ... existing methods ...
+
+    /// Clear the grid state (all cells to 0) and reset mask.
+    fn clear(&mut self) {
+        self.state_mut().fill(0);
+        self.clear_mask();
+    }
+
+    /// Get the center cell index (for origin placement).
+    /// 
+    /// For Cartesian: mx/2 + (my/2)*mx + (mz/2)*mx*my
+    /// For Spherical: r_depth/2 * theta_divisions (middle ring, theta=0)
+    fn center_index(&self) -> usize;
+}
+```
+
+Implement in `MjGrid`:
+```rust
+fn center_index(&self) -> usize {
+    self.mx / 2 + (self.my / 2) * self.mx + (self.mz / 2) * self.mx * self.my
+}
+```
+
+Implement in `SphericalMjGrid`:
+```rust
+fn center_index(&self) -> usize {
+    // Middle radial ring, theta=0, phi=0
+    let r = self.r_depth / 2;
+    self.coord_to_index(r, 0, 0)
+}
+```
+
+**Verification:**
+```bash
+cargo test -p studio_core markov_junior::grid_ops
+cargo test -p studio_core markov_junior::spherical_grid::tests::mjgridops
+```
+
+### 13.4 Implementation - Phase 10b: Generic Interpreter
+
+Modify `interpreter.rs`:
+
+```rust
+use super::grid_ops::MjGridOps;
+use super::MjGrid;
+
+/// Main interpreter for running MarkovJunior models.
+pub struct Interpreter<G: MjGridOps = MjGrid> {
+    root: Box<dyn Node>,
+    grid: G,  // Was: MjGrid
+    random: Box<dyn MjRng>,
+    origin: bool,
+    changes: Vec<usize>,
+    first: Vec<usize>,
+    counter: usize,
+    running: bool,
+    animated: bool,
+}
+
+impl<G: MjGridOps> Interpreter<G> {
+    pub fn new(root: Box<dyn Node>, grid: G) -> Self { ... }
+    pub fn with_origin(root: Box<dyn Node>, grid: G) -> Self { ... }
+    
+    pub fn reset(&mut self, seed: u64) {
+        self.random = Box::new(StdRandom::from_u64_seed(seed));
+        self.grid.clear();  // Use trait method
         
-        if elem.has_attribute("phi_divisions") {
-            // 3D spherical
-            let phi_divisions = elem.get_attr("phi_divisions")?.parse()?;
-            Ok(Box::new(SphericalMjGrid::new_spherical(...)))
-        } else {
-            // 2D polar
-            Ok(Box::new(SphericalMjGrid::new_polar(r_min, r_depth, target_arc, values)))
+        if self.origin {
+            let center = self.grid.center_index();  // Use trait method
+            self.grid.set_state(center, 1);  // Use trait method
         }
-    } else {
-        // Cartesian grid (existing code)
-        let mx = elem.get_attr("mx")?.parse()?;
-        let my = elem.get_attr("my")?.parse()?;
-        let mz = elem.get_attr("mz").unwrap_or("1").parse()?;
-        Ok(Box::new(MjGrid::with_values(mx, my, mz, values)))
+        // ... rest unchanged
+    }
+    
+    pub fn grid(&self) -> &G {  // Generic return type
+        &self.grid
     }
 }
 ```
 
-### 13.4 Symmetry Loading
+**Key changes:**
+1. Add generic parameter `G: MjGridOps = MjGrid`
+2. Replace `self.grid.mx/my/mz` calculation with `self.grid.center_index()`
+3. Replace `self.grid.clear()` with trait method
+4. Replace `self.grid.state[center] = 1` with `self.grid.set_state(center, 1)`
+5. Return `&G` instead of `&MjGrid`
 
-Extend symmetry parsing to handle polar symmetries:
+**Verification:**
+```bash
+cargo test -p studio_core markov_junior::interpreter
+cargo test -p studio_core markov_junior::verification  # All 11 parity tests
+```
+
+### 13.5 Implementation - Phase 10c: Generic LoadedModel
+
+Modify `loader.rs`:
 
 ```rust
-fn parse_symmetry(s: &str, is_polar: bool) -> Vec<Box<dyn Symmetry>> {
-    if is_polar {
-        match s {
-            "polar" | "all" => SphericalSymmetry::all_2d().to_vec(),
-            "identity" => vec![SphericalSymmetry::Identity],
-            "theta" => vec![SphericalSymmetry::Identity, SphericalSymmetry::ThetaFlip],
-            "r" => vec![SphericalSymmetry::Identity, SphericalSymmetry::RFlip],
-            _ => vec![SphericalSymmetry::Identity],
-        }
-    } else {
-        // Existing Cartesian symmetry parsing
+use super::grid_ops::MjGridOps;
+use super::MjGrid;
+
+/// Result of loading a model from XML.
+pub struct LoadedModel<G: MjGridOps = MjGrid> {
+    pub root: Box<dyn Node>,
+    pub grid: G,
+    pub origin: bool,
+}
+
+impl<G: MjGridOps> std::fmt::Debug for LoadedModel<G> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (d0, d1, d2) = self.grid.dimensions();
+        f.debug_struct("LoadedModel")
+            .field("grid_dimensions", &(d0, d1, d2))
+            .field("origin", &self.origin)
+            .finish()
     }
 }
 ```
 
-### 13.5 Tests
+**Note:** The `load_model` functions still return `LoadedModel<MjGrid>` for now.
+Phase 10d will add spherical loading functions.
 
-- [ ] `test_load_polar_grid_from_xml`
-- [ ] `test_load_polar_rule_from_xml`
-- [ ] `test_load_polar_model_from_xml`
-- [ ] `test_polar_symmetry_parsing`
+**Verification:**
+```bash
+cargo test -p studio_core markov_junior::loader
+```
 
-### 13.6 Verification
+### 13.6 Implementation - Phase 10d: Spherical Model Loading
+
+Add new loading functions in `loader.rs`:
+
+```rust
+/// Load a spherical model from an XML string.
+/// 
+/// Detects spherical grid from `r_min` or `r_depth` attributes.
+pub fn load_spherical_model_str(
+    xml: &str,
+    r_min: u32,
+    r_depth: u16,
+    target_arc: f32,
+) -> Result<LoadedModel<SphericalMjGrid>, LoadError> {
+    // ... implementation
+}
+```
+
+**XML Format for Spherical Models:**
+```xml
+<!-- Spherical model uses r_min/r_depth instead of mx/my -->
+<one values="BW" r_min="256" r_depth="64" target_arc="1.0">
+  <rule in="B" out="W"/>
+</one>
+
+<!-- 3D spherical adds phi_divisions -->
+<one values="BW" r_min="256" r_depth="64" theta_divisions="360" phi_divisions="180">
+  <rule in="B" out="W"/>
+</one>
+```
+
+**Detection logic:**
+- Has `r_min` OR `r_depth` → Spherical grid
+- Has `phi_divisions` > 1 → 3D spherical, else 2D polar
+
+### 13.7 Tests
+
+Phase 10a (MjGridOps):
+- [x] `test_mjgrid_clear` (existing)
+- [ ] `test_mjgrid_center_index`
+- [ ] `test_spherical_center_index`
+
+Phase 10b (Generic Interpreter):
+- [ ] `test_interpreter_with_mjgrid` (existing tests should pass)
+- [ ] `test_interpreter_with_spherical_grid`
+
+Phase 10c (Generic LoadedModel):
+- [ ] `test_loaded_model_debug_cartesian`
+- [ ] `test_loaded_model_debug_spherical`
+
+Phase 10d (Spherical Loading):
+- [ ] `test_load_spherical_grid_from_xml`
+- [ ] `test_detect_spherical_from_attributes`
+- [ ] `test_load_spherical_model_runs`
+
+### 13.8 Verification
 
 ```bash
-cargo test -p studio_core markov_junior::loader::polar
+# Phase 10a
+cargo test -p studio_core markov_junior::grid_ops
+
+# Phase 10b - must pass ALL existing tests
+cargo test -p studio_core markov_junior::interpreter
+cargo test -p studio_core markov_junior::verification
+
+# Phase 10c
+cargo test -p studio_core markov_junior::loader
+
+# Phase 10d
+cargo test -p studio_core markov_junior::loader::spherical
+
+# Full regression
+cargo test -p studio_core markov_junior
 ```
+
+### 13.9 DETAILED ANALYSIS: Generic Node vs Separate Spherical Implementation
+
+**Last Updated**: During Phase 10b investigation
+
+This section provides a comprehensive analysis of two approaches for enabling
+spherical grid support in MarkovJunior's node execution system.
+
+---
+
+#### 13.9.1 The Core Problem
+
+The `Node` trait is tied to `MjGrid` through `ExecutionContext`:
+
+```rust
+// node.rs line 101 - uses default type parameter
+pub trait Node {
+    fn go(&mut self, ctx: &mut ExecutionContext) -> bool;  // = ExecutionContext<'_, MjGrid>
+}
+
+// ExecutionContext is already generic
+pub struct ExecutionContext<'a, G: MjGridOps = MjGrid> {
+    pub grid: &'a mut G,
+    // ...
+}
+```
+
+Making `Interpreter<G>` creates `ExecutionContext<'_, G>`, but `Node::go()` expects
+`ExecutionContext<'_, MjGrid>` — type mismatch.
+
+---
+
+#### 13.9.2 Grid Access Inventory
+
+**Total: ~163 grid accesses across all node implementations**
+
+| Access Type | Count | In Trait? | Difficulty |
+|-------------|-------|-----------|------------|
+| `ctx.grid.state[i]` / `state()` | 90+ | YES | Easy |
+| `ctx.grid.mx/my/mz` | 60+ | Via `dimensions()` | Easy |
+| `ctx.grid.mask[i]` | 6 | Via `get/set_mask()` | Easy |
+| `ctx.grid.index_to_coord(idx)` | 8 | NO | Medium |
+| `ctx.grid.matches(rule, x,y,z)` | 10+ | NO | **Hard** |
+| Index formula `x + y*mx + z*mx*my` | 30+ | Could add method | Medium |
+
+**The "Hard" category is the blocker**: `matches()` takes Cartesian `(x,y,z)`
+coordinates and checks a Cartesian `MjRule` pattern. This is fundamentally
+coordinate-system-specific.
+
+---
+
+#### 13.9.3 Node-by-Node Analysis
+
+| Node | Grid Accesses | Cartesian Logic | Generification Difficulty |
+|------|---------------|-----------------|---------------------------|
+| **SequenceNode** | 0 | None | **Already generic** |
+| **MarkovNode** | 0 | None | **Already generic** |
+| **OneNode** | 12 | `index_to_coord`, `matches`, index formula | Medium |
+| **AllNode** | 12 | Same as OneNode + mask | Medium |
+| **ParallelNode** | 12 | Same as OneNode | Medium |
+| **PathNode** | 19+ | Cardinal directions (N/S/E/W/Up/Down), BFS | **Very Hard** |
+| **ConvolutionNode** | 14 | 3x3/3x3x3 kernels, dx/dy/dz offsets | **Very Hard** |
+| **ConvChainNode** | 11 | Pattern indexing, modular x/y | Hard |
+| **MapNode** | 11 | Scale factors, 3D iteration | **Very Hard** |
+| **RuleNodeData** | 18+ | ishifts mechanism, strided scanning | **Very Hard** |
+| **OverlapNode** | 18 | 4-direction propagation | Hard |
+| **TileNode** | 12 | Overlap calculation | Hard |
+| **WfcNode** | 24+ | DX/DY/DZ directions, propagation | **Very Hard** |
+
+**Key Finding**: About 40% of the node code (branch nodes, basic rule nodes) could
+be generified with moderate effort. About 60% (WFC, convolution, path, map) is
+deeply tied to Cartesian semantics.
+
+---
+
+#### 13.9.4 OPTION A: Generic Node<G>
+
+**Approach**: Make `Node` generic over grid type.
+
+```rust
+pub trait Node<G: MjGridOps> {
+    fn go(&mut self, ctx: &mut ExecutionContext<'_, G>) -> bool;
+    fn reset(&mut self);
+}
+
+// All nodes become:
+impl<G: MjGridOps> Node<G> for OneNode<G> { ... }
+
+// Interpreter becomes:
+pub struct Interpreter<G: MjGridOps = MjGrid> {
+    root: Box<dyn Node<G>>,  // Now parameterized
+    grid: G,
+    // ...
+}
+```
+
+**What Must Change:**
+
+1. **Trait Definition** (1 file, ~10 lines)
+   - Change `trait Node` to `trait Node<G: MjGridOps>`
+   - Update `go()` signature
+
+2. **Add Methods to MjGridOps** (1 file, ~50 lines)
+   ```rust
+   // grid_ops.rs additions
+   fn coord_to_index(&self, c0: i32, c1: i32, c2: i32) -> Option<usize>;
+   fn index_to_coord(&self, idx: usize) -> (i32, i32, i32);
+   fn iter_indices(&self) -> impl Iterator<Item = usize>;
+   fn neighbors(&self, idx: usize) -> impl Iterator<Item = (usize, u8)>;
+   ```
+
+3. **Node Implementations** (~12 files, ~400 lines of changes)
+   
+   **Easy nodes** (branch, one, all, parallel):
+   - Replace `ctx.grid.mx/my/mz` with `let (d0, d1, d2) = ctx.grid.dimensions()`
+   - Replace manual index formula with `ctx.grid.coord_to_index(x, y, z)`
+   - Replace `ctx.grid.index_to_coord(idx)` with trait method
+   - Keep using `ctx.grid.state()`/`state_mut()` (already in trait)
+
+   **Medium nodes** (convchain, overlap, tile):
+   - Same as above
+   - Refactor neighbor iteration to use `ctx.grid.neighbors()`
+
+   **Hard nodes** (path, convolution, map, wfc):
+   - Require coordinate-system-specific logic
+   - Two sub-options:
+     a. Make them `Node<MjGrid>` only (not generic)
+     b. Create spherical variants (SphericalPathNode, etc.)
+
+4. **Rule System** (~2 files, ~200 lines)
+   - Create `trait RuleOps<G>` for grid-type-specific rule matching
+   - `MjRule` implements `RuleOps<MjGrid>`
+   - `SphericalRule` implements `RuleOps<SphericalMjGrid>`
+
+5. **Loader** (~1 file, ~100 lines)
+   - Make `LoadedModel<G>` generic
+   - Add `load_spherical_model()` function
+
+**Effort Estimate:**
+- Branch nodes: 1 hour
+- OneNode/AllNode/ParallelNode: 3 hours
+- Rule trait abstraction: 2 hours
+- Easy WFC nodes: 2 hours
+- Loader changes: 1 hour
+- **Subtotal for "easy" generification: ~9 hours**
+
+- ConvChain: 2 hours (coordinate wrapping)
+- OverlapNode/TileNode: 3 hours each
+- PathNode: 4 hours (spherical pathfinding is different)
+- ConvolutionNode: 4 hours (spherical kernels)
+- MapNode: 3 hours (spherical scaling?)
+- WfcNode: 4 hours (spherical propagation)
+- **Subtotal for "hard" generification: ~23 hours**
+
+**Total for full Option A: ~32 hours**
+
+**Risks:**
+- Trait object handling gets complex: `Box<dyn Node<MjGrid>>` vs `Box<dyn Node<SphericalMjGrid>>`
+- Some nodes may not make conceptual sense for spherical grids (MapNode scaling?)
+- Performance regression possible from additional trait bounds
+
+---
+
+#### 13.9.5 OPTION B: Separate Spherical Implementation
+
+**Approach**: Keep existing Cartesian infrastructure unchanged. Build parallel
+spherical infrastructure.
+
+**What Already Exists (from spherical_grid.rs):**
+
+```rust
+// Grid - DONE (50 tests passing)
+pub struct SphericalMjGrid { ... }
+impl MjGridOps for SphericalMjGrid { ... }
+
+// Rules - DONE
+pub struct SphericalPattern { center, theta_minus, theta_plus, r_minus, r_plus, phi_minus, phi_plus }
+pub struct SphericalRule { input: SphericalPattern, output: u8 }
+
+// Symmetries - DONE
+pub enum SphericalSymmetry { Identity, ThetaFlip, RFlip, BothFlip }
+
+// Simple execution - EXISTS (but very basic)
+fn run_step(grid: &mut SphericalMjGrid, rules: &[SphericalRule]) -> bool { ... }
+```
+
+**What Must Be Built:**
+
+1. **SphericalInterpreter** (~200 lines)
+   ```rust
+   pub struct SphericalInterpreter {
+       root: Box<dyn SphericalNode>,
+       grid: SphericalMjGrid,
+       random: Box<dyn MjRng>,
+       origin: bool,
+       changes: Vec<usize>,
+       // ...
+   }
+   ```
+
+2. **SphericalNode Trait** (~50 lines)
+   ```rust
+   pub trait SphericalNode {
+       fn go(&mut self, ctx: &mut SphericalExecutionContext) -> bool;
+       fn reset(&mut self);
+   }
+   
+   pub struct SphericalExecutionContext<'a> {
+       pub grid: &'a mut SphericalMjGrid,
+       pub random: &'a mut dyn MjRng,
+       pub changes: Vec<usize>,
+       // ...
+   }
+   ```
+
+3. **Spherical Node Implementations**
+
+   | Node | Effort | Notes |
+   |------|--------|-------|
+   | SphericalSequenceNode | 30 min | Direct port, no grid access |
+   | SphericalMarkovNode | 30 min | Direct port, no grid access |
+   | SphericalOneNode | 2 hours | Port with SphericalRule matching |
+   | SphericalAllNode | 2 hours | Port with mask handling |
+   | SphericalParallelNode | 2 hours | Port parallel application |
+   | SphericalPathNode | 4 hours | **Different algorithm** - radial/angular pathfinding |
+   | SphericalConvolutionNode | 4 hours | **Different kernels** - neighbor-based |
+   | SphericalWfcNode | **8+ hours** | **Major rethink** - non-Cartesian propagation |
+
+4. **Spherical XML Loader** (~300 lines)
+   ```rust
+   pub fn load_spherical_model(path: &Path) -> Result<SphericalLoadedModel, LoadError>
+   pub fn load_spherical_model_str(xml: &str, ...) -> Result<SphericalLoadedModel, LoadError>
+   ```
+
+**Effort Estimate:**
+- SphericalInterpreter: 2 hours
+- SphericalNode trait + context: 1 hour
+- Branch nodes (Sequence, Markov): 1 hour
+- Basic rule nodes (One, All, Parallel): 6 hours
+- Spherical XML loader: 4 hours
+- **Subtotal for core functionality: ~14 hours**
+
+- SphericalPathNode: 4 hours
+- SphericalConvolutionNode: 4 hours
+- SphericalWfcNode: 8+ hours (if needed)
+- **Subtotal for advanced nodes: ~16 hours**
+
+**Total for full Option B: ~30 hours** (similar to Option A)
+
+**Advantages:**
+- No risk of breaking existing Cartesian code
+- Spherical nodes can be optimized for spherical topology
+- Cleaner conceptual separation
+- Can implement incrementally (core first, advanced later)
+
+**Disadvantages:**
+- Code duplication in branch nodes
+- Two separate codepaths to maintain
+- XML models need grid type indicator
+
+---
+
+#### 13.9.6 Comparison Summary
+
+| Aspect | Option A: Generic Node<G> | Option B: Separate Implementation |
+|--------|---------------------------|-----------------------------------|
+| **Effort** | ~32 hours | ~30 hours |
+| **Risk to existing code** | Medium | None |
+| **Code duplication** | Low | Medium (branch nodes) |
+| **Maintenance burden** | One codebase | Two codebases |
+| **Conceptual clarity** | Mixed (some nodes non-generic) | Clear separation |
+| **Performance** | Possible overhead from generics | Direct implementation |
+| **Incremental delivery** | Hard (all-or-nothing for each node) | Easy (can ship core first) |
+| **XML compatibility** | Same format, detect grid type | Need grid type indicator |
+
+---
+
+#### 13.9.7 Recommendation
+
+**Short-term (next milestone)**: Use **Option B** for core functionality:
+1. Build `SphericalInterpreter` + `SphericalNode` trait
+2. Implement SphericalOneNode, SphericalAllNode, SphericalMarkovNode
+3. Build spherical XML loader
+4. Ship working spherical models with basic nodes
+
+**Medium-term (future milestone)**: Evaluate whether to:
+- Continue Option B with more spherical nodes
+- Refactor to Option A now that spherical requirements are clearer
+- Hybrid: Use Option A for simple nodes, Option B for complex nodes
+
+**Rationale**: Option B has lower risk and allows incremental delivery. We can
+ship working spherical models faster. If we later discover strong overlap between
+Cartesian and Spherical logic, we can refactor to Option A.
+
+---
+
+#### 13.9.8 Work Completed (Phase 10a)
+
+- [x] Added `clear()` default implementation to `MjGridOps` trait
+- [x] Added `center_index()` to `MjGridOps` trait (required method)
+- [x] Implemented `center_index()` for `MjGrid` (Cartesian)
+- [x] Implemented `center_index()` for `SphericalMjGrid` (Spherical)
+- [x] Added tests for both implementations
+- [x] 14 grid_ops tests passing
+- [x] 11 spherical mjgridops tests passing
 
 ---
 
@@ -621,12 +1077,15 @@ cargo bench -p studio_core -- spherical
 | 4 | Match format | `cargo test rule_node one_node all_node` | 13 pass | DONE |
 | 5 | Full suite | `cargo test markov_junior` | 388 pass | DONE |
 | 6 | Spherical storage | `cargo test spherical_grid` | 12 pass | DONE |
-| 7 | Test migration | `cargo test spherical_grid` | 42+ pass | PENDING |
-| 8 | Symmetries | `cargo test spherical_grid::symmetry` | 7 pass | PENDING |
-| 9 | Rules | `cargo test spherical_grid::rules` | 5 pass | PENDING |
-| 10 | XML loading | `cargo test loader::polar` | 4 pass | PENDING |
-| 11 | Rendering | `cargo test spherical_grid::render` | 4 pass | PENDING |
-| 12 | Cleanup | `cargo test markov_junior` | 388+ pass | PENDING |
+| 7 | Test migration | `cargo test spherical_grid` | 47 pass | DONE |
+| 8 | Symmetries | `cargo test spherical_grid::symmetry` | 7 pass | DONE |
+| 9 | Rules | `cargo test spherical_grid::rules` | 5 pass | DONE |
+| 10a | MjGridOps extend | `cargo test grid_ops` | +2 pass | PENDING |
+| 10b | Generic Interpreter | `cargo test interpreter verification` | 388 pass | PENDING |
+| 10c | Generic LoadedModel | `cargo test loader` | 43 pass | PENDING |
+| 10d | Spherical loading | `cargo test loader::spherical` | +4 pass | PENDING |
+| 11 | Rendering | `cargo test spherical_grid::render` | 5 pass | DONE |
+| 12 | Cleanup | `cargo test markov_junior` | 390+ pass | PENDING |
 
 ---
 
@@ -636,14 +1095,30 @@ cargo bench -p studio_core -- spherical
 |-------|--------|------|--------|
 | Phase 0-5 | - | - | DONE |
 | Phase 6 | - | - | DONE |
-| Phase 7 | 2-3 hours | Low | DONE (45 tests) |
+| Phase 7 | 2-3 hours | Low | DONE (47 tests) |
 | Phase 8 | 1-2 hours | Low | DONE (included in Phase 7) |
 | Phase 9 | 3-4 hours | Medium | DONE (included in Phase 7) |
-| Phase 10 | 2-3 hours | Medium | PENDING (XML loading) |
+| Phase 10a | 30 min | Low | **DONE** (clear(), center_index() added) |
+| Phase 10b | ~32 hours | Medium | **ANALYZED** (see §13.9 for detailed breakdown) |
+| Phase 10c | 30 min | Low | DEFERRED (depends on 10b approach) |
+| Phase 10d | 4-14 hours | Medium | DEFERRED (depends on 10b approach) |
 | Phase 11 | 1-2 hours | Low | DONE |
 | Phase 12 | 1 hour | Low | PENDING (manual approval) |
 
-**Remaining**: ~3-4 hours (XML loading + deletion approval)
+**Remaining Work for Spherical XML Loading:**
+
+Two approaches analyzed in §13.9:
+
+| Approach | Effort | Risk | Recommended? |
+|----------|--------|------|--------------|
+| **Option A**: Generic `Node<G>` | ~32 hours | Medium | Long-term |
+| **Option B**: Separate `SphericalNode` | ~30 hours | Low | **Short-term** |
+
+**Recommendation**: Use Option B for initial delivery (lower risk, incremental).
+Core spherical functionality (One/All/Markov nodes) can ship in ~14 hours.
+Advanced nodes (WFC, Path, Convolution) can follow incrementally.
+
+See §13.9 for detailed line-level analysis and node-by-node breakdown.
 
 ---
 
@@ -657,14 +1132,20 @@ cargo bench -p studio_core -- spherical
 - [x] Match/Changes use flat indices
 
 **Polar/Spherical Unification (MOSTLY COMPLETE)**:
-- [x] All 42+ polar tests pass with SphericalMjGrid (45 tests!)
+- [x] All 42+ polar tests pass with SphericalMjGrid (50 tests!)
 - [x] SphericalSymmetry (4-group) implemented
 - [x] SphericalPattern/SphericalRule implemented
-- [ ] XML loading supports polar grids
+- [x] `MjGridOps` extended with `clear()` and `center_index()`
 - [x] Rendering works for polar grids (render_to_image, save_png)
 - [x] RecordableGrid/Renderable2D traits implemented
 - [ ] PolarMjGrid deleted (awaiting manual approval)
 - [ ] Performance benchmarks show no regression >5%
+
+**Spherical Node Execution (ANALYZED, NOT STARTED)**:
+- [ ] Spherical node execution - Two approaches analyzed in §13.9:
+  - Option A: Generic `Node<G>` (~32 hours, medium risk)
+  - Option B: Separate `SphericalNode` (~30 hours, low risk) **← Recommended**
+- [ ] XML loading supports spherical grids (depends on above)
 
 **Final**:
 - [ ] Documentation updated

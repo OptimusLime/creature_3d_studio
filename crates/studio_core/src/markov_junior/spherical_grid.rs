@@ -833,6 +833,13 @@ impl MjGridOps for SphericalMjGrid {
             self.r_depth as usize,
         )
     }
+
+    fn center_index(&self) -> usize {
+        // Spherical center: middle radial ring, theta=0, phi=0
+        // This places the origin seed in the middle ring at a consistent angular position
+        let r = self.r_depth / 2;
+        self.coord_to_index(r, 0, 0)
+    }
 }
 
 // ============================================================================
@@ -1389,6 +1396,66 @@ mod tests {
             // Advance turn
             ctx.next_turn();
             assert_eq!(ctx.counter, 1);
+        }
+
+        #[test]
+        fn test_clear() {
+            let mut grid = SphericalMjGrid::new_polar(256, 8, 1.0, "BWR");
+
+            // Set some state and mask values
+            let idx1 = grid.coord_to_index(2, 100, 0);
+            let idx2 = grid.coord_to_index(5, 200, 0);
+            grid.set_state(idx1, 1);
+            grid.set_state(idx2, 2);
+            grid.set_mask(idx1, true);
+            grid.set_mask(idx2, true);
+
+            // Verify they're set
+            assert_eq!(grid.get_state(idx1), 1);
+            assert_eq!(grid.get_state(idx2), 2);
+            assert!(grid.get_mask(idx1));
+            assert!(grid.get_mask(idx2));
+
+            // Clear via trait method
+            use crate::markov_junior::grid_ops::MjGridOps;
+            grid.clear();
+
+            // Verify all state is 0 and mask is false
+            assert_eq!(grid.get_state(idx1), 0);
+            assert_eq!(grid.get_state(idx2), 0);
+            assert!(!grid.get_mask(idx1));
+            assert!(!grid.get_mask(idx2));
+        }
+
+        #[test]
+        fn test_center_index_2d() {
+            // For 2D polar grid with r_depth=8, center should be at r=4, theta=0
+            let grid = SphericalMjGrid::new_polar(256, 8, 1.0, "BW");
+
+            let center = grid.center_index();
+            let (r, theta, phi) = grid.index_to_coord(center);
+
+            // Center should be at middle radial ring
+            assert_eq!(r, 4, "Center should be at r=r_depth/2=4");
+            assert_eq!(theta, 0, "Center should be at theta=0");
+            assert_eq!(phi, 0, "Center should be at phi=0 (2D)");
+
+            // Verify the index calculation matches coord_to_index
+            assert_eq!(center, grid.coord_to_index(4, 0, 0));
+        }
+
+        #[test]
+        fn test_center_index_3d() {
+            // For 3D spherical grid, center should be at middle radial shell
+            let grid = SphericalMjGrid::new_spherical(100, 10, 32, 16, 1.0, "BW");
+
+            let center = grid.center_index();
+            let (r, theta, phi) = grid.index_to_coord(center);
+
+            // Center should be at middle radial shell
+            assert_eq!(r, 5, "Center should be at r=r_depth/2=5");
+            assert_eq!(theta, 0, "Center should be at theta=0");
+            assert_eq!(phi, 0, "Center should be at phi=0");
         }
     }
 

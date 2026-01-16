@@ -82,6 +82,25 @@ pub trait MjGridOps {
     /// - Cartesian: (mx, my, mz)
     /// - Spherical: (theta_divs, phi_divs, r_depth)
     fn dimensions(&self) -> (usize, usize, usize);
+
+    // === Grid Operations ===
+
+    /// Clear the grid state (all cells to 0) and reset mask.
+    ///
+    /// This is used by the Interpreter when resetting for a new run.
+    fn clear(&mut self) {
+        self.state_mut().fill(0);
+        self.clear_mask();
+    }
+
+    /// Get the center cell index (for origin placement).
+    ///
+    /// The "center" concept varies by grid type:
+    /// - Cartesian: `mx/2 + (my/2)*mx + (mz/2)*mx*my` (geometric center)
+    /// - Spherical: Middle radial ring at theta=0, phi=0
+    ///
+    /// This is used by the Interpreter when `origin=true` to place a seed cell.
+    fn center_index(&self) -> usize;
 }
 
 #[cfg(test)]
@@ -265,5 +284,57 @@ mod tests {
 
         // Verify len matches state length
         assert_eq!(grid.len(), grid.state.len());
+    }
+
+    #[test]
+    fn test_mjgrid_clear() {
+        let mut grid = MjGrid::with_values(3, 3, 1, "BW");
+
+        // Set some state and mask values
+        grid.set_state(0, 1);
+        grid.set_state(4, 1);
+        grid.set_mask(0, true);
+        grid.set_mask(4, true);
+
+        // Verify they're set
+        assert_eq!(grid.get_state(0), 1);
+        assert_eq!(grid.get_state(4), 1);
+        assert!(grid.get_mask(0));
+        assert!(grid.get_mask(4));
+
+        // Clear via trait method
+        grid.clear();
+
+        // Verify all state is 0 and mask is false
+        for i in 0..grid.len() {
+            assert_eq!(grid.get_state(i), 0, "State at {} should be 0", i);
+            assert!(!grid.get_mask(i), "Mask at {} should be false", i);
+        }
+    }
+
+    #[test]
+    fn test_mjgrid_center_index_2d() {
+        // 5x5x1 grid: center should be at (2, 2, 0) = index 2 + 2*5 = 12
+        let grid = MjGrid::with_values(5, 5, 1, "BW");
+        assert_eq!(grid.center_index(), 12);
+
+        // 4x4x1 grid: center should be at (2, 2, 0) = index 2 + 2*4 = 10
+        let grid = MjGrid::with_values(4, 4, 1, "BW");
+        assert_eq!(grid.center_index(), 10);
+
+        // 3x7x1 grid: center at (1, 3, 0) = index 1 + 3*3 = 10
+        let grid = MjGrid::with_values(3, 7, 1, "BW");
+        assert_eq!(grid.center_index(), 10);
+    }
+
+    #[test]
+    fn test_mjgrid_center_index_3d() {
+        // 5x5x5 grid: center at (2, 2, 2) = index 2 + 2*5 + 2*5*5 = 2 + 10 + 50 = 62
+        let grid = MjGrid::with_values(5, 5, 5, "BW");
+        assert_eq!(grid.center_index(), 62);
+
+        // 4x4x4 grid: center at (2, 2, 2) = index 2 + 2*4 + 2*4*4 = 2 + 8 + 32 = 42
+        let grid = MjGrid::with_values(4, 4, 4, "BW");
+        assert_eq!(grid.center_index(), 42);
     }
 }
