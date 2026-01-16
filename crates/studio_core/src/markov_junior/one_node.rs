@@ -54,7 +54,7 @@ impl OneNode {
                         let old_value = ctx.grid.state[si];
                         if new_value != old_value {
                             ctx.grid.state[si] = new_value;
-                            ctx.record_change(sx, sy, sz);
+                            ctx.record_change(si);
                         }
                     }
                 }
@@ -72,17 +72,16 @@ impl OneNode {
         &mut self,
         ctx: &mut ExecutionContext,
     ) -> Option<(usize, i32, i32, i32)> {
-        let mx = ctx.grid.mx;
-        let my = ctx.grid.my;
-
         while self.data.match_count > 0 {
             // Pick random match
             let match_index = ctx.random.next_usize_max(self.data.match_count);
-            let (r, x, y, z) = self.data.matches[match_index];
+            let (r, idx) = self.data.matches[match_index];
+
+            // Convert flat index to coordinates
+            let (x, y, z) = ctx.grid.index_to_coord(idx);
 
             // Remove from tracking (swap with last)
-            let i = x as usize + y as usize * mx + z as usize * mx * my;
-            self.data.match_mask[r][i] = false;
+            self.data.match_mask[r][idx] = false;
             self.data.matches[match_index] = self.data.matches[self.data.match_count - 1];
             self.data.match_count -= 1;
 
@@ -133,15 +132,15 @@ impl OneNode {
 
         let mut k = 0;
         while k < self.data.match_count {
-            let (r, x, y, z) = self.data.matches[k];
-            let i = x as usize + y as usize * mx + z as usize * mx * my;
+            let (r, idx) = self.data.matches[k];
+            let (x, y, z) = ctx.grid.index_to_coord(idx);
 
             // Check if match still valid
             if !ctx.grid.matches(&self.data.rules[r], x, y, z) {
                 // Remove invalid match (swap with last, decrement count)
                 // C# Reference: lines 96-100: k-- after swap so loop re-checks swapped element
                 // Our while loop with continue achieves the same - k stays same, re-checks swapped element
-                self.data.match_mask[r][i] = false;
+                self.data.match_mask[r][idx] = false;
                 self.data.matches[k] = self.data.matches[self.data.match_count - 1];
                 self.data.match_count -= 1;
                 continue;
@@ -191,8 +190,9 @@ impl OneNode {
         // Return the best match
         // C# Reference: In heuristic path, the winning match is NOT removed from the list
         // or match_mask. Only invalid matches are removed (in the loop above).
-        if let Some(idx) = argmax {
-            let (r, x, y, z) = self.data.matches[idx];
+        if let Some(match_idx) = argmax {
+            let (r, idx) = self.data.matches[match_idx];
+            let (x, y, z) = ctx.grid.index_to_coord(idx);
             Some((r, x, y, z))
         } else {
             None

@@ -56,8 +56,8 @@ pub struct Interpreter {
     random: Box<dyn MjRng>,
     /// Whether to set origin (center cell = 1) on reset
     origin: bool,
-    /// List of (x, y, z) positions that changed
-    changes: Vec<(i32, i32, i32)>,
+    /// List of flat grid indices that changed
+    changes: Vec<usize>,
     /// Index into changes where each turn's changes start
     first: Vec<usize>,
     /// Current step counter
@@ -282,8 +282,8 @@ impl Interpreter {
         self.running
     }
 
-    /// Get the list of all changes made during execution.
-    pub fn changes(&self) -> &[(i32, i32, i32)] {
+    /// Get the list of all changes made during execution (as flat indices).
+    pub fn changes(&self) -> &[usize] {
         &self.changes
     }
 

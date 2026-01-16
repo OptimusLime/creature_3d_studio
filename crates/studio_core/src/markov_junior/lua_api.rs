@@ -400,8 +400,10 @@ impl UserData for MjLuaModel {
         methods.add_method("changes", |lua, this, ()| {
             let model = this.inner.borrow();
             let changes = model.interpreter.changes();
+            let grid = model.interpreter.grid();
             let table = lua.create_table()?;
-            for (i, &(x, y, z)) in changes.iter().enumerate() {
+            for (i, &idx) in changes.iter().enumerate() {
+                let (x, y, z) = grid.index_to_coord(idx);
                 let pos = lua.create_table()?;
                 pos.set("x", x)?;
                 pos.set("y", y)?;
@@ -418,6 +420,7 @@ impl UserData for MjLuaModel {
             let model = this.inner.borrow();
             let changes = model.interpreter.changes();
             let first = model.interpreter.first();
+            let grid = model.interpreter.grid();
 
             // Get the start index for the last step's changes
             let start_idx = if first.len() >= 2 {
@@ -427,7 +430,8 @@ impl UserData for MjLuaModel {
             };
 
             let table = lua.create_table()?;
-            for (i, &(x, y, z)) in changes.iter().skip(start_idx).enumerate() {
+            for (i, &idx) in changes.iter().skip(start_idx).enumerate() {
+                let (x, y, z) = grid.index_to_coord(idx);
                 let pos = lua.create_table()?;
                 pos.set("x", x)?;
                 pos.set("y", y)?;

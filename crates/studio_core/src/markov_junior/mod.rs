@@ -315,6 +315,37 @@ impl MjGrid {
         }
     }
 
+    /// Convert (x, y, z) signed coordinates to flat index.
+    /// Returns None if out of bounds (including negative values).
+    #[inline]
+    pub fn coord_to_index(&self, x: i32, y: i32, z: i32) -> Option<usize> {
+        if x >= 0 && y >= 0 && z >= 0 {
+            let xu = x as usize;
+            let yu = y as usize;
+            let zu = z as usize;
+            if xu < self.mx && yu < self.my && zu < self.mz {
+                return Some(xu + yu * self.mx + zu * self.mx * self.my);
+            }
+        }
+        None
+    }
+
+    /// Convert (x, y, z) signed coordinates to flat index, unchecked.
+    /// SAFETY: Caller must ensure coordinates are valid.
+    #[inline]
+    pub fn coord_to_index_unchecked(&self, x: i32, y: i32, z: i32) -> usize {
+        x as usize + y as usize * self.mx + z as usize * self.mx * self.my
+    }
+
+    /// Convert flat index to (x, y, z) coordinates.
+    #[inline]
+    pub fn index_to_coord(&self, idx: usize) -> (i32, i32, i32) {
+        let x = (idx % self.mx) as i32;
+        let y = ((idx / self.mx) % self.my) as i32;
+        let z = (idx / (self.mx * self.my)) as i32;
+        (x, y, z)
+    }
+
     /// Get the value at (x, y, z), or None if out of bounds.
     #[inline]
     pub fn get(&self, x: usize, y: usize, z: usize) -> Option<u8> {
@@ -604,6 +635,38 @@ mod tests {
         assert_eq!(grid.index(0, 1, 0), Some(3)); // y=1 -> +mx
         assert_eq!(grid.index(0, 0, 1), Some(9)); // z=1 -> +mx*my
         assert_eq!(grid.index(3, 0, 0), None); // out of bounds
+    }
+
+    #[test]
+    fn test_grid_coord_conversion() {
+        let grid = MjGrid::new(3, 4, 2); // mx=3, my=4, mz=2
+
+        // Test coord_to_index with valid coords
+        assert_eq!(grid.coord_to_index(0, 0, 0), Some(0));
+        assert_eq!(grid.coord_to_index(2, 0, 0), Some(2));
+        assert_eq!(grid.coord_to_index(0, 1, 0), Some(3)); // y=1 -> +mx
+        assert_eq!(grid.coord_to_index(0, 0, 1), Some(12)); // z=1 -> +mx*my (3*4=12)
+        assert_eq!(grid.coord_to_index(2, 3, 1), Some(2 + 3 * 3 + 1 * 12)); // 2+9+12=23
+
+        // Test out of bounds
+        assert_eq!(grid.coord_to_index(-1, 0, 0), None);
+        assert_eq!(grid.coord_to_index(0, -1, 0), None);
+        assert_eq!(grid.coord_to_index(3, 0, 0), None); // x >= mx
+        assert_eq!(grid.coord_to_index(0, 4, 0), None); // y >= my
+        assert_eq!(grid.coord_to_index(0, 0, 2), None); // z >= mz
+
+        // Test index_to_coord
+        assert_eq!(grid.index_to_coord(0), (0, 0, 0));
+        assert_eq!(grid.index_to_coord(2), (2, 0, 0));
+        assert_eq!(grid.index_to_coord(3), (0, 1, 0));
+        assert_eq!(grid.index_to_coord(12), (0, 0, 1));
+        assert_eq!(grid.index_to_coord(23), (2, 3, 1));
+
+        // Test roundtrip
+        for idx in 0..24 {
+            let (x, y, z) = grid.index_to_coord(idx);
+            assert_eq!(grid.coord_to_index(x, y, z), Some(idx));
+        }
     }
 
     #[test]

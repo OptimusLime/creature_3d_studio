@@ -86,7 +86,7 @@ impl ParallelNode {
 
                     if new_value != 0xff && new_value != ctx.grid.state[si] {
                         self.newstate[si] = new_value;
-                        ctx.record_change(sx, sy, sz);
+                        ctx.record_change(si);
                         changed = true;
                     }
                 }
@@ -190,9 +190,8 @@ impl Node for ParallelNode {
         // Copy changes from newstate to actual grid state
         // C# Reference: ParallelNode.Go() lines 40-45
         for n in changes_start..ctx.changes.len() {
-            let (x, y, z) = ctx.changes[n];
-            let i = x as usize + y as usize * ctx.grid.mx + z as usize * ctx.grid.mx * ctx.grid.my;
-            ctx.grid.state[i] = self.newstate[i];
+            let idx = ctx.changes[n];
+            ctx.grid.state[idx] = self.newstate[idx];
         }
 
         self.data.counter += 1;

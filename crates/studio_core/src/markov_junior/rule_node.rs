@@ -11,8 +11,11 @@ use super::observation::Observation;
 use super::search::run_search;
 use super::MjRule;
 
-/// A match: (rule_index, x, y, z) position where rule can be applied.
-pub type Match = (usize, i32, i32, i32);
+/// A match: (rule_index, flat_grid_index) where rule can be applied.
+///
+/// Using flat indices rather than coordinates allows grid-agnostic match storage.
+/// Callers convert to coordinates as needed for rule application.
+pub type Match = (usize, usize);
 
 /// Base data and logic for rule-based nodes.
 ///
@@ -27,7 +30,7 @@ pub struct RuleNodeData {
     pub counter: usize,
     /// Maximum steps (0 = unlimited)
     pub steps: usize,
-    /// List of valid matches: (rule_index, x, y, z)
+    /// List of valid matches: (rule_index, flat_grid_index)
     pub matches: Vec<Match>,
     /// Number of valid matches (matches may have stale entries beyond this)
     pub match_count: usize,
@@ -209,13 +212,16 @@ impl RuleNodeData {
     /// Add a match if not already tracked.
     ///
     /// C# Reference: RuleNode.Add() lines 114-122
-    pub fn add_match(&mut self, r: usize, x: i32, y: i32, z: i32, mx: usize, my: usize) {
-        let i = x as usize + y as usize * mx + z as usize * mx * my;
+    ///
+    /// # Arguments
+    /// * `r` - Rule index
+    /// * `idx` - Flat grid index where the rule can be applied
+    pub fn add_match(&mut self, r: usize, idx: usize) {
         let mask = &mut self.match_mask[r];
 
-        if !mask[i] {
-            mask[i] = true;
-            let m = (r, x, y, z);
+        if !mask[idx] {
+            mask[idx] = true;
+            let m = (r, idx);
             if self.match_count < self.matches.len() {
                 self.matches[self.match_count] = m;
             } else {
@@ -286,7 +292,7 @@ impl RuleNodeData {
                                 // Full scan visits each position exactly once per rule.
                                 if ctx.grid.matches(rule, sx, sy, sz) {
                                     mask[si] = true;
-                                    let m = (r, sx, sy, sz);
+                                    let m = (r, si);
                                     if self.match_count < self.matches.len() {
                                         self.matches[self.match_count] = m;
                                     } else {
@@ -322,8 +328,8 @@ impl RuleNodeData {
             .unwrap_or(0);
 
         for n in start_idx..ctx.changes.len() {
-            let (x, y, z) = ctx.changes[n];
-            let grid_idx = x as usize + y as usize * mx + z as usize * mx * my;
+            let grid_idx = ctx.changes[n];
+            let (x, y, z) = ctx.grid.index_to_coord(grid_idx);
             let value = ctx.grid.state[grid_idx];
 
             for (r, rule) in self.rules.iter().enumerate() {
@@ -354,7 +360,7 @@ impl RuleNodeData {
 
                         if !mask[si] && ctx.grid.matches(rule, sx, sy, sz) {
                             mask[si] = true;
-                            let m = (r, sx, sy, sz);
+                            let m = (r, si);
                             if self.match_count < self.matches.len() {
                                 self.matches[self.match_count] = m;
                             } else {
@@ -517,9 +523,9 @@ mod tests {
         let rule = MjRule::parse("B", "W", &grid).unwrap();
         let mut data = RuleNodeData::new(vec![rule], grid.state.len());
 
-        // Add same match twice
-        data.add_match(0, 2, 0, 0, 5, 1);
-        data.add_match(0, 2, 0, 0, 5, 1);
+        // Add same match twice (idx 2 corresponds to x=2, y=0, z=0 in a 5x1x1 grid)
+        data.add_match(0, 2);
+        data.add_match(0, 2);
 
         // Should only count once due to mask
         assert_eq!(data.match_count, 1);
