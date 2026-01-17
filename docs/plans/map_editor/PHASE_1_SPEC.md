@@ -42,9 +42,20 @@ Run `cargo run --example p_map_editor_2d` and:
 2. Screenshot shows: 32x32 checkerboard, material picker with "stone"/"dirt", playback controls
 3. UI is functional (clicking/stepping works)
 
-### Tasks
+### Key Design Decisions
 
-**Note:** We use `bevy_mod_imgui` (already in codebase) not egui. See `studio_scripting` crate.
+**Single-file example.** Following `p0_screenshot_test.rs` pattern—everything in one file for now. Extract to crate later if needed.
+
+**bevy_mod_imgui, not egui.** Already in codebase via `studio_scripting`. Provides immediate-mode UI with docking.
+
+**Core resources:**
+- `VoxelBuffer2D` — 2D grid of material IDs (width × height)
+- `MaterialPalette` — list of materials with id/name/color, tracks selection
+- `PlaybackState` — playing/paused, speed, step index, completion flag
+
+**Why step-by-step playback?** Generators fill cells one at a time. Playback controls let you watch/debug generation. Speed slider controls cells-per-second.
+
+### Tasks
 
 ---
 
@@ -166,9 +177,23 @@ All verification is by looking at `screenshots/p_map_editor_2d.png` or manual in
 ### Outcome
 Materials loaded from `assets/map_editor/materials.lua`. Edit file, save, screenshot updates within 1 second.
 
-### Tasks
+### Key Design Decisions
 
-**Note:** We already have mlua and notify in `studio_scripting`. Reuse patterns from there.
+**Lua for data, not code (yet).** `materials.lua` just returns a table of material definitions. Simple eval, no complex API.
+
+**File format:**
+```lua
+return {
+    { id = 1, name = "stone", color = {0.5, 0.5, 0.5} },
+    { id = 2, name = "dirt",  color = {0.6, 0.4, 0.2} },
+}
+```
+
+**Hot reload via `notify` crate.** Already used in `studio_scripting`. Watch `assets/map_editor/`, reload on change.
+
+**Why hot reload matters:** AI/human edits Lua → sees result immediately. No restart cycle.
+
+### Tasks
 
 ---
 
@@ -222,6 +247,22 @@ Materials loaded from `assets/map_editor/materials.lua`. Edit file, save, screen
 
 ### Outcome
 Generator loaded from `assets/map_editor/generator.lua`. Edit file, save, terrain updates within 1 second.
+
+### Key Design Decisions
+
+**Generator protocol: init/step/reset.** Generator is a Lua table with three methods:
+- `init(ctx)` — initialize state
+- `step(ctx) → bool` — fill one cell, return true when done
+- `reset()` — reset to initial state
+
+**Why step-by-step?** Matches playback controls from M1. Each step = one cell filled. Enables pause/resume/rewind.
+
+**Context API:**
+- `ctx.width`, `ctx.height` — buffer dimensions
+- `ctx:set_voxel(x, y, material_id)` — write to buffer
+- `ctx:get_voxel(x, y) → material_id` — read from buffer
+
+**Why this API?** Minimal surface area. Generator only needs to read/write cells. No complex state management.
 
 ### Tasks
 
@@ -311,6 +352,22 @@ return Generator
 
 ### Outcome
 HTTP server on port 8080. External AI (or curl) can create materials and get PNG output.
+
+### Key Design Decisions
+
+**Simple HTTP, not full MCP protocol.** MCP is complex. Start with plain REST endpoints. Can add MCP framing later.
+
+**Endpoints:**
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | Health check |
+| GET | `/mcp/list_materials` | Get all materials as JSON |
+| POST | `/mcp/create_material` | Add new material |
+| GET | `/mcp/get_output` | Get current render as PNG |
+
+**Why HTTP in background thread?** Bevy runs on main thread. HTTP server runs separately, communicates via `Arc<Mutex<SharedState>>`.
+
+**Why PNG output?** AI can "see" the current state. Screenshot verification without needing to run the app interactively.
 
 ### Tasks
 

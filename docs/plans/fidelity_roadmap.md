@@ -456,11 +456,13 @@ This is the single highest-impact change. Without deep blacks, nothing else will
 
 ### Phase F5: Wet PBR Specularity
 **Impact:** CRITICAL  
-**Difficulty:** Medium  
+**Difficulty:** Easy-Medium  
 **Perf Cost:** ~15 ALU ops/pixel in lighting pass (low)  
 **Outcome:** All surfaces have specular highlights simulating perpetual dampness
 
-This requires adding specular to the lighting model. Currently we have diffuse-only (N·L).
+**Architecture Note:** We use a fully custom deferred pipeline (not Bevy's PBR). The G-buffer already has world position and normals - we just need to add Blinn-Phong specular to the lighting pass. This is straightforward shader work, not a material system change.
+
+*(Bevy's `ExtendedMaterial` extends `StandardMaterial` which uses a different pipeline. Integrating it would require major refactoring of our custom G-buffer/lighting architecture. Not recommended for this feature.)*
 
 **Tasks:**
 
