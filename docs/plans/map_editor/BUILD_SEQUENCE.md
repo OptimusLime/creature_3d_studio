@@ -1,648 +1,403 @@
 # Build Sequence: Map Editor Foundation
 
-*A single document defining the exact order of operations to build a rock-solid foundation.*
+> **SUPERSEDED:** This document has been replaced by `MILESTONES.md` which contains the authoritative milestone sequence. This file is kept for historical reference only.
+
+*Functionality-first. End-to-end from milestone 1. Static implementations that work, then complexify.*
 
 ---
 
-## Philosophy
+## Philosophy: Facade Pattern
 
-1. **Simplest thing first.** In-memory before SQLite. 2D before 3D. One generator before composition.
-2. **End-to-end before depth.** A working pipeline is more valuable than a perfect component.
-3. **One script proves it works.** Each milestone has a single command that validates everything.
-4. **Dependencies are explicit.** Nothing is built until its dependencies are solid.
+1. **All APIs exist from M1.** Three traits, three static implementations. Everything wired together.
+2. **End-to-end works immediately.** M1 shows a rendered output. Not M5. Not M8. M1.
+3. **Static is fine.** Hardcoded materials, hardcoded generator, hardcoded renderer. It runs.
+4. **Functionality, not backends.** "I can pick materials" not "in-memory store exists."
 
 ---
 
 ## The Foundational Script
 
-Everything we build leads to running this one script:
-
 ```bash
 cargo run --example p_map_editor_2d
 ```
 
-This script will:
-1. Start with an in-memory material store
-2. Create materials via Lua
-3. Run a generator that writes voxels
-4. Render the result to a 2D texture
-5. Display in an ImGui window
-6. Hot reload when the generator script changes
+**From M1, this script:**
+1. Shows a window with a 2D rendered grid (static checkerboard)
+2. Shows a material picker (2 hardcoded materials)
+3. Clicking a material changes the display
 
-**When this works end-to-end, we have a foundation.**
+**That's M1. Not M7. M1.**
 
 ---
 
-## Dependency Graph
+## Three APIs (All Exist From M1)
 
-```
-                                    ┌─────────────────────┐
-                                    │   p_map_editor_2d   │
-                                    │   (THE SCRIPT)      │
-                                    └──────────┬──────────┘
-                                               │
-                         ┌─────────────────────┼─────────────────────┐
-                         │                     │                     │
-                         v                     v                     v
-                ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-                │  Material UI    │   │  Generator UI   │   │  Render Output  │
-                │  (ImGui panel)  │   │  (controls)     │   │  (ImGui image)  │
-                │                 │   │                 │   │                 │
-                │  [M7]           │   │  [M7]           │   │  [M7]           │
-                └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-                         │                     │                     │
-                         v                     v                     v
-                ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-                │  Hot Reload     │   │  Hot Reload     │   │  2D Renderer    │
-                │  (materials)    │   │  (scripts)      │   │                 │
-                │                 │   │                 │   │                 │
-                │  [M6]           │   │  [M6]           │   │  [M5]           │
-                └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-                         │                     │                     │
-                         v                     v                     v
-                ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-                │  Lua Material   │   │  Generator      │   │  Voxel Buffer   │
-                │  Bindings       │   │  Manager        │   │  (2D)           │
-                │                 │   │                 │   │                 │
-                │  [M3]           │   │  [M4]           │   │  [M4]           │
-                └────────┬────────┘   └────────┬────────┘   └────────┬────────┘
-                         │                     │                     │
-                         v                     v                     v
-                ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
-                │  Material Store │   │  Lua Engine     │   │  (primitive)    │
-                │  (in-memory)    │   │  (mlua)         │   │                 │
-                │                 │   │                 │   │                 │
-                │  [M2]           │   │  [M3]           │   │                 │
-                └────────┬────────┘   └────────┬────────┘   └─────────────────┘
-                         │                     │
-                         v                     v
-                ┌─────────────────────────────────────────┐
-                │           Bevy App Shell                │
-                │           (existing)                    │
-                │                                         │
-                │           [M1]                          │
-                └─────────────────────────────────────────┘
-```
-
----
-
-## Milestone Sequence
-
-| M# | Milestone | Proves | Dependencies | Complexity |
-|----|-----------|--------|--------------|------------|
-| **M1** | Bevy Shell | App runs, ImGui works | None | Trivial |
-| **M2** | In-Memory Materials | Materials exist at runtime | M1 | Simple |
-| **M3** | Lua Engine + Bindings | Lua can create materials | M1, M2 | Medium |
-| **M4** | Generator + VoxelBuffer | Lua can write voxels | M3 | Medium |
-| **M5** | 2D Renderer | Voxels display as colored grid | M4 | Medium |
-| **M6** | Hot Reload | Script changes re-run generator | M4, M5 | Medium |
-| **M7** | Full UI | ImGui shows materials, controls, output | M2-M6 | Simple |
-| **M8** | MCP Server | External AI can call APIs | M2-M5 | Medium |
-
-**After M7, the foundation is complete. M8+ adds external access.**
-
----
-
-## Detailed Milestones
-
-### M1: Bevy Shell
-
-**Goal:** Empty example that runs Bevy with ImGui.
-
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Opens window with empty ImGui panel
-# No crashes
-```
-
-**What's Built:**
-- `examples/p_map_editor_2d.rs`
-- Basic Bevy app with `bevy_egui` plugin
-- Empty "Map Editor" window
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| Bevy | Existing | Just App + DefaultPlugins |
-| bevy_egui | Existing | Just plugin setup |
-
-**Lines of Code:** ~50
-
-**Verification:**
-- [ ] Window opens
-- [ ] ImGui panel visible
-- [ ] No panics
-
----
-
-### M2: In-Memory Materials
-
-**Goal:** Create and query materials from Rust code.
-
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Console prints: "Created material 'stone' with id 1"
-# Console prints: "Found 1 materials matching 'stone'"
-```
-
-**What's Built:**
-- `crates/studio_core/src/materials/mod.rs`
-- `crates/studio_core/src/materials/store.rs`
-- `MaterialStore` trait
-- `InMemoryMaterialStore` implementation
-
-**API:**
 ```rust
+// All three traits defined in M1
+// All three have static implementations in M1
+// Everything is wired together in M1
+
 pub trait MaterialStore {
-    fn create(&mut self, def: MaterialDef) -> MaterialId;
     fn get(&self, id: MaterialId) -> Option<&Material>;
-    fn list(&self) -> Vec<&Material>;
-    fn find_by_name(&self, name: &str) -> Option<&Material>;
-    fn find_by_tag(&self, tag: &str) -> Vec<&Material>;
+    fn list(&self) -> &[Material];
 }
 
-// SIMPLE: Just HashMap + Vec
-pub struct InMemoryMaterialStore {
-    materials: HashMap<MaterialId, Material>,
-    next_id: u64,
+pub trait VoxelGenerator {
+    fn generate(&self, buffer: &mut VoxelBuffer2D, materials: &dyn MaterialStore);
+}
+
+pub trait VoxelRenderer {
+    fn render(&self, buffer: &VoxelBuffer2D, materials: &dyn MaterialStore) -> Image;
 }
 ```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1 | Complete | App shell |
-| MaterialStore trait | New | Define interface |
-| InMemoryMaterialStore | New | HashMap-based |
-
-**Lines of Code:** ~100
-
-**What's NOT Built Yet:**
-- SQLite persistence
-- Embedding search
-- Palettes (just individual materials)
-
-**Verification:**
-- [ ] Create material returns ID
-- [ ] Get material by ID works
-- [ ] Find by name works
-- [ ] Find by tag works
 
 ---
 
-### M3: Lua Engine + Material Bindings
+## Milestone Sequence (Functionality-Indexed)
 
-**Goal:** Create materials from Lua code.
+| M# | Functionality | What You SEE | What Changes |
+|----|---------------|--------------|--------------|
+| **M1** | Pick from 2 materials, see checkerboard | Rendered grid + material picker | Static everything |
+| **M2** | Pick from N materials (defined in Rust) | More materials in picker | MaterialStore gets `create()` |
+| **M3** | Materials defined in Lua file | Same visuals | Lua loads materials |
+| **M4** | Generator defined in Lua file | Same visuals | Lua runs generator |
+| **M5** | Hot reload generator script | Edit → see change | File watcher added |
+| **M6** | Hot reload materials | Edit → see change | Material reload |
+| **M7** | External AI can edit | AI creates material → appears | MCP server |
 
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Loads assets/lua/test_materials.lua
-# Console prints: "Lua created material 'stone' with id 1"
-```
-
-**Test Lua Script:** `assets/lua/test_materials.lua`
-```lua
-local mat = require("materials")
-
-local stone_id = mat.create({
-    name = "stone",
-    color = {0.5, 0.5, 0.5},
-    roughness = 0.7,
-    tags = {"solid", "natural"}
-})
-
-print("Created stone with id: " .. stone_id)
-```
-
-**What's Built:**
-- `crates/studio_core/src/scripting/mod.rs`
-- `crates/studio_core/src/scripting/engine.rs`
-- `crates/studio_core/src/scripting/materials.rs`
-- `assets/lua/materials.lua` (helper module)
-
-**API:**
-```rust
-pub struct LuaEngine {
-    lua: Lua,
-}
-
-impl LuaEngine {
-    pub fn new() -> Self;
-    pub fn run_file(&mut self, path: &Path, materials: &mut dyn MaterialStore) -> Result<()>;
-}
-```
-
-**Lua Bindings:**
-```lua
--- Exposed to Lua
-materials.create(def) -> id
-materials.get(id) -> material_table
-materials.find_by_name(name) -> material_table or nil
-materials.find_by_tag(tag) -> array of material_tables
-```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1 | Complete | App shell |
-| M2 | Complete | MaterialStore |
-| mlua | New dependency | Lua runtime |
-| LuaEngine | New | Script execution |
-| Material bindings | New | Expose to Lua |
-
-**Lines of Code:** ~200
-
-**What's NOT Built Yet:**
-- Generator bindings
-- Hot reload
-- Error recovery
-
-**Verification:**
-- [ ] Lua script executes without error
-- [ ] Material created from Lua exists in Rust store
-- [ ] Properties (color, roughness, tags) preserved
+**M1 takes 2-3 hours. You see a working app.**
 
 ---
 
-### M4: Generator + VoxelBuffer
+## M1: Static End-to-End
 
-**Goal:** Lua generator writes voxels to a buffer.
+### Functionality
+- I see a 2D grid rendered in an ImGui window
+- I see a material picker with 2 materials (stone, dirt)  
+- Clicking a material changes which material is used in the checkerboard
 
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Loads assets/lua/generators/checkerboard.lua
-# Console prints: "Generator completed: 64x64 voxels"
-# Console prints: "Voxel (0,0) = 1, Voxel (1,0) = 2"
-```
+### What's Built (All Static)
 
-**Test Generator:** `assets/lua/generators/checkerboard.lua`
-```lua
-local Generator = require("generator")
-local Checkerboard = Generator:new()
-
-function Checkerboard:init(ctx)
-    self.material_a = 1  -- stone
-    self.material_b = 2  -- dirt
-    return "ready"
-end
-
-function Checkerboard:step(ctx)
-    for x = 0, ctx.bounds.max_x - 1 do
-        for y = 0, ctx.bounds.max_y - 1 do
-            local mat = ((x + y) % 2 == 0) and self.material_a or self.material_b
-            self:set_voxel(ctx, x, y, mat)
-        end
-    end
-    return "done"
-end
-
-return Checkerboard
-```
-
-**What's Built:**
-- `crates/studio_core/src/generation/mod.rs`
-- `crates/studio_core/src/generation/buffer.rs`
-- `crates/studio_core/src/generation/manager.rs`
-- `crates/studio_core/src/scripting/generator.rs`
-- `assets/lua/generator.lua` (base class)
-
-**API:**
 ```rust
-// Simple 2D buffer
-pub struct VoxelBuffer2D {
-    data: Vec<MaterialId>,
-    width: u32,
-    height: u32,
+// examples/p_map_editor_2d.rs - THE WHOLE THING IN ONE FILE
+
+// === STATIC MATERIALS ===
+struct StaticMaterialStore {
+    materials: Vec<Material>,
 }
 
-impl VoxelBuffer2D {
-    pub fn new(width: u32, height: u32) -> Self;
-    pub fn set(&mut self, x: u32, y: u32, material: MaterialId);
-    pub fn get(&self, x: u32, y: u32) -> MaterialId;
-}
-
-// Manager runs generators
-pub struct GeneratorManager {
-    engine: LuaEngine,
-    buffer: VoxelBuffer2D,
-}
-
-impl GeneratorManager {
-    pub fn load_generator(&mut self, path: &Path) -> Result<()>;
-    pub fn run(&mut self, seed: u64) -> Result<()>;
-}
-```
-
-**Lua Bindings:**
-```lua
--- Exposed to generators
-ctx.bounds.max_x, ctx.bounds.max_y
-self:set_voxel(ctx, x, y, material_id)
-self:get_voxel(ctx, x, y) -> material_id
-```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1-M3 | Complete | App, materials, Lua |
-| VoxelBuffer2D | New | 2D grid storage |
-| GeneratorManager | New | Run generators |
-| Generator bindings | New | set_voxel, get_voxel |
-| generator.lua | New | Base class |
-
-**Lines of Code:** ~300
-
-**What's NOT Built Yet:**
-- 3D voxels
-- Composition
-- Live generators
-- Markov integration
-
-**Verification:**
-- [ ] Generator script loads
-- [ ] init() called, returns "ready"
-- [ ] step() called, writes voxels
-- [ ] VoxelBuffer contains expected pattern
-
----
-
-### M5: 2D Renderer
-
-**Goal:** VoxelBuffer displayed as colored grid in ImGui.
-
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Window shows checkerboard pattern
-# Stone voxels are gray, dirt voxels are brown
-```
-
-**What's Built:**
-- `crates/studio_core/src/rendering/mod.rs`
-- `crates/studio_core/src/rendering/grid_2d.rs`
-
-**API:**
-```rust
-pub struct GridRenderer2D {
-    texture: Option<Handle<Image>>,
-    width: u32,
-    height: u32,
-}
-
-impl GridRenderer2D {
-    pub fn new(width: u32, height: u32) -> Self;
-    pub fn render(
-        &mut self,
-        buffer: &VoxelBuffer2D,
-        materials: &dyn MaterialStore,
-        images: &mut Assets<Image>,
-    );
-    pub fn texture(&self) -> Option<Handle<Image>>;
-}
-```
-
-**ImGui Integration:**
-```rust
-// In UI system
-if let Some(texture) = renderer.texture() {
-    ui.image(texture, [512.0, 512.0]);
-}
-```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1-M4 | Complete | App, materials, Lua, generator |
-| GridRenderer2D | New | Buffer → texture |
-| Bevy Image | Existing | Texture asset |
-| bevy_egui | Existing | Image display |
-
-**Lines of Code:** ~150
-
-**What's NOT Built Yet:**
-- 3D rendering
-- Camera controls
-- Multiple viewports
-
-**Verification:**
-- [ ] Texture created with correct dimensions
-- [ ] Each voxel colored by material.color
-- [ ] Image displays in ImGui
-- [ ] Checkerboard pattern visible
-
----
-
-### M6: Hot Reload
-
-**Goal:** Editing generator script re-runs generation.
-
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Shows checkerboard
-# Edit checkerboard.lua to change material_a = 3
-# Save file
-# Display updates to new pattern within 1 second
-```
-
-**What's Built:**
-- `crates/studio_core/src/hot_reload.rs`
-
-**API:**
-```rust
-pub struct HotReloadWatcher {
-    watcher: RecommendedWatcher,
-    rx: Receiver<DebouncedEvent>,
-}
-
-impl HotReloadWatcher {
-    pub fn new(paths: &[PathBuf]) -> Result<Self>;
-    pub fn poll(&self) -> Option<PathBuf>;
-}
-
-// Bevy system
-fn hot_reload_system(
-    watcher: Res<HotReloadWatcher>,
-    mut generator_manager: ResMut<GeneratorManager>,
-    mut renderer: ResMut<GridRenderer2D>,
-    // ...
-) {
-    if let Some(changed_path) = watcher.poll() {
-        if changed_path.ends_with(".lua") {
-            generator_manager.reload_and_run();
-            renderer.render(&generator_manager.buffer, &materials);
+impl StaticMaterialStore {
+    fn new() -> Self {
+        Self {
+            materials: vec![
+                Material { id: 1, name: "stone".into(), color: [0.5, 0.5, 0.5] },
+                Material { id: 2, name: "dirt".into(), color: [0.4, 0.3, 0.2] },
+            ],
         }
     }
 }
+
+impl MaterialStore for StaticMaterialStore {
+    fn get(&self, id: MaterialId) -> Option<&Material> { ... }
+    fn list(&self) -> &[Material] { &self.materials }
+}
+
+// === STATIC GENERATOR ===
+struct CheckerboardGenerator {
+    material_a: MaterialId,
+    material_b: MaterialId,
+}
+
+impl VoxelGenerator for CheckerboardGenerator {
+    fn generate(&self, buffer: &mut VoxelBuffer2D, _materials: &dyn MaterialStore) {
+        for x in 0..buffer.width {
+            for y in 0..buffer.height {
+                let mat = if (x + y) % 2 == 0 { self.material_a } else { self.material_b };
+                buffer.set(x, y, mat);
+            }
+        }
+    }
+}
+
+// === STATIC RENDERER ===
+struct GridRenderer2D;
+
+impl VoxelRenderer for GridRenderer2D {
+    fn render(&self, buffer: &VoxelBuffer2D, materials: &dyn MaterialStore) -> Image {
+        let mut pixels = vec![0u8; buffer.width * buffer.height * 4];
+        for x in 0..buffer.width {
+            for y in 0..buffer.height {
+                let mat_id = buffer.get(x, y);
+                let color = materials.get(mat_id).map(|m| m.color).unwrap_or([0.0; 3]);
+                // Write RGBA to pixels...
+            }
+        }
+        Image::new(/* ... */)
+    }
+}
+
+// === APP ===
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin)
+        .insert_resource(StaticMaterialStore::new())
+        .insert_resource(CheckerboardGenerator { material_a: 1, material_b: 2 })
+        .insert_resource(VoxelBuffer2D::new(32, 32))
+        .add_systems(Startup, setup)
+        .add_systems(Update, ui_system)
+        .run();
+}
+
+fn setup(/* ... */) {
+    // Generate once at startup
+    generator.generate(&mut buffer, &materials);
+    // Render to texture
+    let image = renderer.render(&buffer, &materials);
+    // Store texture handle
+}
+
+fn ui_system(/* ... */) {
+    // Left panel: material picker
+    for mat in materials.list() {
+        if ui.button(&mat.name) {
+            generator.material_a = mat.id;
+            regenerate_and_rerender();
+        }
+    }
+    // Right panel: rendered output
+    ui.image(texture_handle, [256.0, 256.0]);
+}
 ```
 
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1-M5 | Complete | Full pipeline |
-| notify | New dependency | File watching |
-| HotReloadWatcher | New | Debounced events |
-| Reload system | New | Triggers re-run |
-
-**Lines of Code:** ~100
-
-**What's NOT Built Yet:**
-- Material hot reload (database-triggered)
-- Error recovery on bad script
-
-**Verification:**
-- [ ] File change detected within 500ms
-- [ ] Generator re-loaded
-- [ ] Generation re-run with same seed
-- [ ] Display updates
+### Verification
+- [ ] Window shows 32x32 checkerboard
+- [ ] Two materials visible in picker
+- [ ] Click "dirt" → checkerboard changes colors
+- [ ] **This is a working app. In M1.**
 
 ---
 
-### M7: Full UI
+## M2: Dynamic Materials (Rust)
 
-**Goal:** Complete ImGui interface with all panels.
+### Functionality
+- I can add materials in Rust code (not just 2 hardcoded)
+- Picker shows all materials
 
-**Proof Script:**
-```bash
-cargo run --example p_map_editor_2d
-# Left panel: Material list with colors and properties
-# Center: Rendered voxel output
-# Bottom: Status bar with reload time
-# Can click materials to see details
+### What Changes
+```rust
+// MaterialStore trait gets create()
+pub trait MaterialStore {
+    fn get(&self, id: MaterialId) -> Option<&Material>;
+    fn list(&self) -> &[Material];
+    fn create(&mut self, def: MaterialDef) -> MaterialId;  // NEW
+}
+
+// In setup:
+materials.create(MaterialDef { name: "crystal", color: [0.8, 0.2, 0.8] });
+materials.create(MaterialDef { name: "water", color: [0.2, 0.4, 0.8] });
+// Now picker shows 4 materials
 ```
 
-**What's Built:**
-- `crates/studio_core/src/ui/mod.rs`
-- `crates/studio_core/src/ui/material_panel.rs`
-- `crates/studio_core/src/ui/viewport.rs`
-- `crates/studio_core/src/ui/status_bar.rs`
-
-**Layout:**
-```
-+------------------+------------------------+
-|   MATERIALS      |                        |
-|                  |      VIEWPORT          |
-|   [stone]        |                        |
-|   [dirt]         |    (rendered grid)     |
-|   [crystal]      |                        |
-|                  |                        |
-+------------------+------------------------+
-| Status: Ready | Last reload: 2s ago      |
-+----------------------------------------------+
-```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1-M6 | Complete | Full pipeline + hot reload |
-| Material panel | New | List + details |
-| Viewport | New | Texture display |
-| Status bar | New | Info display |
-
-**Lines of Code:** ~200
-
-**Verification:**
-- [ ] Materials listed with correct colors
-- [ ] Clicking material shows details
-- [ ] Viewport shows rendered output
-- [ ] Status updates on reload
+### Verification
+- [ ] Picker shows 4+ materials
+- [ ] New materials work in generator
 
 ---
 
-### M8: MCP Server (Post-Foundation)
+## M3: Materials from Lua
 
-**Goal:** External AI can create materials and run generators.
+### Functionality
+- Materials defined in `assets/materials.lua`
+- Same UI, same visuals
+- Edit Lua file, restart app, see new materials
 
-**Proof Script:**
-```bash
-# Terminal 1:
-cargo run --example p_map_editor_2d
+### What Changes
+```rust
+// Add mlua crate
+// Load and execute Lua file at startup
 
-# Terminal 2 (or AI tool):
-curl -X POST http://localhost:8080/mcp/tools/create_material \
-  -d '{"name": "crystal", "color": [0.8, 0.2, 0.8], "emission": 0.7}'
-# Returns: {"id": 3}
+// assets/materials.lua
+return {
+    { name = "stone", color = {0.5, 0.5, 0.5} },
+    { name = "dirt", color = {0.4, 0.3, 0.2} },
+    { name = "crystal", color = {0.8, 0.2, 0.8} },
+}
 
-# Material appears in UI immediately
+// In setup:
+let lua_materials = lua.load_file("assets/materials.lua")?;
+for mat in lua_materials {
+    materials.create(mat);
+}
 ```
 
-**What's Built:**
-- `crates/studio_core/src/mcp/mod.rs`
-- `crates/studio_core/src/mcp/server.rs`
-- `crates/studio_core/src/mcp/tools.rs`
-
-**MCP Tools:**
-```
-create_material(def) -> {id}
-list_materials() -> [{id, name, color, ...}]
-run_generator(path, seed) -> {status}
-get_render_output() -> {png_base64}
-```
-
-**Systems Required:**
-| System | Level | Notes |
-|--------|-------|-------|
-| M1-M7 | Complete | Full foundation |
-| HTTP server | New | Embedded in Bevy |
-| MCP protocol | New | Tool definitions |
-| Cross-thread comms | New | Server → Bevy events |
-
-**Lines of Code:** ~300
-
-**Verification:**
-- [ ] Server starts on port 8080
-- [ ] create_material works
-- [ ] Material appears in UI
-- [ ] run_generator works
-- [ ] get_render_output returns valid PNG
+### Verification
+- [ ] Edit `materials.lua`, add a material
+- [ ] Restart app
+- [ ] New material appears in picker
 
 ---
 
-## Sequential Build Order
+## M4: Generator from Lua
+
+### Functionality
+- Generator defined in `assets/generator.lua`
+- Lua calls `set_voxel(x, y, material_id)`
+- Same UI, same visuals
+
+### What Changes
+```lua
+-- assets/generator.lua
+local Generator = {}
+
+function Generator:generate(ctx)
+    for x = 0, ctx.width - 1 do
+        for y = 0, ctx.height - 1 do
+            local mat = ((x + y) % 2 == 0) and 1 or 2
+            ctx:set_voxel(x, y, mat)
+        end
+    end
+end
+
+return Generator
+```
+
+```rust
+// Lua bindings for VoxelBuffer
+// GeneratorContext passed to Lua
+// Generator trait now wraps Lua execution
+```
+
+### Verification
+- [ ] Edit `generator.lua` to make stripes instead of checkerboard
+- [ ] Restart app
+- [ ] See stripes
+
+---
+
+## M5: Hot Reload Generator
+
+### Functionality
+- Edit `generator.lua`, save file
+- Display updates within 1 second (no restart)
+
+### What Changes
+```rust
+// Add notify crate
+// Watch assets/generator.lua
+// On change: reload Lua, re-run generator, re-render
+```
+
+### Verification
+- [ ] App running
+- [ ] Edit `generator.lua` to change pattern
+- [ ] Save file
+- [ ] Display updates automatically
+
+---
+
+## M6: Hot Reload Materials
+
+### Functionality
+- Edit `materials.lua`, save file
+- Picker updates, display re-renders
+
+### What Changes
+```rust
+// Watch assets/materials.lua
+// On change: reload materials, update picker, re-render
+```
+
+### Verification
+- [ ] Edit material color in `materials.lua`
+- [ ] Save file
+- [ ] Display updates automatically
+
+---
+
+## M7: MCP Server (External AI)
+
+### Functionality
+- AI can call `create_material`, `run_generator`, `get_output`
+- Changes appear in app immediately
+
+### What Changes
+```rust
+// Add HTTP server
+// Expose MCP tools
+// Tool calls trigger same hot-reload paths
+```
+
+### Verification
+- [ ] AI calls `create_material`
+- [ ] Material appears in picker
+- [ ] AI calls `get_output`
+- [ ] Returns valid PNG
+
+---
+
+## Dependency Graph (Functionality)
 
 ```
-Week 1: Core Pipeline
-├── Day 1: M1 (Bevy Shell) + M2 (In-Memory Materials)
-├── Day 2: M3 (Lua Engine + Bindings)
-├── Day 3: M4 (Generator + VoxelBuffer)
-└── Day 4: M5 (2D Renderer)
+M1: See checkerboard, pick materials (STATIC - works immediately)
+ │
+ v
+M2: Create materials in Rust (dynamic list)
+ │
+ v
+M3: Materials from Lua (external file)
+ │
+ v
+M4: Generator from Lua (external file)
+ │
+ v
+M5: Hot reload generator (no restart)
+ │
+ v
+M6: Hot reload materials (no restart)
+ │
+ v
+M7: External AI access (MCP)
+```
 
-Week 2: Polish + External Access
-├── Day 5: M6 (Hot Reload)
-├── Day 6: M7 (Full UI)
-└── Day 7: M8 (MCP Server)
+**Each milestone adds functionality to a WORKING app.**
+**You never wait 8 milestones to see if it works.**
+
+---
+
+## Build Timeline
+
+```
+Day 1 (2-3 hours): M1 - Static end-to-end (SEE IT WORK)
+Day 2: M2 + M3 - Dynamic materials, then Lua materials
+Day 3: M4 + M5 - Lua generator + hot reload generator
+Day 4: M6 + M7 - Hot reload materials + MCP server
 ```
 
 ---
 
 ## Dependency Table
 
-| Milestone | Depends On | New Crates | New Files | LOC |
-|-----------|------------|------------|-----------|-----|
-| M1 | - | bevy_egui | 1 | ~50 |
-| M2 | M1 | - | 2 | ~100 |
-| M3 | M1, M2 | mlua | 4 | ~200 |
-| M4 | M3 | - | 5 | ~300 |
-| M5 | M4 | - | 2 | ~150 |
-| M6 | M4, M5 | notify | 1 | ~100 |
-| M7 | M2-M6 | - | 4 | ~200 |
-| M8 | M7 | (http) | 3 | ~300 |
-| **Total** | | **3** | **22** | **~1400** |
+| M# | Functionality | New Crates | Estimated Time |
+|----|---------------|------------|----------------|
+| M1 | Pick materials, see checkerboard | bevy_egui | 2-3 hours |
+| M2 | Create materials in Rust | - | 1 hour |
+| M3 | Materials from Lua file | mlua | 2 hours |
+| M4 | Generator from Lua file | - | 2 hours |
+| M5 | Hot reload generator | notify | 1 hour |
+| M6 | Hot reload materials | - | 30 min |
+| M7 | External AI access | (http) | 2-3 hours |
 
 ---
 
-## Simplifications (What We're NOT Building Yet)
+## What We're NOT Building Yet
 
 | Feature | Deferred Until | Why |
 |---------|---------------|-----|
-| SQLite persistence | After M8 | In-memory is simpler to debug |
+| SQLite persistence | After M7 | In-memory is simpler to debug |
 | Embedding search | After SQLite | Requires vectors |
-| 3D rendering | After M8 | 2D proves the pipeline |
-| Markov Jr. | After M8 | Complex dependency |
+| 3D rendering | After M7 | 2D proves the pipeline |
+| Markov Jr. | After M7 | Complex dependency |
 | Generator composition | After basic generators work | Premature abstraction |
 | Live generators | After composition | Advanced feature |
 | Palettes | After materials stable | Materials are the primitive |
@@ -650,80 +405,81 @@ Week 2: Polish + External Access
 
 ---
 
-## The One Script (Revisited)
+## The One Script: M1 vs M7
 
-After M7 is complete, this is what `p_map_editor_2d` does:
+### M1 (Static - Day 1)
 
 ```rust
-// examples/p_map_editor_2d.rs
+// examples/p_map_editor_2d.rs - EVERYTHING IN ONE FILE
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(EguiPlugin)
-        // Our systems
-        .init_resource::<InMemoryMaterialStore>()
-        .init_resource::<LuaEngine>()
-        .init_resource::<GeneratorManager>()
-        .init_resource::<GridRenderer2D>()
-        .init_resource::<HotReloadWatcher>()
-        // Startup
+        .insert_resource(StaticMaterialStore::new())  // 2 hardcoded materials
+        .insert_resource(CheckerboardGenerator::new()) // Static generator
+        .insert_resource(VoxelBuffer2D::new(32, 32))
         .add_systems(Startup, setup)
-        // Update
-        .add_systems(Update, (
-            hot_reload_system,
-            ui_system,
-        ))
+        .add_systems(Update, ui_system)
         .run();
 }
 
-fn setup(
-    mut commands: Commands,
-    mut materials: ResMut<InMemoryMaterialStore>,
-    mut lua: ResMut<LuaEngine>,
-    mut generator: ResMut<GeneratorManager>,
-    mut renderer: ResMut<GridRenderer2D>,
-    mut images: ResMut<Assets<Image>>,
-) {
-    // 1. Run initial materials script
-    lua.run_file("assets/lua/init_materials.lua", &mut *materials);
-    
-    // 2. Load and run generator
-    generator.load_generator("assets/lua/generators/checkerboard.lua");
-    generator.run(12345);
-    
-    // 3. Render to texture
-    renderer.render(&generator.buffer, &*materials, &mut images);
-}
-
-fn hot_reload_system(/* ... */) {
-    // Watch for changes, re-run generator, re-render
+fn setup(/* ... */) {
+    // Generate checkerboard into buffer
+    // Render buffer to texture
 }
 
 fn ui_system(/* ... */) {
-    // Draw material panel, viewport, status bar
+    // Left: material picker (click to change)
+    // Right: rendered checkerboard
 }
 ```
 
-**When this runs without crashing and shows a checkerboard, the foundation is complete.**
+**M1 is ~200 lines. It runs. It shows something. Day 1.**
+
+### M7 (Full - Day 4)
+
+```rust
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(EguiPlugin)
+        .init_resource::<MaterialStore>()      // Lua-loaded
+        .init_resource::<LuaEngine>()          // Script execution
+        .init_resource::<GeneratorManager>()   // Lua generators
+        .init_resource::<HotReloadWatcher>()   // File watching
+        .init_resource::<McpServer>()          // External AI access
+        .add_systems(Startup, setup)
+        .add_systems(Update, (hot_reload_system, mcp_system, ui_system))
+        .run();
+}
+```
+
+**M7 adds complexity to a WORKING app. It doesn't make a broken app work.**
 
 ---
 
 ## Success Criteria
 
-### Foundation Complete (M7)
-- [ ] `cargo run --example p_map_editor_2d` works
-- [ ] Materials created from Lua
-- [ ] Checkerboard generator runs
-- [ ] 2D grid renders correctly
-- [ ] Hot reload works (edit script → display updates)
-- [ ] UI shows materials and viewport
+### M1 Complete (Day 1)
+- [ ] `cargo run --example p_map_editor_2d` shows a window
+- [ ] 32x32 checkerboard visible
+- [ ] Material picker shows 2 materials
+- [ ] Click material → checkerboard colors change
+- [ ] **THIS IS A WORKING APP**
 
-### Ready for AI (M8)
-- [ ] MCP server running
-- [ ] External tool can create materials
-- [ ] External tool can trigger generation
-- [ ] External tool can get render output
+### M4 Complete (Lua Generator)
+- [ ] Generator defined in `assets/generator.lua`
+- [ ] Edit Lua → restart → see different pattern
+- [ ] Lua calls `set_voxel(x, y, mat_id)`
+
+### M5 Complete (Hot Reload)
+- [ ] Edit `generator.lua`, save
+- [ ] Display updates within 1 second (no restart)
+
+### M7 Complete (MCP)
+- [ ] External AI calls `create_material` → appears in picker
+- [ ] External AI calls `get_output` → returns PNG
 
 ### Ready for 3D (Future)
 - [ ] Swap `VoxelBuffer2D` → `VoxelBuffer3D`
@@ -732,7 +488,7 @@ fn ui_system(/* ... */) {
 
 ---
 
-## Next Steps After Foundation
+## Next Steps After M7
 
 1. **SQLite Materials** - Persist materials to disk
 2. **Embedding Search** - Semantic material search
@@ -743,4 +499,4 @@ fn ui_system(/* ... */) {
 7. **PBR Materials** - Roughness, metallic in 3D
 8. **Live Generators** - Animated/streaming generation
 
-Each of these builds on the rock-solid foundation established by M1-M8.
+Each of these builds on the foundation established by M1-M7.

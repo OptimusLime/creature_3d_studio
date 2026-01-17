@@ -379,6 +379,12 @@ If ANY answer is negative, the task is NOT DONE. Return to debugging.
 
 ---
 
+## Related Documents
+
+- **[WRITING_MILESTONES.md](./WRITING_MILESTONES.md)** - How to write good milestones and construct build sequences. Milestones must be functionality-indexed ("I can X"), not backend-indexed ("system Y exists").
+
+---
+
 ## Workflow: Testing New Features
 
 **CRITICAL: Always run code to verify it works.**
