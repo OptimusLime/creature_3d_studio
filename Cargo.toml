@@ -23,8 +23,10 @@ screenshot-tests = []
 
 [dependencies]
 bevy.workspace = true
+bevy_mod_imgui.workspace = true
 bevy_rapier3d = { version = "0.32", features = ["debug-render-3d"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+imgui = "0.12"
 studio_core = { path = "crates/studio_core" }
 studio_physics = { path = "crates/studio_physics" }
 studio_scripting = { path = "crates/studio_scripting" }
