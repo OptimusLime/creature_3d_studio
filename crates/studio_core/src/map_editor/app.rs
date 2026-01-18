@@ -28,6 +28,7 @@ use super::{
     lua_generator::LuaGeneratorPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
     material::MaterialPalette,
+    mcp_server::McpServerPlugin,
     playback::PlaybackState,
     voxel_buffer_2d::VoxelBuffer2D,
 };
@@ -254,6 +255,9 @@ impl MapEditor2DApp {
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
         // Must be added AFTER VoxelBuffer2D resource is inserted
         app.add_plugins(LuaGeneratorPlugin::default());
+
+        // MCP server plugin (HTTP API for external AI)
+        app.add_plugins(McpServerPlugin::default());
 
         // Systems
         app.add_systems(Startup, setup);

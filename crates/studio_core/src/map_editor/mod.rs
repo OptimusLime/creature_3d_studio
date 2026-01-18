@@ -31,6 +31,7 @@ pub mod imgui_screenshot;
 pub mod lua_generator;
 pub mod lua_materials;
 pub mod material;
+pub mod mcp_server;
 pub mod playback;
 pub mod voxel_buffer_2d;
 
@@ -42,5 +43,6 @@ pub use lua_materials::{
     LuaMaterialsPlugin, MaterialsLoadSet, MaterialsReloadFlag, MATERIALS_LUA_PATH,
 };
 pub use material::{Material, MaterialPalette};
+pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
 pub use voxel_buffer_2d::VoxelBuffer2D;
