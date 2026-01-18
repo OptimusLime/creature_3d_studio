@@ -25,6 +25,7 @@
 use super::{
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
+    lua_generator::LuaGeneratorPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
     material::MaterialPalette,
     playback::PlaybackState,
@@ -239,26 +240,30 @@ impl MapEditor2DApp {
         // Lua materials plugin (loads materials from assets/map_editor/materials.lua)
         app.add_plugins(LuaMaterialsPlugin::default());
 
-        // Resources
+        // Resources (must be inserted BEFORE LuaGeneratorPlugin which uses VoxelBuffer2D)
         app.insert_resource(ClearColor(clear_color));
         app.insert_resource(VoxelBuffer2D::new(grid_size.0, grid_size.1));
         app.insert_resource(MaterialPalette::default()); // Will be replaced by Lua materials on first frame
-        app.insert_resource(CheckerboardState::default());
+        app.insert_resource(CheckerboardState::default()); // Kept for fallback
         app.insert_resource(PlaybackState::default());
         app.insert_resource(GridConfig {
             width: grid_size.0,
             height: grid_size.1,
         });
 
+        // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
+        // Must be added AFTER VoxelBuffer2D resource is inserted
+        app.add_plugins(LuaGeneratorPlugin::default());
+
         // Systems
         app.add_systems(Startup, setup);
 
         // Map editor systems run AFTER materials are loaded (MaterialsLoadSet)
+        // Note: LuaGeneratorPlugin handles generation internally, so we just need
+        // to update the canvas texture and render UI
         app.add_systems(
             Update,
             (
-                generate_checkerboard_system,
-                update_playback_system,
                 update_canvas_texture_system,
                 render_ui_system,
                 screenshot_system,
@@ -355,6 +360,9 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, grid: Res<Gr
 }
 
 /// Handle regeneration requests (when active palette changes).
+/// NOTE: This is currently unused - LuaGeneratorPlugin handles generation.
+/// Kept for potential fallback if no generator.lua exists.
+#[allow(dead_code)]
 fn generate_checkerboard_system(
     mut buffer: ResMut<VoxelBuffer2D>,
     mut state: ResMut<CheckerboardState>,
@@ -400,6 +408,8 @@ fn generate_checkerboard_system(
 }
 
 /// Update playback - advance generation based on speed.
+/// NOTE: This is currently unused - LuaGeneratorPlugin handles playback.
+#[allow(dead_code)]
 fn update_playback_system(
     time: Res<Time>,
     mut buffer: ResMut<VoxelBuffer2D>,
@@ -466,10 +476,10 @@ fn update_canvas_texture_system(
 fn render_ui_system(
     mut context: NonSendMut<ImguiContext>,
     mut palette: ResMut<MaterialPalette>,
-    checker_state: Res<CheckerboardState>,
     mut playback: ResMut<PlaybackState>,
-    mut buffer: ResMut<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer2D>,
     grid: Res<GridConfig>,
+    mut gen_reload: ResMut<super::lua_generator::GeneratorReloadFlag>,
 ) {
     // NOTE: The canvas is displayed as a Bevy Sprite, not an ImGui Image.
     // ImGui's Image widget doesn't update when texture data changes.
@@ -587,17 +597,18 @@ fn render_ui_system(
 
             ui.same_line();
 
-            // Step button
+            // Step button - temporarily pause, let one step run, then pause again
             if ui.button("Step") && !playback.completed {
-                step_checkerboard(&mut buffer, &checker_state, &mut playback);
+                // Enable playing for one frame, accumulator will handle single step
+                playback.playing = true;
+                playback.accumulator = 1.0; // Trigger one step
             }
 
             ui.same_line();
 
-            // Reset button
+            // Reset button - triggers generator reload which resets everything
             if ui.button("Reset") {
-                buffer.clear();
-                playback.reset();
+                gen_reload.needs_reload = true;
             }
 
             // Speed slider

@@ -28,6 +28,7 @@
 pub mod app;
 pub mod checkerboard;
 pub mod imgui_screenshot;
+pub mod lua_generator;
 pub mod lua_materials;
 pub mod material;
 pub mod playback;
@@ -36,6 +37,7 @@ pub mod voxel_buffer_2d;
 pub use app::MapEditor2DApp;
 pub use checkerboard::CheckerboardState;
 pub use imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin};
+pub use lua_generator::{GeneratorReloadFlag, LuaGeneratorPlugin, GENERATOR_LUA_PATH};
 pub use lua_materials::{
     LuaMaterialsPlugin, MaterialsLoadSet, MaterialsReloadFlag, MATERIALS_LUA_PATH,
 };
