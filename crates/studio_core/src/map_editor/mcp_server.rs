@@ -255,7 +255,7 @@ fn error_response(msg: &str) -> Response<Cursor<Vec<u8>>> {
 /// System to handle MCP requests in Bevy.
 fn handle_mcp_requests(
     channels: NonSend<McpChannels>,
-    palette: Res<MaterialPalette>,
+    mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
 ) {
     // Process all pending requests
@@ -268,17 +268,31 @@ fn handle_mcp_requests(
             }
 
             Ok(McpRequest::CreateMaterial(req)) => {
-                // Note: We can't actually add materials here because palette is Res not ResMut.
-                // For now, just acknowledge. In a real implementation, we'd use events.
-                // TODO: Use events to add materials dynamically
+                // Check if material with this ID already exists
+                let exists = palette.available.iter().any(|m| m.id == req.id);
+
+                if exists {
+                    // Update existing material
+                    if let Some(mat) = palette.available.iter_mut().find(|m| m.id == req.id) {
+                        mat.name = req.name.clone();
+                        mat.color = req.color;
+                    }
+                    palette.changed = true;
+                    info!("MCP: Updated material {} (id={})", req.name, req.id);
+                } else {
+                    // Add new material
+                    palette
+                        .available
+                        .push(Material::new(req.id, req.name.clone(), req.color));
+                    // Also add to active palette so it's immediately usable
+                    palette.add_to_active(req.id);
+                    info!("MCP: Created material {} (id={})", req.name, req.id);
+                }
+
                 let _ = channels.response_tx.send(McpResponse::MaterialCreated {
                     success: true,
                     id: req.id,
                 });
-                info!(
-                    "MCP: Material create requested: {} ({}) - not yet implemented",
-                    req.name, req.id
-                );
             }
 
             Ok(McpRequest::GetOutput) => {
