@@ -5,10 +5,11 @@ members = [
     "crates/studio_physics",
     "crates/studio_scripting",
 ]
+exclude = ["bevy_mod_imgui"]
 
 [workspace.dependencies]
 bevy = "0.17"
-bevy_mod_imgui = { version = "0.8", features = ["docking"] }
+bevy_mod_imgui = { git = "https://github.com/OptimusLime/bevy_mod_imgui.git", branch = "screenshot-support", features = ["docking"] }
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 rapier3d = { version = "0.23", features = ["debug-render"] }
 

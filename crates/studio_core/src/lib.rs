@@ -20,6 +20,7 @@ pub mod creature_script;
 pub mod day_night;
 pub mod debug_screenshot;
 pub mod deferred;
+pub mod map_editor;
 pub mod markov_junior;
 pub mod orbit_camera;
 pub mod physics_math;

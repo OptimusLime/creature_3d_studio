@@ -6,6 +6,56 @@
 
 ---
 
+## Directory Structure
+
+All map editor code lives in the library, NOT in examples. Examples use the library.
+
+```
+crates/studio_core/src/
+├── map_editor/                    # Map editor module (NEW)
+│   ├── mod.rs                     # Module exports
+│   ├── voxel_buffer_2d.rs         # 2D voxel buffer
+│   ├── material.rs                # Material and MaterialPalette
+│   ├── playback.rs                # Playback state (play/pause/step/speed)
+│   ├── checkerboard.rs            # Checkerboard generator
+│   ├── imgui_screenshot.rs        # ImGui-aware screenshot capture
+│   └── app.rs                     # MapEditor2DApp builder
+│
+├── lib.rs                         # Add: pub mod map_editor;
+
+examples/
+├── p_map_editor_2d.rs             # Thin wrapper using MapEditor2DApp
+
+assets/map_editor/                 # Lua assets (M2+)
+├── materials.lua                  # Material definitions (M2)
+├── generator.lua                  # Generator script (M3)
+
+screenshots/
+├── p_map_editor_2d.png            # Verification output
+```
+
+### Files by Milestone
+
+| Milestone | Files Created/Modified |
+|-----------|----------------------|
+| **M1.5** | `crates/studio_core/src/map_editor/mod.rs` |
+|         | `crates/studio_core/src/map_editor/voxel_buffer_2d.rs` |
+|         | `crates/studio_core/src/map_editor/material.rs` |
+|         | `crates/studio_core/src/map_editor/playback.rs` |
+|         | `crates/studio_core/src/map_editor/checkerboard.rs` |
+|         | `crates/studio_core/src/map_editor/imgui_screenshot.rs` |
+|         | `crates/studio_core/src/map_editor/app.rs` |
+|         | `crates/studio_core/src/lib.rs` (add export) |
+|         | `examples/p_map_editor_2d.rs` (refactor to use library) |
+| **M2** | `assets/map_editor/materials.lua` |
+|        | `crates/studio_core/src/map_editor/lua_materials.rs` |
+|        | `crates/studio_core/src/map_editor/app.rs` (CLI args) |
+| **M3** | `assets/map_editor/generator.lua` |
+|        | `crates/studio_core/src/map_editor/lua_generator.rs` |
+| **M4** | `crates/studio_core/src/map_editor/mcp_server.rs` |
+
+---
+
 ## Phase Outcome
 
 **When Phase 1 is complete, I can:**
@@ -28,6 +78,7 @@ This follows existing patterns: `p0_screenshot_test.rs`, `p27_markov_imgui.rs`.
 | M# | Functionality | Verification |
 |----|---------------|--------------|
 | M1 | Pick from 2 materials, see checkerboard, control playback | Screenshot shows grid + picker + playback controls |
+| **M1.5** | **Refactor to library + ImGui screenshot capture** | **Screenshot includes ImGui panels (Materials, Canvas, Playback)** |
 | M2 | Edit Lua materials file, see update live | Screenshot changes when materials.lua changes |
 | M3 | Edit Lua generator file, see terrain change live | Screenshot changes when generator.lua changes |
 | M4 | External AI creates assets via MCP | `curl` returns JSON, screenshot shows new material |
@@ -135,7 +186,7 @@ ls screenshots/p_map_editor_2d.png  # File exists
 
 ---
 
-#### M1.5: Playback controls (Play/Pause/Step/Speed)
+#### M1.T5: Playback controls (Play/Pause/Step/Speed)
 **File:** `examples/p_map_editor_2d.rs`
 
 **Functionality:** Screenshot shows playback controls. They work.
@@ -154,6 +205,206 @@ ls screenshots/p_map_editor_2d.png  # File exists
 **Done when:** 
 1. Screenshot shows playback controls
 2. Manually verify: Click Step → one cell fills. Click Play → animation runs. Pause stops it.
+
+---
+
+### M1 Verification Checklist
+
+All verification is by looking at `screenshots/p_map_editor_2d.png` or manual interaction:
+
+- [ ] Screenshot file exists after running
+- [ ] Screenshot shows 32x32 checkerboard
+- [ ] Screenshot shows material picker with "stone" and "dirt"
+- [ ] Screenshot shows playback controls (Play/Pause/Step/Speed)
+- [ ] Manual: clicking material changes checkerboard
+- [ ] Manual: Step advances one cell
+- [ ] Manual: Play/Pause controls animation
+- [ ] **This is a working app**
+
+---
+
+## M1.5: Refactor to Library + ImGui Screenshot
+
+### Outcome
+All map editor functionality moves to `crates/studio_core/src/map_editor/`. Example becomes a thin wrapper. Screenshot captures ImGui panels.
+
+### The Problem
+
+**M1 implementation dumped everything into `examples/p_map_editor_2d.rs`.** This violates our principles:
+1. Examples use the library; they don't contain the library
+2. Screenshot infrastructure was duplicated instead of reused
+3. ImGui renders AFTER Bevy's screenshot capture, so ImGui panels don't appear in screenshots
+
+### Key Design Decisions
+
+**Library-first architecture.** The map editor is a library feature. The example just calls `MapEditor2DApp::new().run()`.
+
+**ImGui screenshot via render graph node.** Bevy's built-in screenshot captures the camera's ViewTarget. ImGui renders to the swap chain texture AFTER that. We need a custom render graph node that:
+1. Runs AFTER `ImguiNodeLabel`
+2. Copies the swap chain texture to a staging buffer
+3. Triggers screenshot save
+
+**Follow VoxelWorldApp pattern.** Just like `VoxelWorldApp` provides a fluent builder for 3D voxel scenes, `MapEditor2DApp` provides a fluent builder for 2D map editor scenes.
+
+### Tasks
+
+---
+
+#### M1.5.1: Create map_editor module structure
+**Files:**
+- `crates/studio_core/src/map_editor/mod.rs`
+- `crates/studio_core/src/lib.rs` (add export)
+
+**Functionality:** Module exists and compiles.
+
+**What to build:**
+```rust
+// crates/studio_core/src/map_editor/mod.rs
+pub mod voxel_buffer_2d;
+pub mod material;
+pub mod playback;
+pub mod checkerboard;
+pub mod imgui_screenshot;
+pub mod app;
+
+pub use voxel_buffer_2d::VoxelBuffer2D;
+pub use material::{Material, MaterialPalette};
+pub use playback::PlaybackState;
+pub use checkerboard::CheckerboardState;
+pub use imgui_screenshot::{ImguiScreenshotPlugin, ImguiScreenshotConfig};
+pub use app::MapEditor2DApp;
+```
+
+**Done when:** `cargo build` succeeds with empty module files.
+
+---
+
+#### M1.5.2: Move VoxelBuffer2D to library
+**File:** `crates/studio_core/src/map_editor/voxel_buffer_2d.rs`
+
+**Functionality:** `VoxelBuffer2D` struct with `new`, `set`, `get` methods.
+
+**Done when:** Code moved from example, compiles.
+
+---
+
+#### M1.5.3: Move Material and MaterialPalette to library
+**File:** `crates/studio_core/src/map_editor/material.rs`
+
+**Functionality:** `Material` and `MaterialPalette` structs.
+
+**Done when:** Code moved from example, compiles.
+
+---
+
+#### M1.5.4: Move PlaybackState to library
+**File:** `crates/studio_core/src/map_editor/playback.rs`
+
+**Functionality:** `PlaybackState` struct with play/pause/step/speed.
+
+**Done when:** Code moved from example, compiles.
+
+---
+
+#### M1.5.5: Move CheckerboardState to library
+**File:** `crates/studio_core/src/map_editor/checkerboard.rs`
+
+**Functionality:** `CheckerboardState` and step function.
+
+**Done when:** Code moved from example, compiles.
+
+---
+
+#### M1.5.6: Implement ImguiScreenshotPlugin
+**File:** `crates/studio_core/src/map_editor/imgui_screenshot.rs`
+
+**Functionality:** Screenshot capture that includes ImGui panels.
+
+**Implementation approach:**
+1. Add a custom render graph node `ImguiScreenshotNode` that runs AFTER `ImguiNodeLabel`
+2. Copy the swap chain texture to a staging buffer
+3. Read back the buffer and save to disk
+4. Use `gpu_readback` patterns from Bevy
+
+**What to build:**
+```rust
+pub struct ImguiScreenshotConfig {
+    pub path: String,
+    pub capture_frame: u32,
+    pub exit_frame: u32,
+}
+
+pub struct ImguiScreenshotPlugin;
+
+impl Plugin for ImguiScreenshotPlugin {
+    fn build(&self, app: &mut App) {
+        // Add render graph node after ImguiNodeLabel
+        // Add systems for capture timing
+    }
+}
+```
+
+**Done when:** Running example produces screenshot with ImGui panels visible.
+
+---
+
+#### M1.5.7: Create MapEditor2DApp builder
+**File:** `crates/studio_core/src/map_editor/app.rs`
+
+**Functionality:** Fluent builder pattern for map editor apps.
+
+**What to build:**
+```rust
+pub struct MapEditor2DApp {
+    config: MapEditor2DConfig,
+}
+
+impl MapEditor2DApp {
+    pub fn new(title: impl Into<String>) -> Self { ... }
+    pub fn with_screenshot(self, path: impl Into<String>) -> Self { ... }
+    pub fn with_resolution(self, width: u32, height: u32) -> Self { ... }
+    pub fn run(self) { ... }
+}
+```
+
+**Done when:** Can create app with `MapEditor2DApp::new("Test").with_screenshot("test.png").run()`.
+
+---
+
+#### M1.5.8: Refactor example to use library
+**File:** `examples/p_map_editor_2d.rs`
+
+**Functionality:** Example is now a thin wrapper.
+
+**Target code:**
+```rust
+use studio_core::map_editor::MapEditor2DApp;
+
+fn main() {
+    MapEditor2DApp::new("Map Editor 2D")
+        .with_screenshot("screenshots/p_map_editor_2d.png")
+        .with_resolution(1024, 768)
+        .run();
+}
+```
+
+**Done when:** Example compiles and runs, screenshot shows ImGui panels.
+
+---
+
+### M1.5 Verification Checklist
+
+- [x] `crates/studio_core/src/map_editor/` directory exists
+- [x] `cargo build` succeeds
+- [x] `cargo run --example p_map_editor_2d` runs
+- [x] Screenshot `screenshots/p_map_editor_2d.png` includes ImGui panels:
+  - [x] Materials panel (left)
+  - [x] Canvas window (center)
+  - [x] Playback controls (bottom)
+- [x] Example file is <50 lines (thin wrapper)
+- [x] All data structures are imported from `studio_core::map_editor`
+
+**M1.5 COMPLETE** - ImGui screenshot capture implemented via forked `bevy_mod_imgui` with intermediate texture.
 
 ---
 
@@ -235,11 +486,13 @@ return {
 
 ### M2 Verification Checklist
 
-- [ ] `materials.lua` exists with stone/dirt definitions
-- [ ] Screenshot shows materials from Lua file
-- [ ] Add material to Lua, restart → screenshot shows new material
-- [ ] Change color in Lua, save (no restart) → screenshot updates within 1 second
-- [ ] **Hot reload works**
+- [x] `materials.lua` exists with stone/dirt definitions
+- [x] Screenshot shows materials from Lua file
+- [x] Add material to Lua, restart → screenshot shows new material
+- [x] Change color in Lua, save (no restart) → screenshot updates within 1 second
+- [x] **Hot reload works**
+
+**M2 COMPLETE** - Lua materials with hot reload implemented. CLI args added for `--screenshot`, `--capture-frame`, `--exit-frame`.
 
 ---
 
