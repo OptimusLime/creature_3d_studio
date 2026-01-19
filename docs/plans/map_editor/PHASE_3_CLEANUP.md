@@ -524,81 +524,85 @@ Phase 3.5 adds:
 
 | Criticality | Count | Status |
 |-------------|-------|--------|
-| High | 0 | - |
-| Medium | 0 | - |
-| Low | 5 | Deferred (generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture) |
-| Resolved | 3 | Structure field, MjModel step info, StepInfo extended fields |
-
-**M10.4 Complete.** Multi-surface rendering foundation in place. Ready for M10.5.
+| High | 1 | Proposed unit tests for MjLuaModel bugs (M10.4 post-mortem) |
+| Medium | 1 | Duplicate structure representations (M10.5) |
+| Low | 8 | generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture, MjGeneratorPlaceholder can't execute, JSON round-trip, characters duplication |
 
 ---
 
 ## M10.5 Audit: Markov Jr. Structure Introspection
 
-### 1. Structure Introspection - IMPLEMENTED
+### 1. Duplicate Structure Representations
 
-**Milestone:** M10.5 (Markov Jr. Structure Introspection)
+**Milestone:** M10.5
 
-**Implementation:**
-1. Added `MjNodeStructure` struct to represent MJ node tree
-2. Added `structure()` method to `Node` trait with implementations for all node types:
-   - `MarkovNode`, `SequenceNode`: Return children structures
-   - `OneNode`, `AllNode`, `ParallelNode`: Return rules as human-readable strings
-   - `PathNode`, `MapNode`, `ConvChainNode`, `ConvolutionNode`: Return config JSON
-   - WFC nodes: Return pattern counts and state
-3. Added `MjRule::to_display_string()` for human-readable rule format (e.g., "BW=WW")
-4. Added `characters` field to `RuleNodeData` for rule display
-5. Exposed via `Model::structure()` -> `Interpreter::structure()` -> `root.structure()`
-6. Added `mj_structure()` method to MjLuaModel (returns JSON string)
-7. Added `mj_structure` field to `GeneratorStructure` for MCP response
-8. `MjGeneratorPlaceholder` now extracts MJ structure from Lua userdata
+**Current State:**
+- `MjNodeStructure` in `markov_junior/node.rs` - represents MJ internal node tree
+- `GeneratorStructure` in `map_editor/generator/traits.rs` - represents Lua generator tree
 
-**Criticality:** **N/A** - New feature, not cleanup item.
+These are two different struct types that serve similar purposes. `GeneratorStructure` now has an `mj_structure: Option<MjNodeStructure>` field to embed MJ structure inside generator structure.
+
+**Issue:** We now have nested structure types. If we want to unify visualizers later, we may need a single unified tree representation.
+
+**Criticality:** **Medium** - Works but creates conceptual overhead when reasoning about "structure". Not blocking, but confusing.
+
+**When to Do:** Consider unifying in Phase 4 if we build a combined visualizer.
 
 ---
 
-### 2. MCP Response Now Includes mj_structure
+### 2. MjGeneratorPlaceholder Cannot Execute
 
-**Milestone:** M10.5 (Markov Jr. Structure Introspection)
+**Milestone:** M10.5
 
-**Example MCP Response:**
-```json
-{
-  "structure": {
-    "type": "Sequential",
-    "path": "root",
-    "children": {
-      "step_1": {
-        "type": "MjModel",
-        "path": "root.step_1",
-        "model_name": "MazeGrowth",
-        "mj_structure": {
-          "node_type": "Markov",
-          "children": [
-            {
-              "node_type": "One",
-              "rules": ["WBB=WAW", "WAW=WAA"]
-            }
-          ]
-        }
-      }
+**Current State:**
+- `MjGeneratorPlaceholder` in `lua_generator.rs` is used for structure introspection only
+- It extracts `mj_structure` from the Lua userdata via JSON serialization/deserialization
+- Its `step()` method just returns `true` immediately (always "done")
+
+**Issue:** There are now TWO code paths for MJ models:
+1. **Execution:** Lua calls `MjLuaModel:step()` directly
+2. **Introspection:** Rust creates `MjGeneratorPlaceholder` from Lua userdata
+
+The placeholder cannot actually execute the model. If we ever want Rust-side execution of MJ models, we'd need to extract the actual `Model` from the Lua userdata.
+
+**Criticality:** **Low** - Execution via Lua works fine. This is only an issue if we want pure-Rust execution.
+
+---
+
+### 3. JSON Round-Trip for mj_structure
+
+**Milestone:** M10.5
+
+**Current State:**
+```rust
+// lua_generator.rs
+if let Ok(json_str) = ud.call_method::<String>("mj_structure", ()) {
+    if let Ok(mj_struct) = serde_json::from_str::<MjNodeStructure>(&json_str) {
+        // ...
     }
-  }
 }
 ```
 
+**Issue:** We serialize `MjNodeStructure` to JSON in Lua, then deserialize it back in Rust. This is inefficient - we're crossing the Lua/Rust boundary twice with serialization overhead.
+
+**Alternative:** Could pass the structure directly as a Lua table and convert to Rust struct without JSON.
+
+**Criticality:** **Low** - Only happens once during generator reload, not per-step. Negligible performance impact.
+
 ---
 
-## Summary Statistics (Phase 3.5 - Updated)
+### 4. characters Field Added to RuleNodeData
 
-| Criticality | Count | Status |
-|-------------|-------|--------|
-| High | 0 | - |
-| Medium | 0 | - |
-| Low | 5 | Deferred (generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture) |
-| Resolved | 4 | Structure field, MjModel step info, StepInfo extended fields, **MJ Structure Introspection (M10.5)** |
+**Milestone:** M10.5
 
-**M10.5 Complete.** Structure introspection in place. Ready for M10.6 (Per-Node Step Info).
+**Current State:**
+- Added `characters: Vec<char>` to `RuleNodeData`
+- Set by loader: `data.characters = grid.characters.clone();`
+- Used by `MjRule::to_display_string()` for human-readable rules
+
+**Issue:** This duplicates data that already exists in the grid. Every rule node now carries a copy of the character array.
+
+**Criticality:** **Low** - Small memory overhead. Could pass characters as parameter instead of storing, but would require changing all `structure()` signatures.
 
 ---
 
