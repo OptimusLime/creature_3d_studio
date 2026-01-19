@@ -8,6 +8,7 @@
 //! - Setting generator/materials/renderer Lua source (triggers hot reload)
 //! - Listing render layers
 //! - Managing Lua layer registry (register/unregister layers)
+//! - Querying generator state
 //!
 //! # Endpoints
 //!
@@ -24,12 +25,14 @@
 //! - `GET /mcp/layer_registry` - List all registered layers with details
 //! - `POST /mcp/register_layer` - Register a new layer
 //! - `DELETE /mcp/layer/{name}` - Unregister a layer by name
+//! - `GET /mcp/generator_state` - Get current generator state (type, step, running)
 
 use super::asset::{Asset, AssetStore};
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
 use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
+use super::playback::PlaybackState;
 use super::render::{RenderContext, RenderLayerStack, RENDERER_LUA_PATH};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
@@ -98,6 +101,7 @@ enum McpRequest {
     Search(SearchRequest),
     SetGenerator(String),
     SetMaterials(String),
+    GetGeneratorState,
     SetRenderer(String),
     // Layer registry operations
     RegisterLayer(LayerRegisterRequest),
@@ -122,6 +126,23 @@ enum McpResponse {
     Success { success: bool },
     Error(String),
     LayerRegistry(Vec<LayerDefJson>),
+    GeneratorState(GeneratorStateJson),
+}
+
+/// JSON representation of generator state.
+#[derive(Serialize)]
+struct GeneratorStateJson {
+    /// Generator type: "lua", "markov", or "unknown"
+    #[serde(rename = "type")]
+    generator_type: String,
+    /// Current step number
+    step: usize,
+    /// Whether generation is still running
+    running: bool,
+    /// Whether generation is completed
+    completed: bool,
+    /// Grid size [width, height]
+    grid_size: [usize; 2],
 }
 
 /// Request body for registering a layer.
@@ -553,6 +574,29 @@ fn handle_http_request(
             }
         }
 
+        (Method::Get, "/mcp/generator_state") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::GetGeneratorState).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::GeneratorState(state)) => {
+                    let json = serde_json::to_string(&state).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         (Method::Delete, path) if path.starts_with("/mcp/layer/") => {
             // Extract layer name from path: /mcp/layer/{name}
             let name = path.strip_prefix("/mcp/layer/").unwrap_or("").to_string();
@@ -610,6 +654,7 @@ fn handle_mcp_requests(
     buffer: Res<VoxelBuffer2D>,
     render_stack: Option<Res<RenderLayerStack>>,
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
+    playback: Option<Res<PlaybackState>>,
 ) {
     // Process all pending requests
     loop {
@@ -827,6 +872,30 @@ fn handle_mcp_requests(
                         "Layer registry not available".to_string(),
                     ));
                 }
+            }
+
+            Ok(McpRequest::GetGeneratorState) => {
+                // Get generator state from playback
+                let state = if let Some(ref pb) = playback {
+                    GeneratorStateJson {
+                        generator_type: "lua".to_string(), // For now, all generators are Lua-based
+                        step: pb.step_index,
+                        running: pb.playing && !pb.completed,
+                        completed: pb.completed,
+                        grid_size: [buffer.width, buffer.height],
+                    }
+                } else {
+                    GeneratorStateJson {
+                        generator_type: "unknown".to_string(),
+                        step: 0,
+                        running: false,
+                        completed: false,
+                        grid_size: [buffer.width, buffer.height],
+                    }
+                };
+                let _ = channels
+                    .response_tx
+                    .send(McpResponse::GeneratorState(state));
             }
 
             Err(TryRecvError::Empty) => break,

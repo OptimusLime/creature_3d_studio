@@ -22,6 +22,7 @@ use super::generator::{CurrentStepInfo, GeneratorListeners, StepInfo};
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
 use super::voxel_buffer_2d::VoxelBuffer2D;
+use crate::markov_junior::register_markov_junior_api;
 use bevy::prelude::*;
 use mlua::{Function, Lua, Result as LuaResult, Table, UserData, UserDataMethods, Value};
 use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -221,8 +222,13 @@ fn setup_generator(world: &mut World) {
         buffer: shared_buffer,
     });
 
-    // Create Lua state
+    // Create Lua state and register MarkovJunior API
     let lua = Lua::new();
+    if let Err(e) = register_markov_junior_api(&lua) {
+        error!("Failed to register MarkovJunior API: {:?}", e);
+    } else {
+        info!("MarkovJunior API registered in generator Lua context");
+    }
     world.insert_non_send_resource(LuaGeneratorState {
         lua,
         generator: None,

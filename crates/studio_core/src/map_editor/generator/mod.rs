@@ -38,6 +38,10 @@ pub struct StepInfo {
     pub material_id: u32,
     /// Whether generation is now complete.
     pub completed: bool,
+    /// Name of the rule that was applied (for Markov generators).
+    pub rule_name: Option<String>,
+    /// Number of cells affected by this step (for batch operations).
+    pub affected_cells: Option<usize>,
 }
 
 impl StepInfo {
@@ -49,6 +53,29 @@ impl StepInfo {
             y,
             material_id,
             completed,
+            rule_name: None,
+            affected_cells: None,
+        }
+    }
+
+    /// Create step info with extended Markov information.
+    pub fn with_markov_info(
+        step_number: usize,
+        x: usize,
+        y: usize,
+        material_id: u32,
+        completed: bool,
+        rule_name: Option<String>,
+        affected_cells: Option<usize>,
+    ) -> Self {
+        Self {
+            step_number,
+            x,
+            y,
+            material_id,
+            completed,
+            rule_name,
+            affected_cells,
         }
     }
 }
