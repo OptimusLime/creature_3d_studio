@@ -531,3 +531,171 @@ Phase 3.5 adds:
 
 **M10.4 Complete.** Multi-surface rendering foundation in place. Ready for M10.5.
 
+---
+
+## M10.4 Post-Mortem: Critical Bug Fix & Proposed Tests
+
+### Bug Summary
+
+Two critical bugs in MjLuaModel Lua integration prevented MazeGrowth from rendering:
+
+1. **Missing `init()` method**: When `Sequential:init(ctx)` called `child:init(ctx)` on MjLuaModel children, nothing happened because MjLuaModel lacked an `init` method. The MJ model was never reset before stepping.
+
+2. **Inverted `step()` return value**: MjLuaModel.step() returned `true` when progress was made, but the generator protocol expects `true` when **done**. This caused Sequential to skip to the next child after just 1 step.
+
+### Why These Bugs Went Undetected
+
+- No unit tests for MjLuaModel Lua integration
+- No integration tests for Sequential + MjLuaModel composition
+- Only tested via full example app, which has too many layers to debug
+
+### Proposed Tests
+
+These tests would have caught the bugs without running the full example:
+
+#### 1. MjLuaModel.init() Unit Test
+
+```rust
+#[test]
+fn test_mj_lua_model_init_resets_model() {
+    let lua = Lua::new();
+    register_markov_junior_api(&lua).unwrap();
+    
+    // Load a simple model
+    let result: mlua::AnyUserData = lua.load(r#"
+        local model = mj.load_model_xml("MarkovJunior/models/MazeGrowth.xml", {size=8})
+        return model
+    "#).eval().unwrap();
+    
+    // Create mock context with seed
+    let ctx = lua.create_table().unwrap();
+    ctx.set("seed", 42u64).unwrap();
+    ctx.set("width", 8).unwrap();
+    ctx.set("height", 8).unwrap();
+    
+    // Call init
+    result.call_method::<()>("init", ctx.clone()).unwrap();
+    
+    // Model should be running after init
+    let is_done: bool = result.call_method("is_done", ()).unwrap();
+    assert!(!is_done, "Model should be running after init()");
+}
+```
+
+#### 2. MjLuaModel.step() Return Value Test
+
+```rust
+#[test]
+fn test_mj_lua_model_step_returns_done_not_progress() {
+    let lua = Lua::new();
+    register_markov_junior_api(&lua).unwrap();
+    
+    // Load and init model
+    let model: mlua::AnyUserData = lua.load(r#"
+        local model = mj.load_model_xml("MarkovJunior/models/MazeGrowth.xml", {size=4})
+        return model
+    "#).eval().unwrap();
+    
+    let ctx = lua.create_table().unwrap();
+    ctx.set("seed", 42u64).unwrap();
+    model.call_method::<()>("init", ctx).unwrap();
+    
+    // First step should return false (not done yet)
+    let step1_result: bool = model.call_method("step", ()).unwrap();
+    assert!(!step1_result, "step() should return false while model is running");
+    
+    // Run to completion
+    loop {
+        let done: bool = model.call_method("step", ()).unwrap();
+        if done { break; }
+    }
+    
+    // After completion, is_done should be true
+    let is_done: bool = model.call_method("is_done", ()).unwrap();
+    assert!(is_done, "is_done() should be true after model completes");
+}
+```
+
+#### 3. Sequential + MjLuaModel Integration Test
+
+```rust
+#[test]
+fn test_sequential_with_mj_model_runs_to_completion() {
+    let lua = Lua::new();
+    register_markov_junior_api(&lua).unwrap();
+    setup_generator_lib(&lua).unwrap();
+    
+    // Create sequential with MJ model
+    let generator: mlua::Table = lua.load(r#"
+        local generators = require("lib.generators")
+        return generators.sequential({
+            mj.load_model_xml("MarkovJunior/models/MazeGrowth.xml", {size=4})
+        })
+    "#).eval().unwrap();
+    
+    // Create mock context
+    let ctx = create_mock_context(&lua, 4, 4, 42);
+    
+    // Init
+    generator.call_method::<()>("init", ctx.clone()).unwrap();
+    
+    // Step through - should take more than 1 step for 4x4 maze
+    let mut step_count = 0;
+    loop {
+        let done: bool = generator.call_method("step", ctx.clone()).unwrap();
+        step_count += 1;
+        if done { break; }
+        assert!(step_count < 1000, "Should complete within 1000 steps");
+    }
+    
+    // Should have taken multiple steps, not just 1
+    assert!(step_count > 1, "MJ model should take multiple steps, got {}", step_count);
+}
+```
+
+#### 4. Voxel Buffer Population Test
+
+```rust
+#[test]
+fn test_mj_model_populates_buffer_after_completion() {
+    let lua = Lua::new();
+    register_markov_junior_api(&lua).unwrap();
+    setup_generator_lib(&lua).unwrap();
+    
+    // Create context with real buffer
+    let buffer = SharedBuffer::new(4, 4);
+    let ctx = create_context_with_buffer(&lua, buffer.clone(), 42);
+    
+    // Create and run generator
+    let generator: mlua::Table = lua.load(r#"
+        local generators = require("lib.generators")
+        return generators.sequential({
+            mj.load_model_xml("MarkovJunior/models/MazeGrowth.xml", {size=4})
+        })
+    "#).eval().unwrap();
+    
+    generator.call_method::<()>("init", ctx.clone()).unwrap();
+    loop {
+        let done: bool = generator.call_method("step", ctx.clone()).unwrap();
+        if done { break; }
+    }
+    
+    // Buffer should have non-zero values (maze pattern)
+    let non_empty = buffer.count_non_zero();
+    assert!(non_empty > 0, "Buffer should have filled cells after maze generation");
+    // MazeGrowth should fill most cells (walls + paths)
+    assert!(non_empty >= 12, "4x4 maze should have at least 12 non-empty cells, got {}", non_empty);
+}
+```
+
+### Recommended Test Infrastructure
+
+1. **Add `#[cfg(test)]` module to `lua_api.rs`** with unit tests for each MjLuaModel method
+2. **Add integration test file** `tests/lua_mj_integration.rs` for Sequential/Parallel + MjLuaModel
+3. **Add `SharedBuffer::count_non_zero()` helper** for test assertions
+4. **Create `create_mock_context()` test helper** that builds a valid Lua context
+
+### Priority
+
+**High** - These tests would have saved hours of debugging and prevented shipping a broken feature.
+

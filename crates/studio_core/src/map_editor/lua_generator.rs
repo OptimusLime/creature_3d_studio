@@ -59,7 +59,10 @@ impl Plugin for LuaGeneratorPlugin {
         let path = self.path.clone();
 
         app.insert_resource(LuaGeneratorConfig { path: path.clone() });
-        app.insert_resource(GeneratorReloadFlag { needs_reload: true });
+        app.insert_resource(GeneratorReloadFlag {
+            needs_reload: true,
+            seed: None,
+        });
         app.insert_resource(CurrentStepInfo::default());
         app.insert_resource(GeneratorListeners::default());
 
@@ -82,6 +85,21 @@ pub struct LuaGeneratorConfig {
 #[derive(Resource)]
 pub struct GeneratorReloadFlag {
     pub needs_reload: bool,
+    /// Seed for deterministic generation. Defaults to time-based if None.
+    pub seed: Option<u64>,
+}
+
+impl GeneratorReloadFlag {
+    /// Get the seed, using time-based default if not set.
+    pub fn get_seed(&self) -> u64 {
+        self.seed.unwrap_or_else(|| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(42)
+        })
+    }
 }
 
 /// The loaded Lua generator state (non-send because Lua is not thread-safe).
@@ -205,12 +223,15 @@ impl SharedBuffer {
 struct GeneratorContext {
     buffer: SharedBuffer,
     palette: Vec<u32>,
+    /// Random seed for deterministic generation.
+    seed: u64,
 }
 
 impl UserData for GeneratorContext {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("width", |_, this| Ok(this.buffer.width));
         fields.add_field_method_get("height", |_, this| Ok(this.buffer.height));
+        fields.add_field_method_get("seed", |_, this| Ok(this.seed));
         fields.add_field_method_get("palette", |lua, this| {
             // Convert palette to Lua table (1-indexed)
             let table = lua.create_table()?;
@@ -597,16 +618,21 @@ fn run_generator_step(
     time: Res<Time>,
     surface_manager: Option<Res<RenderSurfaceManager>>,
     mut frame_capture: Option<ResMut<FrameCapture>>,
+    reload_flag: Res<GeneratorReloadFlag>,
 ) {
     // Check if generator is loaded
     if state.generator.is_none() {
         return;
     }
 
+    // Get seed from reload flag (defaults to time-based if not set)
+    let seed = reload_flag.get_seed();
+
     // Create context for Lua
     let ctx = GeneratorContext {
         buffer: gen_buffer.buffer.clone(),
         palette: palette.active.clone(),
+        seed,
     };
 
     // Initialize if needed
@@ -696,6 +722,7 @@ fn run_generator_step(
         let ctx = GeneratorContext {
             buffer: gen_buffer.buffer.clone(),
             palette: palette.active.clone(),
+            seed,
         };
 
         // Run generator to completion immediately
@@ -809,6 +836,7 @@ fn call_generator_method(
     let ctx_ud = lua.create_userdata(GeneratorContext {
         buffer: ctx.buffer.clone(),
         palette: ctx.palette.clone(),
+        seed: ctx.seed,
     })?;
     func.call::<()>((generator.clone(), ctx_ud))?;
     Ok(())
@@ -820,6 +848,7 @@ fn call_generator_step(lua: &Lua, generator: &Table, ctx: &GeneratorContext) -> 
     let ctx_ud = lua.create_userdata(GeneratorContext {
         buffer: ctx.buffer.clone(),
         palette: ctx.palette.clone(),
+        seed: ctx.seed,
     })?;
     let result: Value = func.call((generator.clone(), ctx_ud))?;
 

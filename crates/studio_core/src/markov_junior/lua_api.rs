@@ -331,15 +331,11 @@ impl UserData for MjLuaModel {
             Ok(())
         });
 
-        // init(ctx) - Initialize model for stepping (resets with time-based seed)
+        // init(ctx) - Initialize model for stepping using ctx.seed
         // This is called by Sequential:init() when MjLuaModel is a child generator
-        methods.add_method("init", |_, this, _ctx: mlua::Value| {
-            // Use time-based seed for variety
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let seed = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(42);
+        methods.add_method("init", |_, this, ctx: mlua::AnyUserData| {
+            // Get seed from context (set by Rust GeneratorReloadFlag)
+            let seed: u64 = ctx.get("seed").unwrap_or(42);
             this.inner.borrow_mut().reset(seed);
             Ok(())
         });
