@@ -107,6 +107,11 @@ pub struct GeneratorStructure {
     /// Generator-specific configuration (serialized as JSON).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<serde_json::Value>,
+
+    /// For MjModel: the internal Markov Jr. node structure (M10.5).
+    /// Contains the tree of Markov/Sequence/One/All/etc nodes and their rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mj_structure: Option<crate::markov_junior::MjNodeStructure>,
 }
 
 impl GeneratorStructure {
@@ -118,6 +123,7 @@ impl GeneratorStructure {
             model_name: None,
             children: HashMap::new(),
             config: None,
+            mj_structure: None,
         }
     }
 
@@ -129,6 +135,23 @@ impl GeneratorStructure {
             model_name: Some(model_name.to_string()),
             children: HashMap::new(),
             config: None,
+            mj_structure: None,
+        }
+    }
+
+    /// Create a MjModel node with internal structure (M10.5).
+    pub fn mj_model_with_structure(
+        path: &str,
+        model_name: &str,
+        mj_structure: crate::markov_junior::MjNodeStructure,
+    ) -> Self {
+        Self {
+            type_name: "MjModel".to_string(),
+            path: path.to_string(),
+            model_name: Some(model_name.to_string()),
+            children: HashMap::new(),
+            config: None,
+            mj_structure: Some(mj_structure),
         }
     }
 
@@ -144,12 +167,22 @@ impl GeneratorStructure {
             model_name: None,
             children,
             config: None,
+            mj_structure: None,
         }
     }
 
     /// Add configuration data.
     pub fn with_config(mut self, config: serde_json::Value) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Add Markov Jr. internal structure (M10.5).
+    pub fn with_mj_structure(
+        mut self,
+        mj_structure: crate::markov_junior::MjNodeStructure,
+    ) -> Self {
+        self.mj_structure = Some(mj_structure);
         self
     }
 }

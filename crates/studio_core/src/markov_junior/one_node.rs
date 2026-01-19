@@ -11,7 +11,7 @@
 //! C# Reference: OneNode.cs
 
 use super::field::delta_pointwise;
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::observation::Observation;
 use super::rule_node::RuleNodeData;
 use super::MjRule;
@@ -254,6 +254,16 @@ impl Node for OneNode {
     fn reset(&mut self) {
         self.data.reset();
         self.data.clear_match_mask();
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        let rules: Vec<String> = self
+            .data
+            .rules
+            .iter()
+            .map(|r| r.to_display_string(&self.data.characters))
+            .collect();
+        MjNodeStructure::new("One").with_rules(rules)
     }
 }
 

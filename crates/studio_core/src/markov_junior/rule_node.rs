@@ -23,6 +23,8 @@ pub type Match = (usize, i32, i32, i32);
 pub struct RuleNodeData {
     /// The rules this node can apply
     pub rules: Vec<MjRule>,
+    /// Character array for each value index (for display in introspection)
+    pub characters: Vec<char>,
     /// Step counter for this node
     pub counter: usize,
     /// Maximum steps (0 = unlimited)
@@ -85,6 +87,7 @@ impl RuleNodeData {
         let num_rules = rules.len();
         Self {
             rules,
+            characters: Vec::new(), // Will be set by loader
             counter: 0,
             steps: 0,
             matches: Vec::new(),
@@ -106,6 +109,17 @@ impl RuleNodeData {
         }
     }
 
+    /// Create a new RuleNodeData with character info for introspection.
+    pub fn new_with_characters(
+        rules: Vec<MjRule>,
+        grid_size: usize,
+        characters: Vec<char>,
+    ) -> Self {
+        let mut data = Self::new(rules, grid_size);
+        data.characters = characters;
+        data
+    }
+
     /// Create RuleNodeData with field-based heuristics.
     ///
     /// `fields` is indexed by color value: fields[color] = Some(Field) or None.
@@ -124,6 +138,7 @@ impl RuleNodeData {
 
         Self {
             rules,
+            characters: Vec::new(), // Will be set by loader
             counter: 0,
             steps: 0,
             matches: Vec::new(),

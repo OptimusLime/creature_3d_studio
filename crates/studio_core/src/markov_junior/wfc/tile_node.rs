@@ -8,12 +8,13 @@
 use super::wfc_node::{WfcNode, WfcState};
 
 use crate::markov_junior::helper::load_vox;
-use crate::markov_junior::node::{ExecutionContext, Node};
+use crate::markov_junior::node::{ExecutionContext, MjNodeStructure, Node};
 use crate::markov_junior::rng::{DotNetRandom, MjRng};
 use crate::markov_junior::MjGrid;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use rand::prelude::*;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -399,6 +400,15 @@ impl Node for TileNode {
             }
             false
         }
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Tile")
+            .with_children(self.children.iter().map(|c| c.structure()).collect())
+            .with_config(json!({
+                "state": format!("{:?}", self.wfc.state),
+                "patterns_count": self.wfc.weights.len(),
+            }))
     }
 }
 

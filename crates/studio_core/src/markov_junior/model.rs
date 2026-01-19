@@ -4,6 +4,7 @@
 
 use super::interpreter::Interpreter;
 use super::loader::{load_model, load_model_str, LoadError, LoadedModel};
+use super::node::MjNodeStructure;
 use super::MjGrid;
 use std::path::Path;
 
@@ -189,6 +190,15 @@ impl Model {
     /// made no changes.
     pub fn last_step_changes(&self) -> &[(i32, i32, i32)] {
         self.interpreter.last_step_changes()
+    }
+
+    /// Get the structure of the model for introspection.
+    ///
+    /// This returns the tree structure of the Markov Jr. model,
+    /// showing node types, rules, and configuration. Useful for
+    /// visualizers and debugging tools.
+    pub fn structure(&self) -> MjNodeStructure {
+        self.interpreter.structure()
     }
 }
 

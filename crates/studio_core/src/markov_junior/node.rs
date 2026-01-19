@@ -9,6 +9,56 @@
 
 use super::rng::MjRng;
 use super::MjGrid;
+use serde::{Deserialize, Serialize};
+
+/// Structure information for a Markov Jr. node, used for introspection.
+///
+/// This allows external tools (MCP, visualizers) to understand the
+/// internal structure of a Markov Jr. model without executing it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MjNodeStructure {
+    /// Node type: "Markov", "Sequence", "One", "All", "Path", etc.
+    pub node_type: String,
+    /// Children (for branch nodes)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<MjNodeStructure>,
+    /// Rule strings (for One/All nodes)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<String>,
+    /// Additional config as JSON
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+}
+
+impl MjNodeStructure {
+    /// Create a new structure with just a node type.
+    pub fn new(node_type: &str) -> Self {
+        Self {
+            node_type: node_type.to_string(),
+            children: Vec::new(),
+            rules: Vec::new(),
+            config: None,
+        }
+    }
+
+    /// Add children to this structure.
+    pub fn with_children(mut self, children: Vec<MjNodeStructure>) -> Self {
+        self.children = children;
+        self
+    }
+
+    /// Add rules to this structure.
+    pub fn with_rules(mut self, rules: Vec<String>) -> Self {
+        self.rules = rules;
+        self
+    }
+
+    /// Add config to this structure.
+    pub fn with_config(mut self, config: serde_json::Value) -> Self {
+        self.config = Some(config);
+        self
+    }
+}
 
 /// Shared execution context passed to all nodes during execution.
 ///
@@ -105,6 +155,14 @@ pub trait Node {
     fn is_branch(&self) -> bool {
         false
     }
+
+    /// Return the structure of this node for introspection.
+    ///
+    /// This allows external tools (MCP, visualizers) to understand the
+    /// internal structure of a Markov Jr. model without executing it.
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Unknown")
+    }
 }
 
 /// A sequence of nodes executed in order.
@@ -168,7 +226,7 @@ impl Node for SequenceNode {
     /// 1. Tracking which branch child is "active"
     /// 2. Delegating Go() calls to the active child until it fails
     /// 3. When it fails, clearing active_branch_child and advancing n
-    fn go(&mut self, ctx: &mut ExecutionContext) -> bool {
+    fn go(&mut self, ctx: &mut ExecutionContext<'_>) -> bool {
         // If we have an active branch child, delegate to it (simulates ip.current = child)
         if let Some(active_idx) = self.active_branch_child {
             if self.nodes[active_idx].go(ctx) {
@@ -223,6 +281,11 @@ impl Node for SequenceNode {
 
     fn is_branch(&self) -> bool {
         true
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Sequence")
+            .with_children(self.nodes.iter().map(|n| n.structure()).collect())
     }
 }
 
@@ -334,6 +397,11 @@ impl Node for MarkovNode {
     fn is_branch(&self) -> bool {
         true
     }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Markov")
+            .with_children(self.nodes.iter().map(|n| n.structure()).collect())
+    }
 }
 
 #[cfg(test)]
@@ -427,5 +495,43 @@ mod tests {
         assert_eq!(ctx.changes_from_turn(0), &[(0, 0, 0), (1, 0, 0)]);
         assert_eq!(ctx.changes_from_turn(1), &[(2, 0, 0)]);
         assert_eq!(ctx.counter, 2);
+    }
+
+    #[test]
+    fn test_mj_node_structure_basic() {
+        // Test that MjNodeStructure serializes correctly
+        let structure = MjNodeStructure::new("Sequence").with_children(vec![
+            MjNodeStructure::new("One").with_rules(vec!["B=W".to_string()]),
+            MjNodeStructure::new("All").with_rules(vec!["W=B".to_string(), "A=B".to_string()]),
+        ]);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&structure).unwrap();
+        assert!(json.contains("Sequence"));
+        assert!(json.contains("One"));
+        assert!(json.contains("B=W"));
+        assert!(json.contains("All"));
+    }
+
+    #[test]
+    fn test_sequence_node_structure() {
+        // Sequence with CountdownNode should show structure
+        let seq = SequenceNode::new(vec![
+            Box::new(CountdownNode::new(2)),
+            Box::new(CountdownNode::new(3)),
+        ]);
+
+        let structure = seq.structure();
+        assert_eq!(structure.node_type, "Sequence");
+        assert_eq!(structure.children.len(), 2);
+    }
+
+    #[test]
+    fn test_markov_node_structure() {
+        let markov = MarkovNode::new(vec![Box::new(CountdownNode::new(3))]);
+
+        let structure = markov.structure();
+        assert_eq!(structure.node_type, "Markov");
+        assert_eq!(structure.children.len(), 1);
     }
 }

@@ -62,7 +62,7 @@ pub use interpreter::Interpreter;
 pub use loader::{load_model, load_model_str, LoadError, LoadedModel};
 pub use map_node::{MapNode, ScaleFactor};
 pub use model::Model;
-pub use node::{ExecutionContext, MarkovNode, Node, SequenceNode};
+pub use node::{ExecutionContext, MarkovNode, MjNodeStructure, Node, SequenceNode};
 pub use observation::Observation;
 pub use one_node::OneNode;
 pub use parallel_node::ParallelNode;

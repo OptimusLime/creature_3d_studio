@@ -11,7 +11,7 @@
 //! C# Reference: AllNode.cs
 
 use super::field::delta_pointwise;
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rng::shuffle_indices;
 use super::rule_node::RuleNodeData;
 use super::MjRule;
@@ -220,6 +220,16 @@ impl Node for AllNode {
     fn reset(&mut self) {
         self.data.reset();
         self.data.clear_match_mask();
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        let rules: Vec<String> = self
+            .data
+            .rules
+            .iter()
+            .map(|r| r.to_display_string(&self.data.characters))
+            .collect();
+        MjNodeStructure::new("All").with_rules(rules)
     }
 }
 

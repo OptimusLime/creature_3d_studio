@@ -5,8 +5,9 @@
 //!
 //! C# Reference: Convolution.cs (~191 lines)
 
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rng::MjRng;
+use serde_json::json;
 
 /// Pre-defined 2D kernels for neighbor counting.
 ///
@@ -443,6 +444,14 @@ impl Node for ConvolutionNode {
         for sums in &mut self.sumfield {
             sums.fill(0);
         }
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Convolution").with_config(json!({
+            "steps": self.steps,
+            "rules_count": self.rules.len(),
+            "periodic": self.periodic,
+        }))
     }
 }
 

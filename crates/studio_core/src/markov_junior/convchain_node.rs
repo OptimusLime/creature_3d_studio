@@ -6,8 +6,9 @@
 //! C# Reference: ConvChain.cs (~127 lines)
 
 use super::helper::load_bitmap;
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::symmetry::SquareSubgroup;
+use serde_json::json;
 use std::path::Path;
 
 /// ConvChain node for MCMC texture synthesis.
@@ -280,6 +281,14 @@ impl Node for ConvChainNode {
             *s = false;
         }
         self.counter = 0;
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("ConvChain").with_config(json!({
+            "n": self.n,
+            "temperature": self.temperature,
+            "steps": self.steps,
+        }))
     }
 }
 

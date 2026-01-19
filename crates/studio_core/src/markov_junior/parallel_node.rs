@@ -6,7 +6,7 @@
 //!
 //! C# Reference: ParallelNode.cs
 
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rule_node::RuleNodeData;
 use super::MjRule;
 
@@ -203,6 +203,16 @@ impl Node for ParallelNode {
 
     fn reset(&mut self) {
         self.data.reset();
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        let rules: Vec<String> = self
+            .data
+            .rules
+            .iter()
+            .map(|r| r.to_display_string(&self.data.characters))
+            .collect();
+        MjNodeStructure::new("Parallel").with_rules(rules)
     }
 }
 

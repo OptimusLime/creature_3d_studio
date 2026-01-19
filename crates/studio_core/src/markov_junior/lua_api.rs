@@ -356,6 +356,13 @@ impl UserData for MjLuaModel {
             Ok(table)
         });
 
+        // mj_structure() -> string (JSON) - Get internal Markov Jr. node structure
+        methods.add_method("mj_structure", |_, this, ()| {
+            let structure = this.inner.borrow().structure();
+            let json = serde_json::to_string(&structure).unwrap_or_else(|_| "null".to_string());
+            Ok(json)
+        });
+
         // model:run(seed, [max_steps]) -> steps
         methods.add_method("run", |_, this, args: (u64, Option<usize>)| {
             let (seed, max_steps) = args;

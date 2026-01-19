@@ -5,8 +5,9 @@
 //!
 //! C# Reference: Path.cs
 
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rng::{DotNetRandom, MjRng};
+use serde_json::json;
 use std::collections::VecDeque;
 
 /// A node that finds and draws paths between cells.
@@ -225,6 +226,19 @@ impl Node for PathNode {
 
     fn reset(&mut self) {
         // PathNode has no state to reset
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Path").with_config(json!({
+            "start_wave": self.start,
+            "finish_wave": self.finish,
+            "substrate_wave": self.substrate,
+            "value": self.value,
+            "inertia": self.inertia,
+            "longest": self.longest,
+            "edges": self.edges,
+            "vertices": self.vertices,
+        }))
     }
 }
 

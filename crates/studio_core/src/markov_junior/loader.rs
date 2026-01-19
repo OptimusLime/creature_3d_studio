@@ -390,6 +390,9 @@ fn load_node_from_xml(
                 data
             };
 
+            // Set characters for structure introspection (M10.5)
+            data.characters = grid.characters.clone();
+
             // Add observations if present
             if let Some(obs) = observations {
                 data.set_observations(obs, grid_size, grid.c as usize);

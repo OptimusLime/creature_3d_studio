@@ -8,7 +8,7 @@
 //!
 //! C# Reference: Interpreter.cs (87 lines)
 
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rng::{MjRng, StdRandom};
 use super::MjGrid;
 
@@ -322,6 +322,14 @@ impl Interpreter {
         let start = self.first[prev_idx];
         let end = self.first[last_idx];
         &self.changes[start..end]
+    }
+
+    /// Get the structure of the root node for introspection.
+    ///
+    /// This returns the tree structure of the Markov Jr. model,
+    /// useful for visualizers and debugging tools.
+    pub fn structure(&self) -> MjNodeStructure {
+        self.root.structure()
     }
 }
 

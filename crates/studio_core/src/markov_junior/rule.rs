@@ -475,6 +475,81 @@ impl MjRule {
 
         self.input == other.input && self.output == other.output
     }
+
+    /// Convert a rule to a human-readable string representation.
+    ///
+    /// Format: "INPUT=OUTPUT" where patterns use character representation.
+    /// Example: "WB=WW" for a 1x2 rule that converts WB to WW.
+    ///
+    /// For patterns with multiple rows, uses "/" as separator: "WB/BB=WW/WW"
+    /// For patterns with multiple layers, uses " " as separator: "AB CD=CD AB"
+    pub fn to_display_string(&self, characters: &[char]) -> String {
+        let input_str =
+            self.pattern_to_string(&self.binput, self.imx, self.imy, self.imz, characters);
+        let output_str = self.output_pattern_to_string(characters);
+        format!("{}={}", input_str, output_str)
+    }
+
+    /// Convert input pattern (binput) to string.
+    fn pattern_to_string(
+        &self,
+        pattern: &[u8],
+        mx: usize,
+        my: usize,
+        mz: usize,
+        characters: &[char],
+    ) -> String {
+        let mut layers = Vec::new();
+        for z in 0..mz {
+            let mut rows = Vec::new();
+            for y in 0..my {
+                let mut row = String::new();
+                for x in 0..mx {
+                    let idx = x + y * mx + z * mx * my;
+                    let value = pattern[idx];
+                    if value == 0xff {
+                        row.push('*');
+                    } else if (value as usize) < characters.len() {
+                        row.push(characters[value as usize]);
+                    } else {
+                        row.push('?');
+                    }
+                }
+                rows.push(row);
+            }
+            layers.push(rows.join("/"));
+        }
+        // Reverse Z order to match parse format (first layer in string = highest Z)
+        layers.reverse();
+        layers.join(" ")
+    }
+
+    /// Convert output pattern to string.
+    fn output_pattern_to_string(&self, characters: &[char]) -> String {
+        let mut layers = Vec::new();
+        for z in 0..self.omz {
+            let mut rows = Vec::new();
+            for y in 0..self.omy {
+                let mut row = String::new();
+                for x in 0..self.omx {
+                    let idx = x + y * self.omx + z * self.omx * self.omy;
+                    let value = self.output[idx];
+                    if value == 0xff {
+                        row.push('*');
+                    } else if (value as usize) < characters.len() {
+                        row.push(characters[value as usize]);
+                    } else {
+                        row.push('?');
+                    }
+                }
+                rows.push(row);
+            }
+            layers.push(rows.join("/"));
+        }
+        // Reverse Z order to match parse format
+        layers.reverse();
+        layers.join(" ")
+    }
 }
 
 #[cfg(test)]
@@ -636,5 +711,31 @@ mod tests {
 
         // After Y rotation: (IMZ, IMY, IMX) = (1, 1, 3)
         assert_eq!((rotated.imx, rotated.imy, rotated.imz), (1, 1, 3));
+    }
+
+    #[test]
+    fn test_rule_to_display_string() {
+        let grid = MjGrid::with_values(5, 5, 1, "BW");
+        let rule = MjRule::parse("BW", "WB", &grid).unwrap();
+        let display = rule.to_display_string(&grid.characters);
+        assert_eq!(display, "BW=WB");
+    }
+
+    #[test]
+    fn test_rule_to_display_string_2d() {
+        let grid = MjGrid::with_values(5, 5, 1, "BWA");
+        let rule = MjRule::parse("BW/WB", "WA/AB", &grid).unwrap();
+        let display = rule.to_display_string(&grid.characters);
+        assert_eq!(display, "BW/WB=WA/AB");
+    }
+
+    #[test]
+    fn test_rule_to_display_string_wildcard() {
+        let grid = MjGrid::with_values(5, 5, 1, "BW");
+        let rule = MjRule::parse("B*", "W*", &grid).unwrap();
+        let display = rule.to_display_string(&grid.characters);
+        // Wildcard in input should show '*' (binput has 0xff)
+        // Wildcard in output also shows '*'
+        assert_eq!(display, "B*=W*");
     }
 }

@@ -6,9 +6,10 @@
 //!
 //! C# Reference: Map.cs
 
-use super::node::{ExecutionContext, Node};
+use super::node::{ExecutionContext, MjNodeStructure, Node};
 use super::rule::MjRule;
 use super::MjGrid;
+use serde_json::json;
 
 /// Scale factor as numerator/denominator pair.
 #[derive(Debug, Clone, Copy)]
@@ -270,6 +271,17 @@ impl Node for MapNode {
             self.children[0].reset();
         }
         true
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Map")
+            .with_children(self.children.iter().map(|c| c.structure()).collect())
+            .with_config(json!({
+                "scale_x": format!("{}/{}", self.scale_x.numerator, self.scale_x.denominator),
+                "scale_y": format!("{}/{}", self.scale_y.numerator, self.scale_y.denominator),
+                "scale_z": format!("{}/{}", self.scale_z.numerator, self.scale_z.denominator),
+                "rules_count": self.rules.len(),
+            }))
     }
 }
 

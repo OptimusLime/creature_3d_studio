@@ -10,9 +10,10 @@
 //! C# Reference: WaveFunctionCollapse.cs class WFCNode (lines 7-258)
 
 use super::wave::Wave;
-use crate::markov_junior::node::{ExecutionContext, Node};
+use crate::markov_junior::node::{ExecutionContext, MjNodeStructure, Node};
 use crate::markov_junior::rng::{DotNetRandom, MjRng, StdRandom};
 use crate::markov_junior::MjGrid;
+use serde_json::json;
 
 /// Direction offsets for 2D/3D propagation.
 /// Order: +X, +Y, -X, -Y, +Z, -Z
@@ -576,6 +577,15 @@ impl Node for WfcNode {
             std::mem::swap(&mut self.newgrid, ctx.grid);
             false
         }
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("WFC").with_config(json!({
+            "state": format!("{:?}", self.state),
+            "periodic": self.periodic,
+            "patterns_count": self.weights.len(),
+            "n": self.n,
+        }))
     }
 }
 

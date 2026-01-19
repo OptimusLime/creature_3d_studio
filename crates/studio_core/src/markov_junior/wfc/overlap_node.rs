@@ -7,9 +7,10 @@
 
 use super::wfc_node::{WfcNode, WfcState, DX, DY};
 use crate::markov_junior::helper::{load_bitmap, ords};
-use crate::markov_junior::node::{ExecutionContext, Node};
+use crate::markov_junior::node::{ExecutionContext, MjNodeStructure, Node};
 use crate::markov_junior::MjGrid;
 use rand::prelude::*;
+use serde_json::json;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -310,6 +311,16 @@ impl Node for OverlapNode {
             }
             false
         }
+    }
+
+    fn structure(&self) -> MjNodeStructure {
+        MjNodeStructure::new("Overlap")
+            .with_children(self.children.iter().map(|c| c.structure()).collect())
+            .with_config(json!({
+                "n": self.wfc.n,
+                "state": format!("{:?}", self.wfc.state),
+                "patterns_count": self.patterns.len(),
+            }))
     }
 }
 
