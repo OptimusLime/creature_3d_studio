@@ -390,7 +390,7 @@ impl RenderSurfaceManager {
 mod tests {
     use super::*;
     use crate::map_editor::material::MaterialPalette;
-    use crate::map_editor::voxel_buffer_2d::VoxelBuffer2D;
+    use crate::map_editor::voxel_buffer::VoxelBuffer;
 
     struct FillLayer {
         name: String,
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_single_surface() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn test_horizontal_composite() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_vertical_composite() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 

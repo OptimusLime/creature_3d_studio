@@ -2,7 +2,7 @@
 //!
 //! A simple pattern generator used for M1 verification.
 
-use super::{PlaybackState, VoxelBuffer2D};
+use super::{PlaybackState, VoxelBuffer};
 use bevy::prelude::*;
 
 /// State for checkerboard generation.
@@ -62,7 +62,7 @@ impl CheckerboardState {
 ///
 /// Returns true if generation is complete.
 pub fn step_checkerboard(
-    buffer: &mut VoxelBuffer2D,
+    buffer: &VoxelBuffer,
     checker_state: &CheckerboardState,
     playback: &mut PlaybackState,
 ) -> bool {
@@ -72,15 +72,15 @@ pub fn step_checkerboard(
         return true;
     }
 
-    let x = playback.step_index % buffer.width;
-    let y = playback.step_index / buffer.width;
+    let x = playback.step_index % buffer.width();
+    let y = playback.step_index / buffer.width();
 
     let mat_id = if (x + y) % 2 == 0 {
         checker_state.material_a
     } else {
         checker_state.material_b
     };
-    buffer.set(x, y, mat_id);
+    buffer.set_2d(x, y, mat_id);
 
     playback.step();
 
@@ -93,15 +93,15 @@ pub fn step_checkerboard(
 }
 
 /// Fill the entire buffer with a checkerboard pattern immediately.
-pub fn fill_checkerboard(buffer: &mut VoxelBuffer2D, checker_state: &CheckerboardState) {
-    for y in 0..buffer.height {
-        for x in 0..buffer.width {
+pub fn fill_checkerboard(buffer: &VoxelBuffer, checker_state: &CheckerboardState) {
+    for y in 0..buffer.height() {
+        for x in 0..buffer.width() {
             let mat_id = if (x + y) % 2 == 0 {
                 checker_state.material_a
             } else {
                 checker_state.material_b
             };
-            buffer.set(x, y, mat_id);
+            buffer.set_2d(x, y, mat_id);
         }
     }
 }
@@ -112,28 +112,28 @@ mod tests {
 
     #[test]
     fn test_checkerboard_pattern() {
-        let mut buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let state = CheckerboardState::new(1, 2);
-        fill_checkerboard(&mut buffer, &state);
+        fill_checkerboard(&buffer, &state);
 
         // Check corners
-        assert_eq!(buffer.get(0, 0), 1); // even
-        assert_eq!(buffer.get(1, 0), 2); // odd
-        assert_eq!(buffer.get(0, 1), 2); // odd
-        assert_eq!(buffer.get(1, 1), 1); // even
+        assert_eq!(buffer.get_2d(0, 0), 1); // even
+        assert_eq!(buffer.get_2d(1, 0), 2); // odd
+        assert_eq!(buffer.get_2d(0, 1), 2); // odd
+        assert_eq!(buffer.get_2d(1, 1), 1); // even
     }
 
     #[test]
     fn test_step_checkerboard() {
-        let mut buffer = VoxelBuffer2D::new(2, 2);
+        let buffer = VoxelBuffer::new_2d(2, 2);
         let state = CheckerboardState::new(1, 2);
         let mut playback = PlaybackState::default();
 
         // Step through all 4 cells
-        assert!(!step_checkerboard(&mut buffer, &state, &mut playback));
-        assert!(!step_checkerboard(&mut buffer, &state, &mut playback));
-        assert!(!step_checkerboard(&mut buffer, &state, &mut playback));
-        assert!(step_checkerboard(&mut buffer, &state, &mut playback)); // Complete
+        assert!(!step_checkerboard(&buffer, &state, &mut playback));
+        assert!(!step_checkerboard(&buffer, &state, &mut playback));
+        assert!(!step_checkerboard(&buffer, &state, &mut playback));
+        assert!(step_checkerboard(&buffer, &state, &mut playback)); // Complete
 
         assert!(playback.completed);
         assert_eq!(playback.step_index, 4);

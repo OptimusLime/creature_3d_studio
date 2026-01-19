@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! - `Asset` / `AssetStore<T>`: Generic asset storage with search (Phase 2)
-//! - `VoxelBuffer2D`: 2D grid of material IDs
+//! - `VoxelBuffer`: Unified voxel storage with interior mutability (supports 2D and 3D)
 //! - `Material` / `MaterialPalette`: Material definitions and selection
 //! - `PlaybackState`: Step-by-step generation playback controls
 //! - `CheckerboardState`: Simple checkerboard pattern generator
@@ -38,7 +38,7 @@ pub mod material;
 pub mod mcp_server;
 pub mod playback;
 pub mod render;
-pub mod voxel_buffer_2d;
+pub mod voxel_buffer;
 
 pub use app::MapEditor2DApp;
 pub use asset::{Asset, AssetStore, InMemoryStore};
@@ -58,4 +58,4 @@ pub use render::{
     RenderLayer, RenderSurface, RenderSurfaceManager, SharedVisualizer, SurfaceInfo, SurfaceLayout,
     RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
-pub use voxel_buffer_2d::{VoxelBuffer2D, VoxelGrid2D};
+pub use voxel_buffer::{VoxelBuffer, VoxelGrid};

@@ -58,7 +58,7 @@ use std::rc::Rc;
 use super::model::Model;
 use super::MjGrid;
 use crate::map_editor::generator::{Generator, MjGenerator};
-use crate::map_editor::voxel_buffer_2d::VoxelGrid2D;
+
 use crate::markov_junior::MjGridView;
 
 /// Register the MarkovJunior Lua API.

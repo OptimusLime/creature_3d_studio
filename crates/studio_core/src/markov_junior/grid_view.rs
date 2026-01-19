@@ -1,6 +1,6 @@
 //! MjGridView - Zero-copy view into MjGrid with material ID translation.
 //!
-//! This module provides `MjGridView`, which implements `VoxelGrid2D` and translates
+//! This module provides `MjGridView`, which implements `VoxelGrid` and translates
 //! Markov Jr. grid values to material IDs on read. This enables zero-copy rendering
 //! directly from MjGrid without intermediate buffer copies.
 //!
@@ -21,7 +21,7 @@
 //! ```ignore
 //! use std::collections::HashMap;
 //! use studio_core::markov_junior::{MjGrid, MjGridView};
-//! use studio_core::map_editor::VoxelGrid2D;
+//! use studio_core::map_editor::VoxelGrid;
 //!
 //! let grid = MjGrid::with_values(4, 4, 1, "BW");
 //! // ... fill grid ...
@@ -33,17 +33,17 @@
 //!
 //! let view = MjGridView::new(&grid, &char_to_material);
 //!
-//! // Now use as VoxelGrid2D
-//! let material = view.get(0, 0); // Returns material ID, not grid value
+//! // Now use as VoxelGrid
+//! let material = view.get(0, 0, 0); // Returns material ID, not grid value
 //! ```
 
 use super::MjGrid;
-use crate::map_editor::VoxelGrid2D;
+use crate::map_editor::VoxelGrid;
 use std::collections::HashMap;
 
 /// Zero-copy view into MjGrid that translates values to material IDs.
 ///
-/// Implements `VoxelGrid2D` for use with the rendering system.
+/// Implements `VoxelGrid` for use with the rendering system.
 /// Translation happens on each `get()` call via a pre-computed lookup table.
 pub struct MjGridView<'a> {
     /// Reference to the underlying MjGrid.
@@ -98,7 +98,7 @@ impl<'a> MjGridView<'a> {
     }
 }
 
-impl VoxelGrid2D for MjGridView<'_> {
+impl VoxelGrid for MjGridView<'_> {
     fn width(&self) -> usize {
         self.grid.mx
     }
@@ -107,10 +107,14 @@ impl VoxelGrid2D for MjGridView<'_> {
         self.grid.my
     }
 
-    fn get(&self, x: usize, y: usize) -> u32 {
-        // Get grid value at (x, y, z=0) for 2D
-        // Return 0 for out-of-bounds (matches VoxelBuffer2D behavior)
-        match self.grid.get(x, y, 0) {
+    fn depth(&self) -> usize {
+        self.grid.mz
+    }
+
+    fn get(&self, x: usize, y: usize, z: usize) -> u32 {
+        // Get grid value at (x, y, z)
+        // Return 0 for out-of-bounds (matches VoxelBuffer behavior)
+        match self.grid.get(x, y, z) {
             Some(val) => {
                 let val = val as usize;
                 self.value_to_material.get(val).copied().unwrap_or(0)
@@ -144,11 +148,11 @@ mod tests {
         assert_eq!(view.width(), 4);
         assert_eq!(view.height(), 4);
 
-        // Verify translation
-        assert_eq!(view.get(0, 0), 10); // B → 10
-        assert_eq!(view.get(1, 0), 20); // W → 20
-        assert_eq!(view.get(2, 0), 10); // B → 10
-        assert_eq!(view.get(3, 0), 20); // W → 20
+        // Verify translation (using z=0 for 2D)
+        assert_eq!(view.get(0, 0, 0), 10); // B → 10
+        assert_eq!(view.get(1, 0, 0), 20); // W → 20
+        assert_eq!(view.get(2, 0, 0), 10); // B → 10
+        assert_eq!(view.get(3, 0, 0), 20); // W → 20
     }
 
     #[test]
@@ -158,7 +162,7 @@ mod tests {
 
         // Default mapping: value 0 → material 1, value 1 → material 2
         // Grid is all zeros by default
-        assert_eq!(view.get(0, 0), 1); // value 0 → material 1
+        assert_eq!(view.get_2d(0, 0), 1); // value 0 → material 1
     }
 
     #[test]
@@ -167,9 +171,9 @@ mod tests {
         let view = MjGridView::with_default_mapping(&grid);
 
         // Out of bounds returns 0
-        assert_eq!(view.get(10, 10), 0);
-        assert_eq!(view.get(4, 0), 0);
-        assert_eq!(view.get(0, 4), 0);
+        assert_eq!(view.get_2d(10, 10), 0);
+        assert_eq!(view.get_2d(4, 0), 0);
+        assert_eq!(view.get_2d(0, 4), 0);
     }
 
     #[test]
@@ -187,9 +191,9 @@ mod tests {
 
         let view = MjGridView::new(&grid, &mapping);
 
-        assert_eq!(view.get(0, 0), 100); // B → 100
-        assert_eq!(view.get(1, 0), 200); // W → 200
-        assert_eq!(view.get(0, 1), 3); // R → fallback (index 2 + 1)
+        assert_eq!(view.get_2d(0, 0), 100); // B → 100
+        assert_eq!(view.get_2d(1, 0), 200); // W → 200
+        assert_eq!(view.get_2d(0, 1), 3); // R → fallback (index 2 + 1)
     }
 
     #[test]
@@ -198,7 +202,7 @@ mod tests {
         let view = MjGridView::with_default_mapping(&grid);
 
         // Can use as trait object
-        let grid_trait: &dyn VoxelGrid2D = &view;
+        let grid_trait: &dyn VoxelGrid = &view;
         assert_eq!(grid_trait.width(), 4);
         assert_eq!(grid_trait.height(), 4);
     }

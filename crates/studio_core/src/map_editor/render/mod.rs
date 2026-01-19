@@ -38,7 +38,7 @@ pub use surface::{RenderSurface, RenderSurfaceManager, SurfaceInfo, SurfaceLayou
 pub use visualizer::{LuaVisualizer, SharedVisualizer, VISUALIZER_LUA_PATH};
 
 use super::material::MaterialPalette;
-use super::voxel_buffer_2d::{VoxelBuffer2D, VoxelGrid2D};
+use super::voxel_buffer::{VoxelBuffer, VoxelGrid};
 
 /// Trait for render layers that can draw into a pixel buffer.
 ///
@@ -62,26 +62,24 @@ pub trait RenderLayer: Send + Sync {
 
 /// Context passed to render layers containing shared data.
 ///
-/// The grid can be any implementation of `VoxelGrid2D`:
-/// - `VoxelBuffer2D`: Direct buffer access (for Lua generators)
-/// - `MjGridView`: Zero-copy view with translation (for MJ generators)
+/// The grid can be any implementation of `VoxelGrid`:
+/// - `VoxelBuffer`: Direct buffer access (for all generators)
+/// - `MjGridView`: Zero-copy view with translation (for special MJ cases)
 pub struct RenderContext<'a> {
     /// The voxel grid to render (trait object for flexibility).
-    pub grid: &'a dyn VoxelGrid2D,
+    pub grid: &'a dyn VoxelGrid,
     /// Material palette for color lookups.
     pub palette: &'a MaterialPalette,
 }
 
 impl<'a> RenderContext<'a> {
-    /// Create a new render context with any VoxelGrid2D implementation.
-    pub fn new(grid: &'a dyn VoxelGrid2D, palette: &'a MaterialPalette) -> Self {
+    /// Create a new render context with any VoxelGrid implementation.
+    pub fn new(grid: &'a dyn VoxelGrid, palette: &'a MaterialPalette) -> Self {
         Self { grid, palette }
     }
 
-    /// Create a render context from a VoxelBuffer2D (convenience method).
-    ///
-    /// This is the most common case for Lua-based generators.
-    pub fn from_buffer(buffer: &'a VoxelBuffer2D, palette: &'a MaterialPalette) -> Self {
+    /// Create a render context from a VoxelBuffer (convenience method).
+    pub fn from_buffer(buffer: &'a VoxelBuffer, palette: &'a MaterialPalette) -> Self {
         Self::new(buffer, palette)
     }
 
@@ -95,9 +93,9 @@ impl<'a> RenderContext<'a> {
         self.grid.height()
     }
 
-    /// Get the voxel (material ID) at a position.
+    /// Get the voxel (material ID) at a position (2D, z=0).
     pub fn get_voxel(&self, x: usize, y: usize) -> u32 {
-        self.grid.get(x, y)
+        self.grid.get_2d(x, y)
     }
 
     /// Get material color by ID, returns None if not found.
@@ -132,7 +130,7 @@ mod tests {
 
     #[test]
     fn test_surface_layer_basic() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 
@@ -148,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_layer_compositing() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 
@@ -169,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_layer_filtering() {
-        let buffer = VoxelBuffer2D::new(4, 4);
+        let buffer = VoxelBuffer::new_2d(4, 4);
         let palette = MaterialPalette::default_palette();
         let ctx = RenderContext::new(&buffer, &palette);
 

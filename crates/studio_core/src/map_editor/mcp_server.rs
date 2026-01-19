@@ -44,7 +44,7 @@ use super::playback::PlaybackState;
 use super::render::{
     FrameCapture, RenderContext, RenderSurfaceManager, SurfaceInfo, RENDERER_LUA_PATH,
 };
-use super::voxel_buffer_2d::VoxelBuffer2D;
+use super::voxel_buffer::VoxelBuffer;
 use bevy::prelude::*;
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
@@ -844,7 +844,7 @@ fn error_response(msg: &str) -> Response<Cursor<Vec<u8>>> {
 fn handle_mcp_requests(
     channels: NonSend<McpChannels>,
     mut palette: ResMut<MaterialPalette>,
-    buffer: Res<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer>,
     surface_manager: Option<Res<RenderSurfaceManager>>,
     mut frame_capture: Option<ResMut<FrameCapture>>,
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
@@ -887,14 +887,14 @@ fn handle_mcp_requests(
 
             Ok(McpRequest::GetOutput(req)) => {
                 // DEBUG: Log buffer state before rendering
-                let non_zero_count = (0..buffer.width)
-                    .flat_map(|x| (0..buffer.height).map(move |y| (x, y)))
-                    .filter(|&(x, y)| buffer.get(x, y) != 0)
+                let non_zero_count = (0..buffer.width())
+                    .flat_map(|x| (0..buffer.height()).map(move |y| (x, y)))
+                    .filter(|&(x, y)| buffer.get_2d(x, y) != 0)
                     .count();
                 info!(
                     "MCP GetOutput: buffer {}x{}, non-zero voxels: {}, palette materials: {}",
-                    buffer.width,
-                    buffer.height,
+                    buffer.width(),
+                    buffer.height(),
                     non_zero_count,
                     palette.available.len()
                 );
@@ -1145,7 +1145,7 @@ fn handle_mcp_requests(
                         step: pb.step_index,
                         running: pb.playing && !pb.completed,
                         completed: pb.completed,
-                        grid_size: [buffer.width, buffer.height],
+                        grid_size: [buffer.width(), buffer.height()],
                         structure,
                         steps,
                     }
@@ -1155,7 +1155,7 @@ fn handle_mcp_requests(
                         step: 0,
                         running: false,
                         completed: false,
-                        grid_size: [buffer.width, buffer.height],
+                        grid_size: [buffer.width(), buffer.height()],
                         structure,
                         steps,
                     }
@@ -1173,7 +1173,7 @@ fn handle_mcp_requests(
                     SurfaceInfo {
                         surfaces: vec!["grid".to_string()],
                         layout: super::render::SurfaceLayout::Single("grid".to_string()),
-                        total_size: [buffer.width, buffer.height],
+                        total_size: [buffer.width(), buffer.height()],
                     }
                 };
                 let _ = channels.response_tx.send(McpResponse::Surfaces(info));
@@ -1253,16 +1253,16 @@ fn handle_mcp_requests(
 }
 
 /// Generate a PNG image from the voxel buffer (legacy fallback).
-fn generate_png_from_buffer(buffer: &VoxelBuffer2D, palette: &MaterialPalette) -> Vec<u8> {
-    let width = buffer.width as u32;
-    let height = buffer.height as u32;
+fn generate_png_from_buffer(buffer: &VoxelBuffer, palette: &MaterialPalette) -> Vec<u8> {
+    let width = buffer.width() as u32;
+    let height = buffer.height() as u32;
 
     // Create RGBA image data
     let mut img_data = vec![0u8; (width * height * 4) as usize];
 
-    for y in 0..buffer.height {
-        for x in 0..buffer.width {
-            let mat_id = buffer.get(x, y);
+    for y in 0..buffer.height() {
+        for x in 0..buffer.width() {
+            let mat_id = buffer.get_2d(x, y);
             let color = if mat_id == 0 {
                 [30u8, 30, 30, 255] // Empty = dark gray
             } else if let Some(mat) = palette.get_by_id(mat_id) {
@@ -1276,7 +1276,7 @@ fn generate_png_from_buffer(buffer: &VoxelBuffer2D, palette: &MaterialPalette) -
                 [255u8, 0, 255, 255] // Unknown = magenta
             };
 
-            let idx = (y * buffer.width + x) * 4;
+            let idx = (y * buffer.width() + x) * 4;
             img_data[idx..idx + 4].copy_from_slice(&color);
         }
     }

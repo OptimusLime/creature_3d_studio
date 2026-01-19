@@ -79,15 +79,15 @@ impl RenderLayer for BaseRenderLayer {
 mod tests {
     use super::*;
     use crate::map_editor::material::{Material, MaterialPalette};
-    use crate::map_editor::voxel_buffer_2d::VoxelBuffer2D;
+    use crate::map_editor::voxel_buffer::VoxelBuffer;
 
     #[test]
     fn test_base_layer_renders_materials() {
-        let mut buffer = VoxelBuffer2D::new(2, 2);
-        buffer.set(0, 0, 1); // stone
-        buffer.set(1, 0, 2); // dirt
-        buffer.set(0, 1, 0); // empty
-        buffer.set(1, 1, 99); // unknown
+        let buffer = VoxelBuffer::new_2d(2, 2);
+        buffer.set_2d(0, 0, 1); // stone
+        buffer.set_2d(1, 0, 2); // dirt
+        buffer.set_2d(0, 1, 0); // empty
+        buffer.set_2d(1, 1, 99); // unknown
 
         let palette = MaterialPalette::new(vec![
             Material::new(1, "stone", [0.5, 0.5, 0.5]),

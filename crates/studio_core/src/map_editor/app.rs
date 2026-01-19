@@ -33,7 +33,7 @@ use super::{
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
     render::{FrameCapture, RenderSurfaceManager, SurfaceLayout},
-    voxel_buffer_2d::VoxelBuffer2D,
+    voxel_buffer::VoxelBuffer,
 };
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
@@ -244,9 +244,9 @@ impl MapEditor2DApp {
         // Lua materials plugin (loads materials from assets/map_editor/materials.lua)
         app.add_plugins(LuaMaterialsPlugin::default());
 
-        // Resources (must be inserted BEFORE LuaGeneratorPlugin which uses VoxelBuffer2D)
+        // Resources (must be inserted BEFORE LuaGeneratorPlugin which uses VoxelBuffer)
         app.insert_resource(ClearColor(clear_color));
-        app.insert_resource(VoxelBuffer2D::new(grid_size.0, grid_size.1));
+        app.insert_resource(VoxelBuffer::new_2d(grid_size.0, grid_size.1));
         app.insert_resource(MaterialPalette::default()); // Will be replaced by Lua materials on first frame
         app.insert_resource(CheckerboardState::default()); // Kept for fallback
         app.insert_resource(PlaybackState::default());
@@ -277,7 +277,7 @@ impl MapEditor2DApp {
         app.add_plugins(LuaLayerPlugin::default());
 
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
-        // Must be added AFTER VoxelBuffer2D resource is inserted
+        // Must be added AFTER VoxelBuffer resource is inserted
         app.add_plugins(LuaGeneratorPlugin::default());
 
         // MCP server plugin (HTTP API for external AI)
@@ -409,7 +409,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>, grid: Res<Gr
 /// Kept for potential fallback if no generator.lua exists.
 #[allow(dead_code)]
 fn generate_checkerboard_system(
-    mut buffer: ResMut<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer>,
     mut state: ResMut<CheckerboardState>,
     mut playback: ResMut<PlaybackState>,
     mut palette: ResMut<MaterialPalette>,
@@ -445,7 +445,7 @@ fn generate_checkerboard_system(
     playback.reset();
 
     // Fill immediately with current material_a and material_b
-    fill_checkerboard(&mut buffer, &state);
+    fill_checkerboard(&buffer, &state);
     playback.step_index = buffer.cell_count();
     playback.complete();
 
@@ -457,7 +457,7 @@ fn generate_checkerboard_system(
 #[allow(dead_code)]
 fn update_playback_system(
     time: Res<Time>,
-    mut buffer: ResMut<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer>,
     checker_state: Res<CheckerboardState>,
     mut playback: ResMut<PlaybackState>,
 ) {
@@ -474,13 +474,13 @@ fn update_playback_system(
 
     while playback.accumulator >= 1.0 && !playback.completed {
         playback.accumulator -= 1.0;
-        step_checkerboard(&mut buffer, &checker_state, &mut playback);
+        step_checkerboard(&buffer, &checker_state, &mut playback);
     }
 }
 
 /// Update the canvas texture from the voxel buffer.
 fn update_canvas_texture_system(
-    buffer: Res<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer>,
     palette: Res<MaterialPalette>,
     canvas: Res<CanvasTexture>,
     mut images: ResMut<Assets<Image>>,
@@ -490,11 +490,11 @@ fn update_canvas_texture_system(
     };
 
     // Build new pixel data
-    let mut new_data = vec![0u8; buffer.width * buffer.height * 4];
+    let mut new_data = vec![0u8; buffer.width() * buffer.height() * 4];
 
-    for y in 0..buffer.height {
-        for x in 0..buffer.width {
-            let mat_id = buffer.get(x, y);
+    for y in 0..buffer.height() {
+        for x in 0..buffer.width() {
+            let mat_id = buffer.get_2d(x, y);
             let color = if mat_id == 0 {
                 [30u8, 30, 30, 255] // Empty = dark gray
             } else if let Some(mat) = palette.get_by_id(mat_id) {
@@ -508,7 +508,7 @@ fn update_canvas_texture_system(
                 [255u8, 0, 255, 255] // Unknown = magenta
             };
 
-            let idx = (y * buffer.width + x) * 4;
+            let idx = (y * buffer.width() + x) * 4;
             new_data[idx..idx + 4].copy_from_slice(&color);
         }
     }
@@ -531,7 +531,7 @@ fn render_ui_system(
     mut context: NonSendMut<ImguiContext>,
     mut palette: ResMut<MaterialPalette>,
     mut playback: ResMut<PlaybackState>,
-    buffer: Res<VoxelBuffer2D>,
+    buffer: Res<VoxelBuffer>,
     grid: Res<GridConfig>,
     mut gen_reload: ResMut<super::lua_generator::GeneratorReloadFlag>,
     mut search_state: ResMut<SearchState>,

@@ -27,7 +27,7 @@ use super::generator::{
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
 use super::render::{FrameCapture, RenderContext, RenderSurfaceManager};
-use super::voxel_buffer_2d::VoxelBuffer2D;
+use super::voxel_buffer::{PendingStepInfo, VoxelBuffer};
 use crate::markov_junior::register_markov_junior_api;
 use bevy::prelude::*;
 use mlua::{
@@ -36,7 +36,6 @@ use mlua::{
 use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, Mutex};
 
 /// Default path to the generator Lua file.
 pub const GENERATOR_LUA_PATH: &str = "assets/map_editor/generator.lua";
@@ -110,119 +109,10 @@ struct LuaGeneratorState {
     initialized: bool,
 }
 
-/// Information about the last voxel write for step tracking.
-#[derive(Clone, Default)]
-struct LastWrite {
-    x: usize,
-    y: usize,
-    material_id: u32,
-    written: bool,
-}
-
-/// Step info emitted from Lua, pending collection by Rust.
-#[derive(Clone, Default)]
-struct PendingStepInfo {
-    path: String,
-    step_number: usize,
-    x: usize,
-    y: usize,
-    material_id: u32,
-    completed: bool,
-    rule_name: Option<String>,
-    affected_cells: Option<usize>,
-}
-
-/// Shared buffer for Lua to write to.
-/// We use Arc<Mutex> so the UserData can access it.
-/// Also tracks the last write for step info generation.
-#[derive(Clone)]
-struct SharedBuffer {
-    data: Arc<Mutex<Vec<u32>>>,
-    last_write: Arc<Mutex<LastWrite>>,
-    pending_steps: Arc<Mutex<Vec<PendingStepInfo>>>,
-    width: usize,
-    height: usize,
-}
-
-impl SharedBuffer {
-    fn new(width: usize, height: usize) -> Self {
-        Self {
-            data: Arc::new(Mutex::new(vec![0; width * height])),
-            last_write: Arc::new(Mutex::new(LastWrite::default())),
-            pending_steps: Arc::new(Mutex::new(Vec::new())),
-            width,
-            height,
-        }
-    }
-
-    fn set(&self, x: usize, y: usize, value: u32) {
-        if x < self.width && y < self.height {
-            let mut data = self.data.lock().unwrap();
-            data[y * self.width + x] = value;
-
-            // Track this as the last write
-            let mut last = self.last_write.lock().unwrap();
-            last.x = x;
-            last.y = y;
-            last.material_id = value;
-            last.written = true;
-        }
-    }
-
-    fn get(&self, x: usize, y: usize) -> u32 {
-        if x < self.width && y < self.height {
-            let data = self.data.lock().unwrap();
-            data[y * self.width + x]
-        } else {
-            0
-        }
-    }
-
-    fn copy_to_buffer(&self, buffer: &mut VoxelBuffer2D) {
-        let data = self.data.lock().unwrap();
-        for y in 0..self.height.min(buffer.height) {
-            for x in 0..self.width.min(buffer.width) {
-                buffer.set(x, y, data[y * self.width + x]);
-            }
-        }
-    }
-
-    fn clear(&self) {
-        let mut data = self.data.lock().unwrap();
-        data.fill(0);
-        let mut last = self.last_write.lock().unwrap();
-        *last = LastWrite::default();
-        let mut pending = self.pending_steps.lock().unwrap();
-        pending.clear();
-    }
-
-    /// Take the last write info, clearing the written flag.
-    fn take_last_write(&self) -> Option<(usize, usize, u32)> {
-        let mut last = self.last_write.lock().unwrap();
-        if last.written {
-            last.written = false;
-            Some((last.x, last.y, last.material_id))
-        } else {
-            None
-        }
-    }
-
-    /// Emit a step info (called from Lua via GeneratorContext).
-    fn emit_step(&self, info: PendingStepInfo) {
-        let mut pending = self.pending_steps.lock().unwrap();
-        pending.push(info);
-    }
-
-    /// Take all pending step infos.
-    fn take_pending_steps(&self) -> Vec<PendingStepInfo> {
-        let mut pending = self.pending_steps.lock().unwrap();
-        std::mem::take(&mut *pending)
-    }
-}
-
 /// Context passed to Lua generator methods.
+/// Now uses VoxelBuffer directly instead of SharedBuffer.
 struct GeneratorContext {
-    buffer: SharedBuffer,
+    buffer: VoxelBuffer,
     palette: Vec<u32>,
     /// Random seed for deterministic generation.
     seed: u64,
@@ -233,8 +123,8 @@ struct GeneratorContext {
 
 impl UserData for GeneratorContext {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("width", |_, this| Ok(this.buffer.width));
-        fields.add_field_method_get("height", |_, this| Ok(this.buffer.height));
+        fields.add_field_method_get("width", |_, this| Ok(this.buffer.width()));
+        fields.add_field_method_get("height", |_, this| Ok(this.buffer.height()));
         fields.add_field_method_get("seed", |_, this| Ok(this.seed));
         fields.add_field_method_get("palette", |lua, this| {
             // Convert palette to Lua table (1-indexed)
@@ -248,12 +138,12 @@ impl UserData for GeneratorContext {
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("set_voxel", |_, this, (x, y, mat): (usize, usize, u32)| {
-            this.buffer.set(x, y, mat);
+            this.buffer.set_2d(x, y, mat);
             Ok(())
         });
 
         methods.add_method("get_voxel", |_, this, (x, y): (usize, usize)| {
-            Ok(this.buffer.get(x, y))
+            Ok(this.buffer.get_2d(x, y))
         });
 
         // Get material ID for an MJ palette character.
@@ -296,27 +186,13 @@ impl UserData for GeneratorContext {
                     .map(|(i, &ch)| this.mj_char_map.get(&ch).copied().unwrap_or(i as u32 + 1))
                     .collect();
 
-                // Batch copy with translation
-                let mut data = this.buffer.data.lock().unwrap();
-                let mx = width.min(this.buffer.width);
-                let my = height.min(this.buffer.height);
-                for y in 0..my {
-                    for x in 0..mx {
-                        let val = grid_data[y * width + x] as usize;
-                        let mat_id = value_to_mat.get(val).copied().unwrap_or(0);
-                        data[y * this.buffer.width + x] = mat_id;
-                    }
-                }
+                // Use VoxelBuffer's batch copy method
+                this.buffer
+                    .copy_from_mj_grid(&grid_data, width, height, &value_to_mat);
                 Ok(())
             },
         );
     }
-}
-
-/// Resource holding the generator's shared buffer.
-#[derive(Resource)]
-pub struct GeneratorBuffer {
-    pub(super) buffer: SharedBuffer,
 }
 
 /// Resource holding the file watcher.
@@ -329,14 +205,6 @@ struct GeneratorWatcher {
 fn setup_generator(world: &mut World) {
     let config = world.resource::<LuaGeneratorConfig>();
     let path = config.path.clone();
-
-    // Create shared buffer matching the VoxelBuffer2D size
-    let voxel_buffer = world.resource::<VoxelBuffer2D>();
-    let shared_buffer = SharedBuffer::new(voxel_buffer.width, voxel_buffer.height);
-
-    world.insert_resource(GeneratorBuffer {
-        buffer: shared_buffer,
-    });
 
     // Create Lua state and register MarkovJunior API
     let lua = Lua::new();
@@ -618,7 +486,7 @@ fn reload_generator(
     mut reload_flag: ResMut<GeneratorReloadFlag>,
     mut state: NonSendMut<LuaGeneratorState>,
     mut playback: ResMut<PlaybackState>,
-    gen_buffer: Res<GeneratorBuffer>,
+    voxel_buffer: Res<VoxelBuffer>,
     mut active_generator: NonSendMut<ActiveGenerator>,
 ) {
     if !reload_flag.needs_reload {
@@ -658,7 +526,7 @@ fn reload_generator(
 
     // Restart playback and clear buffer (keeps playing if it was playing)
     playback.restart();
-    gen_buffer.buffer.clear();
+    voxel_buffer.clear();
 
     info!("Generator reloaded from {}", config.path);
 }
@@ -668,8 +536,7 @@ fn run_generator_step(
     mut state: NonSendMut<LuaGeneratorState>,
     mut playback: ResMut<PlaybackState>,
     mut palette: ResMut<MaterialPalette>,
-    gen_buffer: Res<GeneratorBuffer>,
-    mut voxel_buffer: ResMut<VoxelBuffer2D>,
+    voxel_buffer: Res<VoxelBuffer>,
     mut current_step: ResMut<CurrentStepInfo>,
     mut listeners: ResMut<GeneratorListeners>,
     mut step_registry: ResMut<StepInfoRegistry>,
@@ -689,9 +556,9 @@ fn run_generator_step(
     // Build MJ character map from palette
     let mj_char_map = build_mj_char_map(&palette);
 
-    // Create context for Lua
+    // Create context for Lua - VoxelBuffer is cloned (cheap Arc clone)
     let ctx = GeneratorContext {
-        buffer: gen_buffer.buffer.clone(),
+        buffer: voxel_buffer.clone(),
         palette: palette.active.clone(),
         seed,
         mj_char_map: mj_char_map.clone(),
@@ -723,14 +590,14 @@ fn run_generator_step(
             info!("Generator initialized in recording mode - using step-by-step playback");
         } else {
             // Not recording: run generator to completion immediately for initial display
-            let max_steps = ctx.buffer.width * ctx.buffer.height;
+            let max_steps = ctx.buffer.width() * ctx.buffer.height();
             for _ in 0..max_steps {
                 let generator = state.generator.as_ref().unwrap();
                 match call_generator_step(&state.lua, generator, &ctx) {
                     Ok(done) => {
                         // Process any pending step infos from Lua
                         process_pending_steps(
-                            &gen_buffer.buffer,
+                            &voxel_buffer,
                             &mut step_registry,
                             &mut current_step,
                             &mut listeners,
@@ -738,7 +605,7 @@ fn run_generator_step(
                         );
 
                         // Also handle legacy last_write for backwards compatibility
-                        if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                        if let Some((x, y, material_id)) = voxel_buffer.take_last_write() {
                             let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                             current_step.update(info.clone());
                             listeners.notify_step(&info);
@@ -775,28 +642,28 @@ fn run_generator_step(
             }
         }
         playback.reset();
-        gen_buffer.buffer.clear();
+        voxel_buffer.clear();
         current_step.clear();
         step_registry.clear();
         listeners.notify_reset();
 
         // Recreate context with cleared buffer (reuse mj_char_map)
         let ctx = GeneratorContext {
-            buffer: gen_buffer.buffer.clone(),
+            buffer: voxel_buffer.clone(),
             palette: palette.active.clone(),
             seed,
             mj_char_map: mj_char_map.clone(),
         };
 
         // Run generator to completion immediately
-        let max_steps = ctx.buffer.width * ctx.buffer.height;
+        let max_steps = ctx.buffer.width() * ctx.buffer.height();
         for _ in 0..max_steps {
             let generator = state.generator.as_ref().unwrap();
             match call_generator_step(&state.lua, generator, &ctx) {
                 Ok(done) => {
                     // Process any pending step infos from Lua
                     process_pending_steps(
-                        &gen_buffer.buffer,
+                        &voxel_buffer,
                         &mut step_registry,
                         &mut current_step,
                         &mut listeners,
@@ -804,7 +671,7 @@ fn run_generator_step(
                     );
 
                     // Also handle legacy last_write for backwards compatibility
-                    if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                    if let Some((x, y, material_id)) = voxel_buffer.take_last_write() {
                         let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                         current_step.update(info.clone());
                         listeners.notify_step(&info);
@@ -830,8 +697,7 @@ fn run_generator_step(
     }
 
     if playback.completed || !playback.playing {
-        // Still copy buffer even when not playing (for initial state)
-        gen_buffer.buffer.copy_to_buffer(&mut voxel_buffer);
+        // No copy needed - VoxelBuffer is the authoritative source
         return;
     }
 
@@ -847,7 +713,7 @@ fn run_generator_step(
             Ok(done) => {
                 // Process any pending step infos from Lua
                 process_pending_steps(
-                    &gen_buffer.buffer,
+                    &voxel_buffer,
                     &mut step_registry,
                     &mut current_step,
                     &mut listeners,
@@ -855,7 +721,7 @@ fn run_generator_step(
                 );
 
                 // Also handle legacy last_write for backwards compatibility
-                if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                if let Some((x, y, material_id)) = voxel_buffer.take_last_write() {
                     let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                     current_step.update(info.clone());
                     listeners.notify_step(&info);
@@ -875,13 +741,12 @@ fn run_generator_step(
         }
     }
 
-    // Copy shared buffer to voxel buffer
-    gen_buffer.buffer.copy_to_buffer(&mut voxel_buffer);
+    // No copy needed - voxel_buffer IS the authoritative source now
 
     // Capture frame if recording is active
     if let (Some(ref mut capture), Some(ref manager)) = (&mut frame_capture, &surface_manager) {
         if capture.is_recording() {
-            let ctx = RenderContext::new(&voxel_buffer, &palette);
+            let ctx = RenderContext::new(voxel_buffer.as_ref(), &palette);
             let pixels = manager.render_composite(&ctx);
             capture.capture_frame(&pixels);
         }
@@ -940,7 +805,7 @@ fn build_mj_char_map(
 }
 
 fn process_pending_steps(
-    buffer: &SharedBuffer,
+    buffer: &VoxelBuffer,
     step_registry: &mut StepInfoRegistry,
     current_step: &mut CurrentStepInfo,
     listeners: &mut GeneratorListeners,
@@ -972,17 +837,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_shared_buffer() {
-        let buffer = SharedBuffer::new(4, 4);
-        buffer.set(1, 2, 5);
-        assert_eq!(buffer.get(1, 2), 5);
-        assert_eq!(buffer.get(0, 0), 0);
+    fn test_voxel_buffer() {
+        let buffer = VoxelBuffer::new_2d(4, 4);
+        buffer.set_2d(1, 2, 5);
+        assert_eq!(buffer.get_2d(1, 2), 5);
+        assert_eq!(buffer.get_2d(0, 0), 0);
     }
 
     #[test]
     fn test_generator_context() {
         let lua = Lua::new();
-        let buffer = SharedBuffer::new(32, 32);
+        let buffer = VoxelBuffer::new_2d(32, 32);
         let ctx = GeneratorContext {
             buffer: buffer.clone(),
             palette: vec![1, 2, 3],
