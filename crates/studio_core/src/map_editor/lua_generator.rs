@@ -18,6 +18,7 @@
 //! - `ctx:set_voxel(x, y, material_id)` - Write to buffer
 //! - `ctx:get_voxel(x, y) -> material_id` - Read from buffer
 
+use super::generator::{CurrentStepInfo, StepInfo};
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
 use super::voxel_buffer_2d::VoxelBuffer2D;
@@ -51,6 +52,7 @@ impl Plugin for LuaGeneratorPlugin {
 
         app.insert_resource(LuaGeneratorConfig { path: path.clone() });
         app.insert_resource(GeneratorReloadFlag { needs_reload: true });
+        app.insert_resource(CurrentStepInfo::default());
 
         // The actual Lua state is non-send (mlua::Lua is not Send)
         app.add_systems(Startup, setup_generator);
@@ -80,11 +82,22 @@ struct LuaGeneratorState {
     initialized: bool,
 }
 
+/// Information about the last voxel write for step tracking.
+#[derive(Clone, Default)]
+struct LastWrite {
+    x: usize,
+    y: usize,
+    material_id: u32,
+    written: bool,
+}
+
 /// Shared buffer for Lua to write to.
 /// We use Arc<Mutex> so the UserData can access it.
+/// Also tracks the last write for step info generation.
 #[derive(Clone)]
 struct SharedBuffer {
     data: Arc<Mutex<Vec<u32>>>,
+    last_write: Arc<Mutex<LastWrite>>,
     width: usize,
     height: usize,
 }
@@ -93,6 +106,7 @@ impl SharedBuffer {
     fn new(width: usize, height: usize) -> Self {
         Self {
             data: Arc::new(Mutex::new(vec![0; width * height])),
+            last_write: Arc::new(Mutex::new(LastWrite::default())),
             width,
             height,
         }
@@ -102,6 +116,13 @@ impl SharedBuffer {
         if x < self.width && y < self.height {
             let mut data = self.data.lock().unwrap();
             data[y * self.width + x] = value;
+
+            // Track this as the last write
+            let mut last = self.last_write.lock().unwrap();
+            last.x = x;
+            last.y = y;
+            last.material_id = value;
+            last.written = true;
         }
     }
 
@@ -126,6 +147,19 @@ impl SharedBuffer {
     fn clear(&self) {
         let mut data = self.data.lock().unwrap();
         data.fill(0);
+        let mut last = self.last_write.lock().unwrap();
+        *last = LastWrite::default();
+    }
+
+    /// Take the last write info, clearing the written flag.
+    fn take_last_write(&self) -> Option<(usize, usize, u32)> {
+        let mut last = self.last_write.lock().unwrap();
+        if last.written {
+            last.written = false;
+            Some((last.x, last.y, last.material_id))
+        } else {
+            None
+        }
     }
 }
 
@@ -298,6 +332,7 @@ fn run_generator_step(
     mut palette: ResMut<MaterialPalette>,
     gen_buffer: Res<GeneratorBuffer>,
     mut voxel_buffer: ResMut<VoxelBuffer2D>,
+    mut current_step: ResMut<CurrentStepInfo>,
     time: Res<Time>,
 ) {
     // Check if generator is loaded
@@ -322,6 +357,7 @@ fn run_generator_step(
             }
         }
         state.initialized = true;
+        current_step.clear();
 
         // Run generator to completion immediately for initial display
         let max_steps = ctx.buffer.width * ctx.buffer.height;
@@ -329,6 +365,16 @@ fn run_generator_step(
             let generator = state.generator.as_ref().unwrap();
             match call_generator_step(&state.lua, generator, &ctx) {
                 Ok(done) => {
+                    // Emit step info
+                    if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                        current_step.update(StepInfo::new(
+                            playback.step_index,
+                            x,
+                            y,
+                            material_id,
+                            done,
+                        ));
+                    }
                     playback.step();
                     if done {
                         playback.complete();
@@ -361,6 +407,7 @@ fn run_generator_step(
         }
         playback.reset();
         gen_buffer.buffer.clear();
+        current_step.clear();
 
         // Recreate context with cleared buffer
         let ctx = GeneratorContext {
@@ -374,6 +421,16 @@ fn run_generator_step(
             let generator = state.generator.as_ref().unwrap();
             match call_generator_step(&state.lua, generator, &ctx) {
                 Ok(done) => {
+                    // Emit step info
+                    if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                        current_step.update(StepInfo::new(
+                            playback.step_index,
+                            x,
+                            y,
+                            material_id,
+                            done,
+                        ));
+                    }
                     playback.step();
                     if done {
                         playback.complete();
@@ -410,6 +467,16 @@ fn run_generator_step(
         let generator = state.generator.as_ref().unwrap();
         match call_generator_step(&state.lua, generator, &ctx) {
             Ok(done) => {
+                // Emit step info
+                if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                    current_step.update(StepInfo::new(
+                        playback.step_index,
+                        x,
+                        y,
+                        material_id,
+                        done,
+                    ));
+                }
                 playback.step();
                 if done {
                     playback.complete();

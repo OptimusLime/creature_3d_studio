@@ -28,10 +28,12 @@ use super::{
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
+    lua_renderer::LuaRendererPlugin,
+    lua_visualizer::LuaVisualizerPlugin,
     material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
-    render::{BaseRenderLayer, RenderLayerStack},
+    render::RenderLayerStack,
     voxel_buffer_2d::VoxelBuffer2D,
 };
 use bevy::asset::RenderAssetUsages;
@@ -255,10 +257,15 @@ impl MapEditor2DApp {
         });
         app.insert_resource(SearchState::default());
 
-        // Render layer stack with base layer
-        let mut render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
-        render_stack.add_layer(Box::new(BaseRenderLayer::new()));
+        // Render layer stack (LuaRendererPlugin will add the base layer)
+        let render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
         app.insert_resource(render_stack);
+
+        // Lua renderer plugin (hot-reload for renderers)
+        app.add_plugins(LuaRendererPlugin::default());
+
+        // Lua visualizer plugin (hot-reload for visualizers)
+        app.add_plugins(LuaVisualizerPlugin::default());
 
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
         // Must be added AFTER VoxelBuffer2D resource is inserted

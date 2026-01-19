@@ -22,6 +22,7 @@
 //! - `POST /mcp/set_renderer` - Set renderer Lua source (triggers hot reload)
 
 use super::asset::{Asset, AssetStore};
+use super::generator::CurrentStepInfo;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
@@ -481,6 +482,7 @@ fn handle_mcp_requests(
     mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
     render_stack: Option<Res<RenderLayerStack>>,
+    current_step: Option<Res<CurrentStepInfo>>,
 ) {
     // Process all pending requests
     loop {
@@ -517,7 +519,9 @@ fn handle_mcp_requests(
             Ok(McpRequest::GetOutput(layers)) => {
                 // Use render stack if available, otherwise fall back to legacy rendering
                 let png_data = if let Some(ref stack) = render_stack {
-                    let ctx = RenderContext::new(&buffer, &palette);
+                    // Get step info if available
+                    let step_info = current_step.as_ref().and_then(|s| s.info.as_ref());
+                    let ctx = RenderContext::with_step_info(&buffer, &palette, step_info);
                     let pixels = match layers {
                         Some(layer_names) => {
                             let names: Vec<&str> = layer_names.iter().map(|s| s.as_str()).collect();

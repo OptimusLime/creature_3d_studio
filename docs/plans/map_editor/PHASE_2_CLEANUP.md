@@ -165,33 +165,29 @@ fn encode_png(pixels: &PixelBuffer) -> Vec<u8>  // New, uses render stack
 
 ---
 
-### 2. LuaRenderLayer Hot Reload Not Integrated
+### 2. ~~LuaRenderLayer Hot Reload Not Integrated~~ ✅ COMPLETED
 
 **Milestone:** M5 (Render Layer System)
 
-**Current State:** `LuaRenderLayer` has `reload()` method but no file watcher integration. The `POST /mcp/set_renderer` writes the file but doesn't trigger reload.
+**Resolution:** Created `LuaRendererPlugin` in `lua_renderer.rs` that:
+- Watches `assets/map_editor/renderers/` directory for changes
+- Reloads `LuaRenderLayer` when any `.lua` file changes
+- Follows same pattern as `LuaGeneratorPlugin`
 
-**Why:** We built the infrastructure but didn't wire up hot reload (file watcher pattern from lua_generator).
-
-**Proposed Change:** Add file watcher for renderer Lua files, similar to `lua_generator.rs`.
-
-**Criticality:** **Medium** - The Lua renderer exists but can't hot reload, which was the M5 goal.
-
-**When to Do:** Should be addressed before M5 is considered fully complete.
+Verified with `scripts/verify_m5_renderer_hotreload.py` - PNG output hash changes when Lua renderer is modified.
 
 ---
 
-### 3. Render Stack Uses Rust BaseRenderLayer, Not Lua
+### 3. ~~Render Stack Uses Rust BaseRenderLayer, Not Lua~~ ✅ COMPLETED
 
 **Milestone:** M5 (Render Layer System)
 
-**Current State:** App initializes with `BaseRenderLayer::new()` (Rust), not `LuaRenderLayer` loading `grid_2d.lua`.
+**Resolution:** Updated `app.rs` to use `LuaRendererPlugin` instead of manually creating `BaseRenderLayer`. The plugin:
+- Creates `LuaRenderLayer` loading `renderers/grid_2d.lua`
+- Sets `needs_reload: true` on startup to trigger initial load
+- Adds file watcher for hot reload
 
-**Why:** We created `LuaRenderLayer` but didn't integrate it into the app startup.
-
-**Proposed Change:** Replace `BaseRenderLayer` with `LuaRenderLayer` loading `renderers/grid_2d.lua`.
-
-**Criticality:** **Medium** - The M5 goal is "I can edit a Lua renderer file and see changes". Currently that's not possible.
+`assets/map_editor/renderers/grid_2d.lua` now contains a working Lua renderer that maps voxels to material colors.
 
 ---
 
@@ -203,8 +199,8 @@ fn encode_png(pixels: &PixelBuffer) -> Vec<u8>  // New, uses render stack
 | Search inconsistency | ✅ Done during M4.5 | Naturally resolved by item #1 |
 | MCP Error variant | Defer | Low criticality |
 | Duplicate PNG code | Defer | Low criticality, works fine |
-| Lua hot reload not integrated | **TODO** | Medium - needed for M5 to be complete |
-| BaseRenderLayer vs LuaRenderLayer | **TODO** | Medium - needed for M5 to be complete |
+| Lua hot reload not integrated | ✅ Done during M5 cleanup | Created `LuaRendererPlugin` with file watcher |
+| BaseRenderLayer vs LuaRenderLayer | ✅ Done during M5 cleanup | App now uses `LuaRendererPlugin` |
 
 ---
 
@@ -213,7 +209,129 @@ fn encode_png(pixels: &PixelBuffer) -> Vec<u8>  // New, uses render stack
 | Criticality | Count | Status |
 |-------------|-------|--------|
 | High | 0 | - |
-| Medium | 3 | 1 Completed (M4.5), 2 TODO (M5) |
+| Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
 | Low | 3 | 1 Completed (M4.5), 2 Deferred |
 
-**M5 Foundation complete.** Core abstractions work. Two medium items remain to fully deliver M5 functionality (Lua hot reload integration).
+**M5 Cleanup complete.** All identified items resolved. M5 functionality verified with `verify_m5_renderer_hotreload.py` script. Proceed to M6.
+
+---
+
+## M6 Audit: Generator Visualizer
+
+### 1. Visualizer Plugin Duplicates Pattern from Renderer Plugin
+
+**Milestone:** M6 (Generator Visualizer)
+
+**Current State:**
+```rust
+// lua_renderer.rs and lua_visualizer.rs have nearly identical patterns:
+// - Config resource
+// - ReloadFlag resource
+// - setup_X system (Startup)
+// - check_X_reload system (Update)
+// - reload_X system (Update)
+```
+
+**Why:** Both plugins follow the same hot-reload pattern with file watching. The code is almost identical.
+
+**Proposed Change:** Extract a generic `HotReloadPlugin<T>` that takes a loader function and path.
+
+**Criticality:** **Low** - Both plugins work correctly. The duplication is ~100 lines but doesn't cause bugs.
+
+**When to Do:** Consider for Phase 3 if we add more hot-reloadable assets.
+
+---
+
+### 2. GeneratorListener Trait Not Used
+
+**Milestone:** M6 (Generator Visualizer)
+
+**Current State:**
+```rust
+// generator/mod.rs defines:
+pub trait GeneratorListener: Send + Sync {
+    fn on_step(&mut self, info: &StepInfo);
+    fn on_reset(&mut self) { /* default */ }
+}
+```
+
+**Why:** The trait was designed for the visualizer to receive step events, but the actual implementation passes step info through `RenderContext` instead. This is simpler and avoids the complexity of managing trait objects.
+
+**Proposed Change:** Either:
+- Remove the trait (we're not using it)
+- Keep it for future use (logging, analytics, debugging tools)
+
+**Criticality:** **Low** - Unused code doesn't cause problems.
+
+**When to Do:** Can be removed if we're confident we won't need it. Keep if future milestones might use listener pattern.
+
+---
+
+### 3. VisualizerState Resource Unused
+
+**Milestone:** M6 (Generator Visualizer)
+
+**Current State:**
+```rust
+// lua_visualizer.rs creates but doesn't use:
+#[derive(Resource)]
+pub struct VisualizerState {
+    pub visualizer: LuaVisualizer,
+}
+```
+
+**Why:** Originally planned for the visualizer to be updated via the ECS resource, but the actual implementation recreates the visualizer in `RenderLayerStack` on reload.
+
+**Proposed Change:** Remove `VisualizerState` or use it consistently.
+
+**Criticality:** **Low** - Unused resource, doesn't affect functionality.
+
+**When to Do:** Can be removed when cleaning up M6 code.
+
+---
+
+## Cleanup Decision Log
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| MaterialPalette → InMemoryStore | ✅ Done during M4.5 | Consistency with Asset trait pattern |
+| Search inconsistency | ✅ Done during M4.5 | Naturally resolved by item #1 |
+| MCP Error variant | Defer | Low criticality |
+| Duplicate PNG code | Defer | Low criticality, works fine |
+| Lua hot reload not integrated | ✅ Done during M5 cleanup | Created `LuaRendererPlugin` with file watcher |
+| BaseRenderLayer vs LuaRenderLayer | ✅ Done during M5 cleanup | App now uses `LuaRendererPlugin` |
+| Hot-reload plugin duplication | Defer | Low criticality, consider for Phase 3 |
+| GeneratorListener unused | Defer | Keep for potential future use |
+| VisualizerState unused | Defer | Low criticality |
+
+---
+
+## Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
+| Low | 6 | 1 Completed (M4.5), 5 Deferred |
+
+**M6 Cleanup complete.** No blocking items. M6 functionality verified with `verify_m6_visualizer.py` script.
+
+---
+
+## Phase 2 Summary
+
+All four milestones completed:
+- **M4.5:** Asset Trait + Search ✅
+- **M4.75:** Generator Runs on Launch + MCP Set Endpoints ✅
+- **M5:** Lua Renderer with Layer System ✅
+- **M6:** Generator Visualizer ✅
+
+**Key Foundations Built:**
+1. `Asset` + `AssetStore<T>` - unified asset management with search
+2. `RenderLayer` trait + `RenderLayerStack` - compositable rendering
+3. `StepInfo` + `CurrentStepInfo` - observable generation progress
+4. Hot-reload pattern for Lua assets (renderers, visualizers)
+
+**Deferred Cleanup Items:**
+- 5 low-criticality items deferred to Phase 3
+- No blocking technical debt identified

@@ -29,9 +29,12 @@
 pub mod app;
 pub mod asset;
 pub mod checkerboard;
+pub mod generator;
 pub mod imgui_screenshot;
 pub mod lua_generator;
 pub mod lua_materials;
+pub mod lua_renderer;
+pub mod lua_visualizer;
 pub mod material;
 pub mod mcp_server;
 pub mod playback;
@@ -41,16 +44,19 @@ pub mod voxel_buffer_2d;
 pub use app::MapEditor2DApp;
 pub use asset::{Asset, AssetStore, InMemoryStore};
 pub use checkerboard::CheckerboardState;
+pub use generator::{CurrentStepInfo, GeneratorListener, StepInfo};
 pub use imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin};
 pub use lua_generator::{GeneratorReloadFlag, LuaGeneratorPlugin, GENERATOR_LUA_PATH};
 pub use lua_materials::{
     LuaMaterialsPlugin, MaterialsLoadSet, MaterialsReloadFlag, MATERIALS_LUA_PATH,
 };
+pub use lua_renderer::{LuaRendererPlugin, RendererReloadFlag};
+pub use lua_visualizer::{LuaVisualizerPlugin, VisualizerReloadFlag, VisualizerState};
 pub use material::{Material, MaterialPalette};
 pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
 pub use render::{
-    BaseRenderLayer, LuaRenderLayer, PixelBuffer, RenderContext, RenderLayer, RenderLayerStack,
-    RENDERER_LUA_PATH,
+    BaseRenderLayer, LuaRenderLayer, LuaVisualizer, PixelBuffer, RenderContext, RenderLayer,
+    RenderLayerStack, RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
 pub use voxel_buffer_2d::VoxelBuffer2D;

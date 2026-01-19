@@ -24,11 +24,14 @@
 mod base;
 mod lua_layer;
 mod pixel_buffer;
+mod visualizer;
 
 pub use base::BaseRenderLayer;
 pub use lua_layer::{LuaRenderLayer, RENDERER_LUA_PATH};
 pub use pixel_buffer::PixelBuffer;
+pub use visualizer::{LuaVisualizer, VISUALIZER_LUA_PATH};
 
+use super::generator::StepInfo;
 use super::material::MaterialPalette;
 use super::voxel_buffer_2d::VoxelBuffer2D;
 
@@ -58,12 +61,31 @@ pub struct RenderContext<'a> {
     pub buffer: &'a VoxelBuffer2D,
     /// Material palette for color lookups.
     pub palette: &'a MaterialPalette,
+    /// Current step info (if generation is in progress).
+    pub step_info: Option<&'a StepInfo>,
 }
 
 impl<'a> RenderContext<'a> {
     /// Create a new render context.
     pub fn new(buffer: &'a VoxelBuffer2D, palette: &'a MaterialPalette) -> Self {
-        Self { buffer, palette }
+        Self {
+            buffer,
+            palette,
+            step_info: None,
+        }
+    }
+
+    /// Create a new render context with step info.
+    pub fn with_step_info(
+        buffer: &'a VoxelBuffer2D,
+        palette: &'a MaterialPalette,
+        step_info: Option<&'a StepInfo>,
+    ) -> Self {
+        Self {
+            buffer,
+            palette,
+            step_info,
+        }
     }
 
     /// Get the width of the buffer.
@@ -165,6 +187,21 @@ impl RenderLayerStack {
     /// Remove all layers.
     pub fn clear(&mut self) {
         self.layers.clear();
+    }
+
+    /// Replace a layer by name, or add it if not found.
+    pub fn replace_layer(&mut self, layer: Box<dyn RenderLayer>) {
+        let name = layer.name();
+        if let Some(pos) = self.layers.iter().position(|l| l.name() == name) {
+            self.layers[pos] = layer;
+        } else {
+            self.layers.push(layer);
+        }
+    }
+
+    /// Remove a layer by name.
+    pub fn remove_layer(&mut self, name: &str) {
+        self.layers.retain(|l| l.name() != name);
     }
 }
 

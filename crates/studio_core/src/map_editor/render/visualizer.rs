@@ -1,21 +1,26 @@
-//! Lua-based render layer with hot reload support.
+//! Lua-based generator visualizer with hot reload support.
 //!
-//! Allows users to define custom rendering logic in Lua scripts.
-//! The Lua script receives a render context and pixel buffer to draw into.
+//! The visualizer renders an overlay showing the current generation state
+//! (e.g., highlighting the most recently filled cell). Step info is passed
+//! through the render context.
 //!
 //! # Lua Protocol
 //!
 //! ```lua
-//! local Layer = {}
-//! function Layer:render(ctx, pixels)
-//!   -- ctx.width, ctx.height
-//!   -- ctx:get_voxel(x, y) -> material_id
-//!   -- ctx:get_material_color(id) -> r, g, b or nil
-//!   -- pixels:set_pixel(x, y, r, g, b, a)
-//!   -- pixels:get_pixel(x, y) -> r, g, b, a
-//!   -- pixels:blend_pixel(x, y, r, g, b, a)
+//! local Visualizer = {}
+//!
+//! function Visualizer:render(ctx, pixels)
+//!   -- ctx.step_x, ctx.step_y - current step position (nil if none)
+//!   -- ctx.step_material_id - material placed
+//!   -- ctx.step_completed - whether generation is done
+//!   -- ctx:has_step_info() - returns true if step info is available
+//!   
+//!   if ctx:has_step_info() then
+//!     pixels:blend_pixel(ctx.step_x, ctx.step_y, 255, 255, 0, 200)
+//!   end
 //! end
-//! return Layer
+//!
+//! return Visualizer
 //! ```
 
 use super::{PixelBuffer, RenderContext, RenderLayer};
@@ -24,20 +29,20 @@ use mlua::{Function, Lua, Table, UserData, UserDataMethods};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Default path for the base Lua renderer.
-pub const RENDERER_LUA_PATH: &str = "assets/map_editor/renderers/grid_2d.lua";
+/// Default path for the visualizer Lua script.
+pub const VISUALIZER_LUA_PATH: &str = "assets/map_editor/visualizers/step_highlight.lua";
 
-/// A render layer implemented in Lua.
-pub struct LuaRenderLayer {
+/// A visualizer implemented in Lua that renders overlays based on step info.
+pub struct LuaVisualizer {
     name: String,
     lua: Lua,
-    layer_table: Option<Table>,
+    visualizer_table: Option<Table>,
     enabled: bool,
     path: PathBuf,
 }
 
-impl LuaRenderLayer {
-    /// Create a new Lua render layer from a script path.
+impl LuaVisualizer {
+    /// Create a new Lua visualizer from a script path.
     pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Self {
         let path = path.into();
         let name = name.into();
@@ -46,7 +51,7 @@ impl LuaRenderLayer {
         Self {
             name,
             lua,
-            layer_table: None,
+            visualizer_table: None,
             enabled: true,
             path,
         }
@@ -63,18 +68,18 @@ impl LuaRenderLayer {
             .eval()
             .map_err(|e| format!("Failed to load Lua script: {:?}", e))?;
 
-        self.layer_table = Some(table);
+        self.visualizer_table = Some(table);
         info!(
-            "LuaRenderLayer '{}' reloaded from {}",
+            "LuaVisualizer '{}' reloaded from {}",
             self.name,
             self.path.display()
         );
         Ok(())
     }
 
-    /// Check if the layer has been loaded.
+    /// Check if the visualizer has been loaded.
     pub fn is_loaded(&self) -> bool {
-        self.layer_table.is_some()
+        self.visualizer_table.is_some()
     }
 
     /// Set enabled state.
@@ -92,7 +97,6 @@ impl LuaRenderLayer {
 struct LuaRenderContext {
     width: usize,
     height: usize,
-    // We store the voxel and material data as copies since RenderContext borrows
     voxels: Vec<u32>,
     material_colors: Vec<Option<[f32; 3]>>,
     // Step info for visualizers
@@ -104,7 +108,6 @@ struct LuaRenderContext {
 
 impl LuaRenderContext {
     fn from_context(ctx: &RenderContext) -> Self {
-        // Copy voxel data
         let mut voxels = Vec::with_capacity(ctx.width() * ctx.height());
         for y in 0..ctx.height() {
             for x in 0..ctx.width() {
@@ -112,7 +115,6 @@ impl LuaRenderContext {
             }
         }
 
-        // Build material color lookup (for IDs 0-255, sufficient for now)
         let mut material_colors = Vec::with_capacity(256);
         for id in 0..256u32 {
             material_colors.push(ctx.get_material_color(id));
@@ -234,7 +236,7 @@ impl UserData for LuaPixelBuffer {
     }
 }
 
-impl RenderLayer for LuaRenderLayer {
+impl RenderLayer for LuaVisualizer {
     fn name(&self) -> &str {
         &self.name
     }
@@ -244,33 +246,27 @@ impl RenderLayer for LuaRenderLayer {
     }
 
     fn render(&self, ctx: &RenderContext, pixels: &mut PixelBuffer) {
-        let Some(ref layer_table) = self.layer_table else {
+        let Some(ref table) = self.visualizer_table else {
             return;
         };
 
         // Get the render function
-        let render_fn: Function = match layer_table.get("render") {
+        let render_fn: Function = match table.get("render") {
             Ok(f) => f,
             Err(e) => {
-                error!(
-                    "LuaRenderLayer '{}': no render function: {:?}",
-                    self.name, e
-                );
+                error!("LuaVisualizer '{}': no render function: {:?}", self.name, e);
                 return;
             }
         };
 
         // Create Lua-compatible wrappers
         let lua_ctx = LuaRenderContext::from_context(ctx);
-
-        // We need to share the pixel buffer with Lua
-        // Create a temporary copy, let Lua modify it, then copy back
         let shared_pixels = Arc::new(Mutex::new(pixels.clone()));
         let lua_pixels = LuaPixelBuffer::new(Arc::clone(&shared_pixels));
 
         // Call render(self, ctx, pixels)
-        if let Err(e) = render_fn.call::<()>((layer_table.clone(), lua_ctx, lua_pixels)) {
-            error!("LuaRenderLayer '{}': render error: {:?}", self.name, e);
+        if let Err(e) = render_fn.call::<()>((table.clone(), lua_ctx, lua_pixels)) {
+            error!("LuaVisualizer '{}': render error: {:?}", self.name, e);
             return;
         }
 
@@ -282,38 +278,20 @@ impl RenderLayer for LuaRenderLayer {
     }
 }
 
-// Note: LuaRenderLayer is not Send+Sync because Lua is not thread-safe.
-// For Bevy integration, we'll need to handle this specially (NonSend resource).
-// For now, we implement the trait but the actual usage will be careful.
-unsafe impl Send for LuaRenderLayer {}
-unsafe impl Sync for LuaRenderLayer {}
+// Note: LuaVisualizer is not Send+Sync because Lua is not thread-safe.
+// For Bevy integration, we need to handle this carefully.
+unsafe impl Send for LuaVisualizer {}
+unsafe impl Sync for LuaVisualizer {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_lua_render_context_creation() {
-        use crate::map_editor::material::{Material, MaterialPalette};
-        use crate::map_editor::voxel_buffer_2d::VoxelBuffer2D;
-
-        let mut buffer = VoxelBuffer2D::new(2, 2);
-        buffer.set(0, 0, 1);
-        buffer.set(1, 1, 2);
-
-        let palette = MaterialPalette::new(vec![
-            Material::new(1, "stone", [0.5, 0.5, 0.5]),
-            Material::new(2, "dirt", [0.6, 0.4, 0.2]),
-        ]);
-
-        let ctx = RenderContext::new(&buffer, &palette);
-        let lua_ctx = LuaRenderContext::from_context(&ctx);
-
-        assert_eq!(lua_ctx.width, 2);
-        assert_eq!(lua_ctx.height, 2);
-        assert_eq!(lua_ctx.get_voxel(0, 0), 1);
-        assert_eq!(lua_ctx.get_voxel(1, 1), 2);
-        assert!(lua_ctx.get_material_color(1).is_some());
-        assert!(lua_ctx.get_material_color(99).is_none());
+    fn test_lua_visualizer_creation() {
+        let vis = LuaVisualizer::new("test", "test.lua");
+        assert_eq!(vis.name(), "test");
+        assert!(!vis.is_loaded());
+        assert!(vis.enabled());
     }
 }
