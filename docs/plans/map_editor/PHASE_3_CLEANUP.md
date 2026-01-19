@@ -423,8 +423,111 @@ The `rule_name` field is not populated and internal Markov Jr. structure is opaq
 **This is addressed in Phase 3.5 (Markov Jr. Introspection).** See [PHASE_3_5_SPEC.md](./PHASE_3_5_SPEC.md).
 
 Phase 3.5 adds:
+- M10.4: Multi-surface rendering foundation + video export
 - M10.5: `Node::structure()` for introspecting the Markov node tree
 - M10.6: Path tracking in `ExecutionContext` for per-node step info
 - M10.7: Budget-controlled stepping for fine-grained control
 - M10.8: Dedicated visualizer that shows the node tree and active rules
+
+---
+
+## M10.4 Audit: Multi-Surface Rendering Foundation
+
+### 1. Multi-Surface Rendering Infrastructure - IMPLEMENTED
+
+**Milestone:** M10.4 (Multi-Surface Rendering Foundation)
+
+**Implementation:**
+1. Created `RenderSurface` struct with buffer and layer stack (`render/surface.rs`)
+2. Created `RenderSurfaceManager` resource to manage multiple surfaces
+3. Created `SurfaceLayout` enum for compositing (Single, Horizontal, Vertical, Grid)
+4. Created `FrameCapture` struct for video export (`render/frame_capture.rs`)
+5. Updated MCP server with new endpoints:
+   - `GET /mcp/surfaces` - List all surfaces and layout
+   - `GET /mcp/get_output?surface=grid` - Render specific surface
+   - `POST /mcp/start_recording` - Start frame capture
+   - `POST /mcp/stop_recording` - Stop frame capture
+   - `POST /mcp/export_video` - Export to video file
+
+**Files Created:**
+- `crates/studio_core/src/map_editor/render/surface.rs`
+- `crates/studio_core/src/map_editor/render/frame_capture.rs`
+
+**Files Modified:**
+- `crates/studio_core/src/map_editor/render/mod.rs` - Added exports
+- `crates/studio_core/src/map_editor/mod.rs` - Added exports
+- `crates/studio_core/src/map_editor/mcp_server.rs` - Added new endpoints
+- `crates/studio_core/src/map_editor/app.rs` - Added resources
+
+**Criticality:** **N/A** - New feature, not cleanup item.
+
+---
+
+### 2. Surface Manager vs Render Stack - Design Decision
+
+**Milestone:** M10.4 (Multi-Surface Rendering Foundation)
+
+**Current State:**
+- Both `RenderLayerStack` and `RenderSurfaceManager` exist
+- MCP `get_output` prefers `RenderSurfaceManager` if available, falls back to `RenderLayerStack`
+- App initializes both: `RenderLayerStack` for backward compatibility, `RenderSurfaceManager` for new features
+
+**Design Decision:**
+- Keep both during transition period
+- `RenderLayerStack` will be deprecated in favor of `RenderSurfaceManager` once all layers migrate to surfaces
+- Each surface in `RenderSurfaceManager` has its own layer stack
+
+**Criticality:** **Low** - Works fine, can unify later.
+
+**When to Do:** During Phase 4 or when adding second surface (mj_structure).
+
+---
+
+### 3. FrameCapture Not Integrated with Generation Loop
+
+**Milestone:** M10.4 (Multi-Surface Rendering Foundation)
+
+**Current State:**
+- `FrameCapture` is a resource that can be controlled via MCP
+- Frames must be captured manually via API calls
+- No automatic capture on each generation step
+
+**Proposed Enhancement:**
+- Add system that automatically captures frame after each generation step when recording
+- Integrate with playback state for synchronized recording
+
+**Criticality:** **Low** - API works, automatic capture is nice-to-have.
+
+**When to Do:** When implementing video export workflow in M10.8.
+
+---
+
+## Cleanup Decision Log (Updated)
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| Lua-based instead of Rust adapter (M8) | Accepted | Simpler, more flexible, follows existing patterns |
+| Generator type detection (M8) | Defer | Low criticality, complexity not worth it |
+| StepInfo extended fields (M8) | **Resolved** | MjModel now emits affected_cells; rule_name not feasible with current architecture |
+| MCP Error variant (P2) | Defer | Low criticality |
+| Duplicate PNG code (P2) | Defer | Legacy fallback, works fine |
+| Structure field in MCP (M8.5) | **Resolved in M8.75** | Now returns full structure tree |
+| MjModel step info emit (M8.5/M8.75) | **Resolved** | MjLuaModel::step() now emits step info |
+| Generator base class Lua-only (M8.5) | Keep | Works fine, Rust backing for structure only |
+| Full Rust generator execution (M8.75) | Defer | Low priority, Lua execution works well |
+| Surface Manager vs Render Stack (M10.4) | Defer | Keep both during transition, unify later |
+| FrameCapture auto-capture (M10.4) | Defer | API works, automatic is nice-to-have |
+
+---
+
+## Summary Statistics (Phase 3.5)
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 0 | - |
+| Low | 5 | Deferred (generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture) |
+| Resolved | 3 | Structure field, MjModel step info, StepInfo extended fields |
+
+**M10.4 Complete.** Multi-surface rendering foundation in place. Ready for M10.5.
 

@@ -22,13 +22,17 @@
 //! ```
 
 mod base;
+mod frame_capture;
 mod lua_layer;
 mod pixel_buffer;
+mod surface;
 mod visualizer;
 
 pub use base::BaseRenderLayer;
+pub use frame_capture::FrameCapture;
 pub use lua_layer::{LuaRenderLayer, RENDERER_LUA_PATH};
 pub use pixel_buffer::PixelBuffer;
+pub use surface::{RenderSurface, RenderSurfaceManager, SurfaceInfo, SurfaceLayout};
 pub use visualizer::{LuaVisualizer, SharedVisualizer, VISUALIZER_LUA_PATH};
 
 use super::material::MaterialPalette;

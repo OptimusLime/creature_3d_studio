@@ -3,20 +3,23 @@
 //! Provides a simple REST API on port 8088 for:
 //! - Listing materials
 //! - Creating new materials  
-//! - Getting PNG output (with optional layer filtering)
+//! - Getting PNG output (with optional layer/surface filtering)
 //! - Searching assets by name
 //! - Setting generator/materials/renderer Lua source (triggers hot reload)
 //! - Listing render layers
 //! - Managing Lua layer registry (register/unregister layers)
 //! - Querying generator state
+//! - Managing render surfaces
+//! - Recording generation for video export
 //!
 //! # Endpoints
 //!
 //! - `GET /health` - Health check
 //! - `GET /mcp/list_materials` - Get all materials as JSON
 //! - `POST /mcp/create_material` - Add new material
-//! - `GET /mcp/get_output` - Get current render as PNG
+//! - `GET /mcp/get_output` - Get current render as PNG (composite of all surfaces)
 //! - `GET /mcp/get_output?layers=base,visualizer` - Get filtered render as PNG
+//! - `GET /mcp/get_output?surface=grid` - Get specific surface as PNG
 //! - `GET /mcp/list_layers` - List available render layers
 //! - `GET /mcp/search?q=<query>&type=<type>` - Search assets by name
 //! - `POST /mcp/set_generator` - Set generator.lua source (triggers hot reload)
@@ -26,6 +29,10 @@
 //! - `POST /mcp/register_layer` - Register a new layer
 //! - `DELETE /mcp/layer/{name}` - Unregister a layer by name
 //! - `GET /mcp/generator_state` - Get current generator state (type, step, running)
+//! - `GET /mcp/surfaces` - List all render surfaces and layout
+//! - `POST /mcp/start_recording` - Start recording frames
+//! - `POST /mcp/stop_recording` - Stop recording frames
+//! - `POST /mcp/export_video` - Export recorded frames to video
 
 use super::asset::{Asset, AssetStore};
 use super::generator::StepInfoRegistry;
@@ -34,7 +41,10 @@ use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
 use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
 use super::playback::PlaybackState;
-use super::render::{RenderContext, RenderLayerStack, RENDERER_LUA_PATH};
+use super::render::{
+    FrameCapture, RenderContext, RenderLayerStack, RenderSurfaceManager, SurfaceInfo,
+    RENDERER_LUA_PATH,
+};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
 use image::ImageEncoder;
@@ -97,7 +107,7 @@ struct McpChannels {
 enum McpRequest {
     ListMaterials,
     CreateMaterial(MaterialCreateRequest),
-    GetOutput(Option<Vec<String>>), // Optional layer filter
+    GetOutput(GetOutputRequest), // Layer/surface filter options
     ListLayers,
     Search(SearchRequest),
     SetGenerator(String),
@@ -108,6 +118,39 @@ enum McpRequest {
     RegisterLayer(LayerRegisterRequest),
     UnregisterLayer(String), // layer name
     GetLayerRegistry,
+    // Surface operations
+    GetSurfaces,
+    // Recording operations
+    StartRecording,
+    StopRecording,
+    ExportVideo(VideoExportRequest),
+}
+
+/// Request parameters for get_output.
+#[derive(Debug)]
+struct GetOutputRequest {
+    /// Optional layer filter (applies to single surface or default behavior).
+    layers: Option<Vec<String>>,
+    /// Optional specific surface to render.
+    surface: Option<String>,
+}
+
+/// Request parameters for video export.
+#[derive(Debug, Deserialize)]
+struct VideoExportRequest {
+    path: String,
+    #[serde(default = "default_fps")]
+    fps: u32,
+    #[serde(default = "default_codec")]
+    codec: String,
+}
+
+fn default_fps() -> u32 {
+    30
+}
+
+fn default_codec() -> String {
+    "libx264".to_string()
 }
 
 /// Request parameters for search.
@@ -128,6 +171,10 @@ enum McpResponse {
     Error(String),
     LayerRegistry(Vec<LayerDefJson>),
     GeneratorState(GeneratorStateJson),
+    Surfaces(SurfaceInfo),
+    RecordingStarted { success: bool },
+    RecordingStopped { success: bool, frame_count: usize },
+    VideoExported { success: bool, path: String },
 }
 
 /// JSON representation of generator state.
@@ -349,16 +396,20 @@ fn handle_http_request(
         }
 
         (Method::Get, "/mcp/get_output") => {
-            // Parse optional layers parameter
+            // Parse optional layers and surface parameters
             let params = parse_query_string(&url);
             let layers = params.get("layers").map(|s| {
                 s.split(',')
                     .map(|l| l.trim().to_string())
                     .collect::<Vec<_>>()
             });
+            let surface = params.get("surface").cloned();
 
             // Send request to Bevy
-            if request_tx.send(McpRequest::GetOutput(layers)).is_err() {
+            if request_tx
+                .send(McpRequest::GetOutput(GetOutputRequest { layers, surface }))
+                .is_err()
+            {
                 let _ = request.respond(error_response("Server shutting down"));
                 return;
             }
@@ -648,6 +699,121 @@ fn handle_http_request(
             }
         }
 
+        (Method::Get, "/mcp/surfaces") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::GetSurfaces).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Surfaces(info)) => {
+                    let json = serde_json::to_string(&info).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/start_recording") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::StartRecording).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::RecordingStarted { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/stop_recording") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::StopRecording).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::RecordingStopped {
+                    success,
+                    frame_count,
+                }) => {
+                    let json =
+                        format!(r#"{{"success":{},"frame_count":{}}}"#, success, frame_count);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/export_video") => {
+            // Read JSON from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Parse JSON
+            let export_req: VideoExportRequest = match serde_json::from_str(&body) {
+                Ok(req) => req,
+                Err(e) => {
+                    let _ = request.respond(error_response(&format!("Invalid JSON: {}", e)));
+                    return;
+                }
+            };
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::ExportVideo(export_req))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response (longer timeout for video export)
+            match response_rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(McpResponse::VideoExported { success, path }) => {
+                    let json = format!(r#"{{"success":{},"path":"{}"}}"#, success, path);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -674,6 +840,8 @@ fn handle_mcp_requests(
     mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
     render_stack: Option<Res<RenderLayerStack>>,
+    surface_manager: Option<Res<RenderSurfaceManager>>,
+    mut frame_capture: Option<ResMut<FrameCapture>>,
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
     playback: Option<Res<PlaybackState>>,
     step_registry: Option<Res<StepInfoRegistry>>,
@@ -711,11 +879,29 @@ fn handle_mcp_requests(
                 });
             }
 
-            Ok(McpRequest::GetOutput(layers)) => {
-                // Use render stack if available, otherwise fall back to legacy rendering
-                let png_data = if let Some(ref stack) = render_stack {
-                    let ctx = RenderContext::new(&buffer, &palette);
-                    let pixels = match layers {
+            Ok(McpRequest::GetOutput(req)) => {
+                let ctx = RenderContext::new(&buffer, &palette);
+
+                // Use surface manager if available, otherwise fall back to render stack or legacy
+                let png_data = if let Some(ref manager) = surface_manager {
+                    // If specific surface requested, render just that surface
+                    if let Some(ref surface_name) = req.surface {
+                        if let Some(pixels) = manager.render_surface(surface_name, &ctx) {
+                            encode_png(&pixels)
+                        } else {
+                            let _ = channels.response_tx.send(McpResponse::Error(format!(
+                                "Surface '{}' not found",
+                                surface_name
+                            )));
+                            continue;
+                        }
+                    } else {
+                        // Render composite of all surfaces
+                        let pixels = manager.render_composite(&ctx);
+                        encode_png(&pixels)
+                    }
+                } else if let Some(ref stack) = render_stack {
+                    let pixels = match req.layers {
                         Some(layer_names) => {
                             let names: Vec<&str> = layer_names.iter().map(|s| s.as_str()).collect();
                             stack.render_filtered(&ctx, &names)
@@ -956,6 +1142,83 @@ fn handle_mcp_requests(
                 let _ = channels
                     .response_tx
                     .send(McpResponse::GeneratorState(state));
+            }
+
+            Ok(McpRequest::GetSurfaces) => {
+                let info = if let Some(ref manager) = surface_manager {
+                    manager.info()
+                } else {
+                    // Default to single grid surface based on buffer dimensions
+                    SurfaceInfo {
+                        surfaces: vec!["grid".to_string()],
+                        layout: super::render::SurfaceLayout::Single("grid".to_string()),
+                        total_size: [buffer.width, buffer.height],
+                    }
+                };
+                let _ = channels.response_tx.send(McpResponse::Surfaces(info));
+            }
+
+            Ok(McpRequest::StartRecording) => {
+                if let Some(ref mut capture) = frame_capture {
+                    capture.clear();
+                    capture.start();
+                    info!("MCP: Started recording");
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::RecordingStarted { success: true });
+                } else {
+                    let _ = channels.response_tx.send(McpResponse::Error(
+                        "Frame capture not available".to_string(),
+                    ));
+                }
+            }
+
+            Ok(McpRequest::StopRecording) => {
+                if let Some(ref mut capture) = frame_capture {
+                    capture.stop();
+                    let frame_count = capture.frame_count();
+                    info!("MCP: Stopped recording ({} frames)", frame_count);
+                    let _ = channels.response_tx.send(McpResponse::RecordingStopped {
+                        success: true,
+                        frame_count,
+                    });
+                } else {
+                    let _ = channels.response_tx.send(McpResponse::Error(
+                        "Frame capture not available".to_string(),
+                    ));
+                }
+            }
+
+            Ok(McpRequest::ExportVideo(req)) => {
+                if let Some(ref mut capture) = frame_capture {
+                    if capture.frame_count() == 0 {
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Error("No frames recorded".to_string()));
+                        continue;
+                    }
+
+                    // Set frame rate from request
+                    capture.set_frame_rate(req.fps);
+                    let path = std::path::Path::new(&req.path);
+                    match capture.export_video(path, &req.codec) {
+                        Ok(_) => {
+                            info!("MCP: Exported video to {}", req.path);
+                            let _ = channels.response_tx.send(McpResponse::VideoExported {
+                                success: true,
+                                path: req.path,
+                            });
+                        }
+                        Err(e) => {
+                            error!("MCP: Failed to export video: {}", e);
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels.response_tx.send(McpResponse::Error(
+                        "Frame capture not available".to_string(),
+                    ));
+                }
             }
 
             Err(TryRecvError::Empty) => break,

@@ -54,7 +54,8 @@ pub use material::{Material, MaterialPalette};
 pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
 pub use render::{
-    BaseRenderLayer, LuaRenderLayer, LuaVisualizer, PixelBuffer, RenderContext, RenderLayer,
-    RenderLayerStack, SharedVisualizer, RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
+    BaseRenderLayer, FrameCapture, LuaRenderLayer, LuaVisualizer, PixelBuffer, RenderContext,
+    RenderLayer, RenderLayerStack, RenderSurface, RenderSurfaceManager, SharedVisualizer,
+    SurfaceInfo, SurfaceLayout, RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
 pub use voxel_buffer_2d::VoxelBuffer2D;

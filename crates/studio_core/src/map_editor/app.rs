@@ -32,7 +32,7 @@ use super::{
     material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
-    render::RenderLayerStack,
+    render::{FrameCapture, RenderLayerStack, RenderSurfaceManager, SurfaceLayout},
     voxel_buffer_2d::VoxelBuffer2D,
 };
 use bevy::asset::RenderAssetUsages;
@@ -259,6 +259,15 @@ impl MapEditor2DApp {
         // Render layer stack (LuaLayerPlugin will add layers)
         let render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
         app.insert_resource(render_stack);
+
+        // Render surface manager (for multi-surface rendering in M10.4+)
+        let mut surface_manager = RenderSurfaceManager::new();
+        surface_manager.add_surface("grid", grid_size.0, grid_size.1);
+        surface_manager.set_layout(SurfaceLayout::Single("grid".to_string()));
+        app.insert_resource(surface_manager);
+
+        // Frame capture for video export (M10.4)
+        app.insert_resource(FrameCapture::new(30));
 
         // Lua layer plugin (manages all render layers and visualizers with hot-reload)
         // Replaces LuaRendererPlugin and LuaVisualizerPlugin
