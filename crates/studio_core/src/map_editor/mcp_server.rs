@@ -219,8 +219,15 @@ struct LayerRegisterRequest {
     #[serde(rename = "type")]
     layer_type: String, // "renderer" or "visualizer"
     lua_path: String,
+    /// Target surface name (defaults to "grid" if not specified)
+    #[serde(default = "default_target_surface")]
+    target_surface: String,
     #[serde(default)]
     tags: Vec<String>,
+}
+
+fn default_target_surface() -> String {
+    "grid".to_string()
 }
 
 /// JSON representation of a layer definition.
@@ -879,6 +886,19 @@ fn handle_mcp_requests(
             }
 
             Ok(McpRequest::GetOutput(req)) => {
+                // DEBUG: Log buffer state before rendering
+                let non_zero_count = (0..buffer.width)
+                    .flat_map(|x| (0..buffer.height).map(move |y| (x, y)))
+                    .filter(|&(x, y)| buffer.get(x, y) != 0)
+                    .count();
+                info!(
+                    "MCP GetOutput: buffer {}x{}, non-zero voxels: {}, palette materials: {}",
+                    buffer.width,
+                    buffer.height,
+                    non_zero_count,
+                    palette.available.len()
+                );
+
                 let ctx = RenderContext::new(&buffer, &palette);
 
                 let png_data = if let Some(ref manager) = surface_manager {
@@ -1048,6 +1068,7 @@ fn handle_mcp_requests(
                         name: req.name.clone(),
                         layer_type,
                         lua_path: req.lua_path.clone(),
+                        target_surface: req.target_surface,
                         tags: req.tags,
                     };
 

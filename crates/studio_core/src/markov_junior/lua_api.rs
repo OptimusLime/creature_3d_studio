@@ -331,6 +331,19 @@ impl UserData for MjLuaModel {
             Ok(())
         });
 
+        // init(ctx) - Initialize model for stepping (resets with time-based seed)
+        // This is called by Sequential:init() when MjLuaModel is a child generator
+        methods.add_method("init", |_, this, _ctx: mlua::Value| {
+            // Use time-based seed for variety
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(42);
+            this.inner.borrow_mut().reset(seed);
+            Ok(())
+        });
+
         // is_done() -> bool - For scene tree compatibility
         methods.add_method("is_done", |_, this, ()| {
             Ok(!this.inner.borrow().is_running())
@@ -356,11 +369,14 @@ impl UserData for MjLuaModel {
         });
 
         // model:step() -> bool
-        // After stepping, emit step info if context is available
+        // Returns true when the model is DONE (not running), false when still in progress.
+        // This follows the generator protocol where step() returns true = done, false = not done.
+        // After stepping, copy grid to voxel buffer and emit step info if context is available.
         methods.add_method("step", |lua, this, ()| {
-            let result = this.inner.borrow_mut().step();
+            let _made_progress = this.inner.borrow_mut().step();
+            let is_done = !this.inner.borrow().is_running();
 
-            // Emit step info if we have a context
+            // If we have a context, copy grid to buffer and emit step info
             if let Some(ref key) = *this.ctx.borrow() {
                 if let Ok(ctx) = lua.registry_value::<mlua::AnyUserData>(key) {
                     // Get step info from the model
@@ -368,6 +384,24 @@ impl UserData for MjLuaModel {
                     let change_count = model.last_step_change_count();
                     let step_num = model.counter();
                     let path = this.path.borrow().clone();
+
+                    // Copy entire grid to voxel buffer
+                    // This ensures the buffer reflects the current state
+                    let grid = model.grid();
+                    let mx = grid.mx as usize;
+                    let my = grid.my as usize;
+
+                    // Call ctx:set_voxel(x, y, mat) for each cell
+                    // mlua methods receive self automatically when called via call_method
+                    for y in 0..my {
+                        for x in 0..mx {
+                            // Grid value (0=B, 1=W, 2=A, etc.) maps to material ID
+                            // Add 1 because material IDs are 1-indexed in the palette
+                            let val = grid.get(x, y, 0).unwrap_or(0) as u32;
+                            let mat_id = val + 1; // B(0)->1, W(1)->2, A(2)->3
+                            let _ = ctx.call_method::<()>("set_voxel", (x, y, mat_id));
+                        }
+                    }
 
                     // Get position of first changed cell (for x, y fields)
                     let (x, y) = if let Some(&(cx, cy, _)) = model.last_step_changes().first() {
@@ -383,6 +417,7 @@ impl UserData for MjLuaModel {
                             .grid()
                             .get(cx as usize, cy as usize, cz as usize)
                             .unwrap_or(0) as u32
+                            + 1 // 1-indexed
                     } else {
                         0
                     };
@@ -408,7 +443,8 @@ impl UserData for MjLuaModel {
                 }
             }
 
-            Ok(result)
+            // Return true when done (not running), false when still in progress
+            Ok(is_done)
         });
 
         // model:reset(seed)

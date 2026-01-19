@@ -9,16 +9,16 @@
 local generators = require("lib.generators")
 
 -- Create a sequential generator:
--- Step 1: Markov maze generation
--- Step 2: Scatter crystals on floor (material 1)
+-- Step 1: Markov maze generation (32x32 to match grid size)
+-- Step 2: Scatter crystals on floor (material 2, since W=1 maps to material 2)
 return generators.sequential({
-    -- Markov maze generator
-    mj.load_model("MarkovJunior/models/MazeGrowth.xml"),
+    -- Markov maze generator - use load_model_xml with explicit size
+    mj.load_model_xml("MarkovJunior/models/MazeGrowth.xml", { size = 32 }),
     
     -- Scatter crystals on floor cells
     generators.scatter({
         material = 3,     -- Crystal material ID
-        target = 1,       -- Only scatter on floor (W = 1)
+        target = 2,       -- Scatter on floor (W=1 -> material 2)
         density = 0.05,   -- 5% chance per cell
     })
 })

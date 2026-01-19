@@ -48,27 +48,39 @@ pub struct LuaLayerDef {
     pub layer_type: LuaLayerType,
     /// Path to the Lua file.
     pub lua_path: String,
+    /// Target surface name (which surface this layer renders to).
+    pub target_surface: String,
     /// Tags for categorization and search.
     pub tags: Vec<String>,
 }
 
 impl LuaLayerDef {
     /// Create a new renderer layer definition.
-    pub fn renderer(name: impl Into<String>, lua_path: impl Into<String>) -> Self {
+    pub fn renderer(
+        name: impl Into<String>,
+        lua_path: impl Into<String>,
+        target_surface: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             layer_type: LuaLayerType::Renderer,
             lua_path: lua_path.into(),
+            target_surface: target_surface.into(),
             tags: Vec::new(),
         }
     }
 
     /// Create a new visualizer layer definition.
-    pub fn visualizer(name: impl Into<String>, lua_path: impl Into<String>) -> Self {
+    pub fn visualizer(
+        name: impl Into<String>,
+        lua_path: impl Into<String>,
+        target_surface: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             layer_type: LuaLayerType::Visualizer,
             lua_path: lua_path.into(),
+            target_surface: target_surface.into(),
             tags: Vec::new(),
         }
     }
@@ -260,10 +272,11 @@ impl Default for LuaLayerPlugin {
         Self {
             watch_dir: "assets/map_editor".to_string(),
             initial_layers: vec![
-                LuaLayerDef::renderer("base", "assets/map_editor/renderers/grid_2d.lua"),
+                LuaLayerDef::renderer("base", "assets/map_editor/renderers/grid_2d.lua", "grid"),
                 LuaLayerDef::visualizer(
                     "visualizer",
                     "assets/map_editor/visualizers/step_highlight.lua",
+                    "grid",
                 ),
             ],
         }
@@ -370,16 +383,10 @@ fn process_layer_reloads(
 
         match def.layer_type {
             LuaLayerType::Renderer => {
-                reload_renderer(&name, &def.lua_path, &mut surface_manager, &mut registry);
+                reload_renderer(&def, &mut surface_manager, &mut registry);
             }
             LuaLayerType::Visualizer => {
-                reload_visualizer(
-                    &name,
-                    &def.lua_path,
-                    &mut surface_manager,
-                    &mut listeners,
-                    &mut registry,
-                );
+                reload_visualizer(&def, &mut surface_manager, &mut listeners, &mut registry);
             }
         }
     }
@@ -387,71 +394,69 @@ fn process_layer_reloads(
 
 /// Reload or create a renderer layer.
 fn reload_renderer(
-    name: &str,
-    lua_path: &str,
+    def: &LuaLayerDef,
     surface_manager: &mut RenderSurfaceManager,
     registry: &mut LuaLayerRegistry,
 ) {
-    info!("Reloading renderer '{}'...", name);
+    info!("Reloading renderer '{}'...", def.name);
 
-    let mut layer = LuaRenderLayer::new(name, lua_path);
+    let mut layer = LuaRenderLayer::new(&def.name, &def.lua_path);
     if let Err(e) = layer.reload() {
-        error!("Failed to reload renderer '{}': {}", name, e);
+        error!("Failed to reload renderer '{}': {}", def.name, e);
         return;
     }
 
-    // Add to the "grid" surface (default surface for all renderers)
-    if let Some(surface) = surface_manager.get_surface_mut("grid") {
-        if surface.has_layer(name) {
+    if let Some(surface) = surface_manager.get_surface_mut(&def.target_surface) {
+        if surface.has_layer(&def.name) {
             surface.replace_layer(Box::new(layer));
         } else {
             surface.add_layer(Box::new(layer));
         }
     } else {
-        error!("Surface 'grid' not found - cannot add renderer '{}'", name);
+        error!(
+            "Surface '{}' not found - cannot add renderer '{}'",
+            def.target_surface, def.name
+        );
         return;
     }
 
-    registry.mark_renderer_exists(name);
-    info!("Renderer '{}' reloaded successfully", name);
+    registry.mark_renderer_exists(&def.name);
+    info!("Renderer '{}' reloaded successfully", def.name);
 }
 
 /// Reload or create a visualizer layer.
 fn reload_visualizer(
-    name: &str,
-    lua_path: &str,
+    def: &LuaLayerDef,
     surface_manager: &mut RenderSurfaceManager,
     listeners: &mut GeneratorListeners,
     registry: &mut LuaLayerRegistry,
 ) {
-    info!("Reloading visualizer '{}'...", name);
+    info!("Reloading visualizer '{}'...", def.name);
 
     // Check if we already have this visualizer
-    if let Some(shared) = registry.get_visualizer(name) {
+    if let Some(shared) = registry.get_visualizer(&def.name) {
         // Reload in place
         let mut vis = shared.lock();
         if let Err(e) = vis.reload() {
-            error!("Failed to reload visualizer '{}': {}", name, e);
+            error!("Failed to reload visualizer '{}': {}", def.name, e);
         } else {
-            info!("Visualizer '{}' reloaded successfully", name);
+            info!("Visualizer '{}' reloaded successfully", def.name);
         }
     } else {
         // Create new visualizer
-        let visualizer = LuaVisualizer::new(name, lua_path);
+        let visualizer = LuaVisualizer::new(&def.name, &def.lua_path);
         let shared = SharedVisualizer::new(visualizer);
 
-        // Add to the "grid" surface (overlays on top of base renderer)
-        // M10.8 will add separate "mj_structure" surface for node tree visualization
-        if let Some(surface) = surface_manager.get_surface_mut("grid") {
-            if surface.has_layer(name) {
+        if let Some(surface) = surface_manager.get_surface_mut(&def.target_surface) {
+            if surface.has_layer(&def.name) {
                 surface.replace_layer(Box::new(shared.clone()));
             } else {
                 surface.add_layer(Box::new(shared.clone()));
             }
         } else {
             error!(
-                "Surface 'grid' not found - cannot add visualizer '{}'",
-                name
+                "Surface '{}' not found - cannot add visualizer '{}'",
+                def.target_surface, def.name
             );
             return;
         }
@@ -460,9 +465,9 @@ fn reload_visualizer(
         listeners.add(Box::new(shared.clone()));
 
         // Store for future reloads
-        registry.store_visualizer(name, shared);
+        registry.store_visualizer(&def.name, shared);
 
-        info!("Visualizer '{}' created and registered", name);
+        info!("Visualizer '{}' created and registered", def.name);
     }
 }
 
@@ -472,25 +477,27 @@ mod tests {
 
     #[test]
     fn test_layer_def_renderer() {
-        let def = LuaLayerDef::renderer("base", "path/to/file.lua");
+        let def = LuaLayerDef::renderer("base", "path/to/file.lua", "grid");
         assert_eq!(def.name, "base");
         assert_eq!(def.layer_type, LuaLayerType::Renderer);
         assert_eq!(def.lua_path, "path/to/file.lua");
+        assert_eq!(def.target_surface, "grid");
         assert!(def.tags.is_empty());
     }
 
     #[test]
     fn test_layer_def_visualizer_with_tags() {
-        let def = LuaLayerDef::visualizer("highlight", "path/to/vis.lua")
+        let def = LuaLayerDef::visualizer("highlight", "path/to/vis.lua", "grid")
             .with_tags(vec!["debug".into(), "overlay".into()]);
         assert_eq!(def.name, "highlight");
         assert_eq!(def.layer_type, LuaLayerType::Visualizer);
+        assert_eq!(def.target_surface, "grid");
         assert_eq!(def.tags, vec!["debug", "overlay"]);
     }
 
     #[test]
     fn test_layer_def_asset_impl() {
-        let def = LuaLayerDef::renderer("test", "test.lua");
+        let def = LuaLayerDef::renderer("test", "test.lua", "grid");
         assert_eq!(def.name(), "test");
         assert_eq!(LuaLayerDef::asset_type(), "lua_layer");
     }
@@ -498,8 +505,8 @@ mod tests {
     #[test]
     fn test_registry_register_and_get() {
         let mut registry = LuaLayerRegistry::new();
-        registry.register(LuaLayerDef::renderer("base", "base.lua"));
-        registry.register(LuaLayerDef::visualizer("vis", "vis.lua"));
+        registry.register(LuaLayerDef::renderer("base", "base.lua", "grid"));
+        registry.register(LuaLayerDef::visualizer("vis", "vis.lua", "grid"));
 
         assert_eq!(registry.list().len(), 2);
         assert!(registry.get("base").is_some());
@@ -510,8 +517,8 @@ mod tests {
     #[test]
     fn test_registry_unregister() {
         let mut registry = LuaLayerRegistry::new();
-        registry.register(LuaLayerDef::renderer("base", "base.lua"));
-        registry.register(LuaLayerDef::visualizer("vis", "vis.lua"));
+        registry.register(LuaLayerDef::renderer("base", "base.lua", "grid"));
+        registry.register(LuaLayerDef::visualizer("vis", "vis.lua", "grid"));
 
         let removed = registry.unregister("base");
         assert!(removed.is_some());
@@ -523,9 +530,9 @@ mod tests {
     #[test]
     fn test_registry_layers_of_type() {
         let mut registry = LuaLayerRegistry::new();
-        registry.register(LuaLayerDef::renderer("r1", "r1.lua"));
-        registry.register(LuaLayerDef::renderer("r2", "r2.lua"));
-        registry.register(LuaLayerDef::visualizer("v1", "v1.lua"));
+        registry.register(LuaLayerDef::renderer("r1", "r1.lua", "grid"));
+        registry.register(LuaLayerDef::renderer("r2", "r2.lua", "grid"));
+        registry.register(LuaLayerDef::visualizer("v1", "v1.lua", "grid"));
 
         let renderers = registry.layers_of_type(LuaLayerType::Renderer);
         assert_eq!(renderers.len(), 2);
@@ -537,10 +544,12 @@ mod tests {
     #[test]
     fn test_registry_search() {
         let mut registry = LuaLayerRegistry::new();
-        registry
-            .register(LuaLayerDef::renderer("grid_2d", "grid.lua").with_tags(vec!["base".into()]));
         registry.register(
-            LuaLayerDef::visualizer("step_highlight", "step.lua").with_tags(vec!["debug".into()]),
+            LuaLayerDef::renderer("grid_2d", "grid.lua", "grid").with_tags(vec!["base".into()]),
+        );
+        registry.register(
+            LuaLayerDef::visualizer("step_highlight", "step.lua", "grid")
+                .with_tags(vec!["debug".into()]),
         );
 
         // Search by name
@@ -556,7 +565,7 @@ mod tests {
     #[test]
     fn test_registry_pending_reloads() {
         let mut registry = LuaLayerRegistry::new();
-        registry.register(LuaLayerDef::renderer("base", "base.lua"));
+        registry.register(LuaLayerDef::renderer("base", "base.lua", "grid"));
 
         assert!(!registry.has_pending_reloads());
 
@@ -571,11 +580,20 @@ mod tests {
     #[test]
     fn test_registry_mark_all_for_reload() {
         let mut registry = LuaLayerRegistry::new();
-        registry.register(LuaLayerDef::renderer("r1", "r1.lua"));
-        registry.register(LuaLayerDef::visualizer("v1", "v1.lua"));
+        registry.register(LuaLayerDef::renderer("r1", "r1.lua", "grid"));
+        registry.register(LuaLayerDef::visualizer("v1", "v1.lua", "grid"));
 
         registry.mark_all_for_reload();
         let pending = registry.take_pending_reloads();
         assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn test_layer_targets_different_surfaces() {
+        let grid_renderer = LuaLayerDef::renderer("base", "base.lua", "grid");
+        let mj_visualizer = LuaLayerDef::visualizer("mj_tree", "mj_tree.lua", "mj_structure");
+
+        assert_eq!(grid_renderer.target_surface, "grid");
+        assert_eq!(mj_visualizer.target_surface, "mj_structure");
     }
 }
