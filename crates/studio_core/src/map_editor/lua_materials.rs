@@ -7,10 +7,12 @@
 //!
 //! ```lua
 //! return {
-//!     { id = 1, name = "stone", color = {0.5, 0.5, 0.5} },
-//!     { id = 2, name = "dirt",  color = {0.6, 0.4, 0.2} },
+//!     { id = 1, name = "stone", color = {0.5, 0.5, 0.5}, tags = {"natural", "terrain"} },
+//!     { id = 2, name = "dirt",  color = {0.6, 0.4, 0.2}, tags = {"natural", "terrain"} },
 //! }
 //! ```
+//!
+//! The `tags` field is optional. Tags enable search by category (e.g., search "natural" finds all natural materials).
 
 use super::material::{Material, MaterialPalette};
 use bevy::prelude::*;
@@ -230,7 +232,21 @@ fn parse_materials_lua(lua: &Lua, src: &str) -> LuaResult<Vec<Material>> {
         let g: f32 = color_table.get(2)?;
         let b: f32 = color_table.get(3)?;
 
-        materials.push(Material::new(id, name, [r, g, b]));
+        // Parse optional tags
+        let tags: Vec<String> = match entry_table.get::<Value>("tags") {
+            Ok(Value::Table(tags_table)) => {
+                let mut tags = Vec::new();
+                for pair in tags_table.pairs::<i64, String>() {
+                    if let Ok((_, tag)) = pair {
+                        tags.push(tag);
+                    }
+                }
+                tags
+            }
+            _ => Vec::new(), // No tags or invalid format - use empty vec
+        };
+
+        materials.push(Material::with_tags(id, name, [r, g, b], tags));
     }
 
     // Sort by ID for consistent ordering
@@ -258,8 +274,25 @@ mod tests {
         assert_eq!(materials[0].id, 1);
         assert_eq!(materials[0].name, "stone");
         assert_eq!(materials[0].color, [0.5, 0.5, 0.5]);
+        assert!(materials[0].tags.is_empty()); // No tags
         assert_eq!(materials[1].id, 2);
         assert_eq!(materials[1].name, "dirt");
+    }
+
+    #[test]
+    fn test_parse_materials_with_tags() {
+        let lua = Lua::new();
+        let src = r#"
+            return {
+                { id = 1, name = "stone", color = {0.5, 0.5, 0.5}, tags = {"natural", "terrain"} },
+                { id = 2, name = "metal", color = {0.7, 0.7, 0.8}, tags = {"industrial"} },
+            }
+        "#;
+
+        let materials = parse_materials_lua(&lua, src).expect("Should parse");
+        assert_eq!(materials.len(), 2);
+        assert_eq!(materials[0].tags, vec!["natural", "terrain"]);
+        assert_eq!(materials[1].tags, vec!["industrial"]);
     }
 
     #[test]

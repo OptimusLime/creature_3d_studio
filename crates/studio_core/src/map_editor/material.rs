@@ -15,7 +15,7 @@ use bevy::prelude::*;
 
 use super::asset::{Asset, AssetStore, InMemoryStore};
 
-/// A voxel material with an ID, name, and color.
+/// A voxel material with an ID, name, color, and tags.
 #[derive(Clone, Debug)]
 pub struct Material {
     /// Unique identifier for this material.
@@ -24,15 +24,28 @@ pub struct Material {
     pub name: String,
     /// RGB color, each component in 0.0-1.0 range.
     pub color: [f32; 3],
+    /// Tags for categorization and search (e.g., ["natural", "terrain"]).
+    pub tags: Vec<String>,
 }
 
 impl Material {
-    /// Create a new material with the given properties.
+    /// Create a new material with the given properties (no tags).
     pub fn new(id: u32, name: impl Into<String>, color: [f32; 3]) -> Self {
         Self {
             id,
             name: name.into(),
             color,
+            tags: Vec::new(),
+        }
+    }
+
+    /// Create a new material with tags.
+    pub fn with_tags(id: u32, name: impl Into<String>, color: [f32; 3], tags: Vec<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            color,
+            tags,
         }
     }
 }
@@ -44,6 +57,10 @@ impl Asset for Material {
 
     fn asset_type() -> &'static str {
         "material"
+    }
+
+    fn tags(&self) -> &[String] {
+        &self.tags
     }
 }
 

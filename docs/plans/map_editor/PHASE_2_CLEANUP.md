@@ -270,6 +270,8 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 | Hot-reload plugin duplication | ✅ Done during M6 cleanup | Created generic `hot_reload.rs` module |
 | GeneratorListener unused | ✅ Done during M6 cleanup | Generator now calls listeners, visualizer implements trait |
 | VisualizerState unused | ✅ Done during M6 cleanup | Now holds SharedVisualizer, used for reload |
+| Plugins hardcoded to 1 instance | ⚠️ Defer to Phase 3 | **HIGH**: Architectural mismatch, blocks multiple visualizers/renderers |
+| M7 tag search | N/A | Clean implementation, no cleanup needed |
 
 ---
 
@@ -277,7 +279,7 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 
 | Criticality | Count | Status |
 |-------------|-------|--------|
-| High | 0 | - |
+| High | 1 | ⚠️ Plugins hardcoded to single instance (Deferred) |
 | Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
 | Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
 
@@ -285,23 +287,85 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 
 ---
 
+## M6 Post-Cleanup Audit: Multiplicity Constraints
+
+### 4. Plugins Hardcoded to Single Instance
+
+**Milestone:** M6 (Post-Cleanup Audit)
+
+**Current State:**
+
+| Component | Count | Constraint |
+|-----------|-------|------------|
+| Lua Generators | 1 | `LuaGeneratorPlugin` single path, single `LuaGeneratorState` |
+| Generator Listeners | **Many** | `GeneratorListeners` is `Vec<Box<dyn GeneratorListener>>` ✅ |
+| Render Layers | **Many** | `RenderLayerStack` is `Vec<Box<dyn RenderLayer>>` ✅ |
+| Lua Renderers | 1 | `LuaRendererPlugin` hardcoded "base" name, single config |
+| Lua Visualizers | 1 | `LuaVisualizerPlugin` hardcoded "visualizer" name, single state |
+
+**Why This Is Bad:**
+- The **infrastructure** (listener list, layer stack) correctly supports many items
+- The **plugins** artificially limit to 1 each - this is an architectural mismatch
+- Visualizers being limited to 1 is especially problematic: we may want multiple overlays (step highlight, selection, grid lines, debug info, etc.)
+- Lua renderers should support multiple layers (base terrain, decorations, lighting, etc.)
+
+**Proposed Change:**
+- Plugins should support registering multiple Lua scripts
+- Each script becomes a named layer/listener
+- Hot-reload should work per-script, not globally
+- Consider a registry pattern: `LuaLayerRegistry` that manages multiple `LuaRenderLayer` instances
+
+**Criticality:** **High** - Architectural mismatch between infrastructure and plugins. Will block future features requiring multiple visualizers or render layers.
+
+**When to Do:** Phase 3, before adding more visualizer types.
+
+---
+
+## Updated Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 1 | ⚠️ Plugins hardcoded to single instance (NEW) |
+| Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
+| Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
+
+---
+
+## M7 Audit: Text Search Across Assets
+
+### No Cleanup Items Identified
+
+M7 was a clean extension of the existing Asset system:
+- Added `tags()` method to `Asset` trait with default empty implementation
+- Added `tags: Vec<String>` field to `Material`
+- Extended `InMemoryStore.search()` to match tags (exact match, case-insensitive)
+- Updated `lua_materials.rs` to parse optional `tags` field
+- Updated MCP search response to include tags
+- Updated UI search panel to show tags in tooltips
+
+No new duplication or architectural issues introduced.
+
+---
+
 ## Phase 2 Summary
 
-All four milestones completed:
+All five milestones completed:
 - **M4.5:** Asset Trait + Search ✅
 - **M4.75:** Generator Runs on Launch + MCP Set Endpoints ✅
 - **M5:** Lua Renderer with Layer System ✅
 - **M6:** Generator Visualizer ✅
+- **M7:** Text Search Across Assets ✅
 
 **Key Foundations Built:**
-1. `Asset` + `AssetStore<T>` - unified asset management with search
+1. `Asset` + `AssetStore<T>` - unified asset management with search (name + tags)
 2. `RenderLayer` trait + `RenderLayerStack` - compositable rendering
 3. `StepInfo` + `CurrentStepInfo` - observable generation progress
 4. Hot-reload pattern for Lua assets (renderers, visualizers)
+5. Tag-based categorization and search
 
 **Deferred Cleanup Items:**
+- 1 high-criticality item: Plugins hardcoded to single instance (blocks multiple visualizers/renderers)
 - 2 low-criticality items deferred to Phase 3 (MCP Error variant, Duplicate PNG code)
-- No blocking technical debt identified
 
 **M6 Cleanup Refactor:**
 - Created generic `hot_reload.rs` module (reduced duplication by ~70 lines per plugin)

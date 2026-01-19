@@ -350,6 +350,7 @@ struct SearchResult {
     asset_type: String,
     name: String,
     id: u32,
+    tags: Vec<String>,
 }
 
 // =============================================================================
@@ -622,7 +623,7 @@ fn render_ui_system(
                 if query.is_empty() {
                     search_state.results.clear();
                 } else {
-                    // Search materials using AssetStore::search
+                    // Search materials using AssetStore::search (searches name + tags)
                     search_state.results = palette
                         .search(&query)
                         .iter()
@@ -630,6 +631,7 @@ fn render_ui_system(
                             asset_type: Material::asset_type().to_string(),
                             name: mat.name().to_string(),
                             id: mat.id,
+                            tags: mat.tags.clone(),
                         })
                         .collect();
                 }
@@ -666,6 +668,10 @@ fn render_ui_system(
                         if result.asset_type == "material" {
                             add_id = Some(result.id);
                         }
+                    }
+                    // Show tags as tooltip on hover
+                    if !result.tags.is_empty() && ui.is_item_hovered() {
+                        ui.tooltip_text(format!("Tags: {}", result.tags.join(", ")));
                     }
                 }
 

@@ -62,7 +62,17 @@ impl<T: Asset> AssetStore<T> for InMemoryStore<T> {
         let query_lower = query.to_lowercase();
         self.assets
             .iter()
-            .filter(|asset| asset.name().to_lowercase().contains(&query_lower))
+            .filter(|asset| {
+                // Match by name (substring)
+                if asset.name().to_lowercase().contains(&query_lower) {
+                    return true;
+                }
+                // Match by tag (exact match, case-insensitive)
+                asset
+                    .tags()
+                    .iter()
+                    .any(|tag| tag.to_lowercase() == query_lower)
+            })
             .collect()
     }
 
@@ -82,6 +92,23 @@ mod tests {
     #[derive(Debug, Clone)]
     struct TestAsset {
         name: String,
+        tags: Vec<String>,
+    }
+
+    impl TestAsset {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                tags: Vec::new(),
+            }
+        }
+
+        fn with_tags(name: &str, tags: Vec<&str>) -> Self {
+            Self {
+                name: name.to_string(),
+                tags: tags.into_iter().map(|s| s.to_string()).collect(),
+            }
+        }
     }
 
     impl Asset for TestAsset {
@@ -91,6 +118,10 @@ mod tests {
 
         fn asset_type() -> &'static str {
             "test"
+        }
+
+        fn tags(&self) -> &[String] {
+            &self.tags
         }
     }
 
@@ -106,9 +137,7 @@ mod tests {
     fn test_add_and_get() {
         let mut store: InMemoryStore<TestAsset> = InMemoryStore::new();
 
-        let id = store.set(TestAsset {
-            name: "stone".to_string(),
-        });
+        let id = store.set(TestAsset::new("stone"));
         assert_eq!(id, 0);
         assert_eq!(store.len(), 1);
 
@@ -119,12 +148,8 @@ mod tests {
     #[test]
     fn test_list() {
         let mut store: InMemoryStore<TestAsset> = InMemoryStore::new();
-        store.set(TestAsset {
-            name: "stone".to_string(),
-        });
-        store.set(TestAsset {
-            name: "dirt".to_string(),
-        });
+        store.set(TestAsset::new("stone"));
+        store.set(TestAsset::new("dirt"));
 
         let list = store.list();
         assert_eq!(list.len(), 2);
@@ -135,15 +160,9 @@ mod tests {
     #[test]
     fn test_search_case_insensitive() {
         let mut store: InMemoryStore<TestAsset> = InMemoryStore::new();
-        store.set(TestAsset {
-            name: "Stone Block".to_string(),
-        });
-        store.set(TestAsset {
-            name: "Dirt".to_string(),
-        });
-        store.set(TestAsset {
-            name: "Cobblestone".to_string(),
-        });
+        store.set(TestAsset::new("Stone Block"));
+        store.set(TestAsset::new("Dirt"));
+        store.set(TestAsset::new("Cobblestone"));
 
         // Search should be case-insensitive
         let results = store.search("stone");
@@ -159,33 +178,48 @@ mod tests {
     }
 
     #[test]
+    fn test_search_by_tag() {
+        let mut store: InMemoryStore<TestAsset> = InMemoryStore::new();
+        store.set(TestAsset::with_tags("stone", vec!["natural", "terrain"]));
+        store.set(TestAsset::with_tags("dirt", vec!["natural", "terrain"]));
+        store.set(TestAsset::with_tags("metal_plate", vec!["industrial"]));
+        store.set(TestAsset::new("glass")); // no tags
+
+        // Search by tag "natural" should find stone and dirt
+        let results = store.search("natural");
+        assert_eq!(results.len(), 2);
+
+        // Search by tag "industrial" should find metal_plate
+        let results = store.search("industrial");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name(), "metal_plate");
+
+        // Tag search is case-insensitive
+        let results = store.search("NATURAL");
+        assert_eq!(results.len(), 2);
+
+        // Name search still works
+        let results = store.search("glass");
+        assert_eq!(results.len(), 1);
+
+        // Partial name match still works
+        let results = store.search("stone");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name(), "stone");
+    }
+
+    #[test]
     fn test_with_assets() {
-        let store = InMemoryStore::with_assets(vec![
-            TestAsset {
-                name: "a".to_string(),
-            },
-            TestAsset {
-                name: "b".to_string(),
-            },
-        ]);
+        let store = InMemoryStore::with_assets(vec![TestAsset::new("a"), TestAsset::new("b")]);
         assert_eq!(store.len(), 2);
     }
 
     #[test]
     fn test_set_all() {
         let mut store: InMemoryStore<TestAsset> = InMemoryStore::new();
-        store.set(TestAsset {
-            name: "old".to_string(),
-        });
+        store.set(TestAsset::new("old"));
 
-        store.set_all(vec![
-            TestAsset {
-                name: "new1".to_string(),
-            },
-            TestAsset {
-                name: "new2".to_string(),
-            },
-        ]);
+        store.set_all(vec![TestAsset::new("new1"), TestAsset::new("new2")]);
 
         assert_eq!(store.len(), 2);
         assert_eq!(store.list()[0].name(), "new1");

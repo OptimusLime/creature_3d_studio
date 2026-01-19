@@ -35,6 +35,12 @@ pub trait Asset: Send + Sync + 'static {
     fn asset_type() -> &'static str
     where
         Self: Sized;
+
+    /// Tags for categorization and search (e.g., ["natural", "terrain"]).
+    /// Default implementation returns empty slice for assets without tags.
+    fn tags(&self) -> &[String] {
+        &[]
+    }
 }
 
 /// Generic storage interface for assets.

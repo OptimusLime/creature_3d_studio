@@ -121,6 +121,8 @@ struct SearchResultJson {
     asset_type: String,
     name: String,
     id: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 /// JSON representation of a material.
@@ -564,6 +566,7 @@ fn handle_mcp_requests(
                     asset_type: Material::asset_type().to_string(),
                     name: mat.name.clone(),
                     id: mat.id,
+                    tags: mat.tags.clone(),
                 })
                 .collect();
 
