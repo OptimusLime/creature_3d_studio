@@ -23,7 +23,7 @@
 
 use super::asset::{Asset, AssetStore, InMemoryStore};
 use super::generator::GeneratorListeners;
-use super::render::{LuaRenderLayer, LuaVisualizer, RenderLayerStack, SharedVisualizer};
+use super::render::{LuaRenderLayer, LuaVisualizer, RenderSurfaceManager, SharedVisualizer};
 use bevy::prelude::*;
 use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -96,7 +96,7 @@ impl Asset for LuaLayerDef {
 
 /// Live instance of a Lua layer.
 enum LuaLayerInstance {
-    /// A renderer layer (owned by RenderLayerStack).
+    /// A renderer layer (owned by RenderSurfaceManager).
     Renderer,
     /// A visualizer layer (shared between render stack and listener registry).
     Visualizer(SharedVisualizer),
@@ -234,7 +234,7 @@ impl LuaLayerRegistry {
         }
     }
 
-    /// Mark that a renderer exists (for tracking, actual instance is in RenderLayerStack).
+    /// Mark that a renderer exists (for tracking, actual instance is in RenderSurfaceManager).
     pub fn mark_renderer_exists(&mut self, name: &str) {
         self.instances
             .insert(name.to_string(), LuaLayerInstance::Renderer);
@@ -353,7 +353,7 @@ fn check_layer_changes(
 /// Process pending layer reloads.
 fn process_layer_reloads(
     mut registry: ResMut<LuaLayerRegistry>,
-    mut render_stack: ResMut<RenderLayerStack>,
+    mut surface_manager: ResMut<RenderSurfaceManager>,
     mut listeners: ResMut<GeneratorListeners>,
 ) {
     if !registry.has_pending_reloads() {
@@ -370,13 +370,13 @@ fn process_layer_reloads(
 
         match def.layer_type {
             LuaLayerType::Renderer => {
-                reload_renderer(&name, &def.lua_path, &mut render_stack, &mut registry);
+                reload_renderer(&name, &def.lua_path, &mut surface_manager, &mut registry);
             }
             LuaLayerType::Visualizer => {
                 reload_visualizer(
                     &name,
                     &def.lua_path,
-                    &mut render_stack,
+                    &mut surface_manager,
                     &mut listeners,
                     &mut registry,
                 );
@@ -389,7 +389,7 @@ fn process_layer_reloads(
 fn reload_renderer(
     name: &str,
     lua_path: &str,
-    render_stack: &mut RenderLayerStack,
+    surface_manager: &mut RenderSurfaceManager,
     registry: &mut LuaLayerRegistry,
 ) {
     info!("Reloading renderer '{}'...", name);
@@ -400,11 +400,16 @@ fn reload_renderer(
         return;
     }
 
-    // Check if layer already exists in stack
-    if render_stack.has_layer(name) {
-        render_stack.replace_layer(Box::new(layer));
+    // Add to the "grid" surface (default surface for all renderers)
+    if let Some(surface) = surface_manager.get_surface_mut("grid") {
+        if surface.has_layer(name) {
+            surface.replace_layer(Box::new(layer));
+        } else {
+            surface.add_layer(Box::new(layer));
+        }
     } else {
-        render_stack.add_layer(Box::new(layer));
+        error!("Surface 'grid' not found - cannot add renderer '{}'", name);
+        return;
     }
 
     registry.mark_renderer_exists(name);
@@ -415,7 +420,7 @@ fn reload_renderer(
 fn reload_visualizer(
     name: &str,
     lua_path: &str,
-    render_stack: &mut RenderLayerStack,
+    surface_manager: &mut RenderSurfaceManager,
     listeners: &mut GeneratorListeners,
     registry: &mut LuaLayerRegistry,
 ) {
@@ -435,11 +440,20 @@ fn reload_visualizer(
         let visualizer = LuaVisualizer::new(name, lua_path);
         let shared = SharedVisualizer::new(visualizer);
 
-        // Add to render stack
-        if render_stack.has_layer(name) {
-            render_stack.replace_layer(Box::new(shared.clone()));
+        // Add to the "grid" surface (overlays on top of base renderer)
+        // M10.8 will add separate "mj_structure" surface for node tree visualization
+        if let Some(surface) = surface_manager.get_surface_mut("grid") {
+            if surface.has_layer(name) {
+                surface.replace_layer(Box::new(shared.clone()));
+            } else {
+                surface.add_layer(Box::new(shared.clone()));
+            }
         } else {
-            render_stack.add_layer(Box::new(shared.clone()));
+            error!(
+                "Surface 'grid' not found - cannot add visualizer '{}'",
+                name
+            );
+            return;
         }
 
         // Register as listener

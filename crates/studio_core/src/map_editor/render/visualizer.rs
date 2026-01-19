@@ -309,7 +309,7 @@ unsafe impl Sync for LuaVisualizer {}
 ///
 /// Wraps `LuaVisualizer` in `Arc<Mutex>` so it can be:
 /// - Registered as a `GeneratorListener`
-/// - Added to `RenderLayerStack` as a `RenderLayer`
+/// - Added to `RenderSurfaceManager`'s surface as a `RenderLayer`
 #[derive(Clone)]
 pub struct SharedVisualizer {
     inner: Arc<Mutex<LuaVisualizer>>,

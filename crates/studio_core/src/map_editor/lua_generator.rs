@@ -25,6 +25,7 @@ use super::generator::{
 };
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
+use super::render::{FrameCapture, RenderContext, RenderSurfaceManager};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use crate::markov_junior::register_markov_junior_api;
 use bevy::prelude::*;
@@ -594,6 +595,8 @@ fn run_generator_step(
     mut listeners: ResMut<GeneratorListeners>,
     mut step_registry: ResMut<StepInfoRegistry>,
     time: Res<Time>,
+    surface_manager: Option<Res<RenderSurfaceManager>>,
+    mut frame_capture: Option<ResMut<FrameCapture>>,
 ) {
     // Check if generator is loaded
     if state.generator.is_none() {
@@ -606,7 +609,7 @@ fn run_generator_step(
         palette: palette.active.clone(),
     };
 
-    // Initialize if needed - run generator to completion immediately
+    // Initialize if needed
     if !state.initialized {
         // Call init
         {
@@ -620,43 +623,55 @@ fn run_generator_step(
         current_step.clear();
         listeners.notify_reset();
 
-        // Run generator to completion immediately for initial display
-        let max_steps = ctx.buffer.width * ctx.buffer.height;
-        for _ in 0..max_steps {
-            let generator = state.generator.as_ref().unwrap();
-            match call_generator_step(&state.lua, generator, &ctx) {
-                Ok(done) => {
-                    // Process any pending step infos from Lua
-                    process_pending_steps(
-                        &gen_buffer.buffer,
-                        &mut step_registry,
-                        &mut current_step,
-                        &mut listeners,
-                        playback.step_index,
-                    );
+        // Check if we're recording - if so, enable playback and let the step loop capture frames
+        let is_recording = frame_capture
+            .as_ref()
+            .map(|c| c.is_recording())
+            .unwrap_or(false);
 
-                    // Also handle legacy last_write for backwards compatibility
-                    if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
-                        let info = StepInfo::new(playback.step_index, x, y, material_id, done);
-                        current_step.update(info.clone());
-                        listeners.notify_step(&info);
+        if is_recording {
+            // Recording active: enable step-by-step playback to capture frames
+            playback.playing = true;
+            info!("Generator initialized in recording mode - using step-by-step playback");
+        } else {
+            // Not recording: run generator to completion immediately for initial display
+            let max_steps = ctx.buffer.width * ctx.buffer.height;
+            for _ in 0..max_steps {
+                let generator = state.generator.as_ref().unwrap();
+                match call_generator_step(&state.lua, generator, &ctx) {
+                    Ok(done) => {
+                        // Process any pending step infos from Lua
+                        process_pending_steps(
+                            &gen_buffer.buffer,
+                            &mut step_registry,
+                            &mut current_step,
+                            &mut listeners,
+                            playback.step_index,
+                        );
+
+                        // Also handle legacy last_write for backwards compatibility
+                        if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
+                            let info = StepInfo::new(playback.step_index, x, y, material_id, done);
+                            current_step.update(info.clone());
+                            listeners.notify_step(&info);
+                        }
+                        playback.step();
+                        if done {
+                            playback.complete();
+                            break;
+                        }
                     }
-                    playback.step();
-                    if done {
-                        playback.complete();
+                    Err(e) => {
+                        error!("Generator step failed during init: {:?}", e);
                         break;
                     }
                 }
-                Err(e) => {
-                    error!("Generator step failed during init: {:?}", e);
-                    break;
-                }
             }
+            info!(
+                "Generator initialized with palette: {:?}, filled {} cells",
+                palette.active, playback.step_index
+            );
         }
-        info!(
-            "Generator initialized with palette: {:?}, filled {} cells",
-            palette.active, playback.step_index
-        );
     }
 
     // Handle palette changes - reinitialize and fill immediately
@@ -772,6 +787,15 @@ fn run_generator_step(
 
     // Copy shared buffer to voxel buffer
     gen_buffer.buffer.copy_to_buffer(&mut voxel_buffer);
+
+    // Capture frame if recording is active
+    if let (Some(ref mut capture), Some(ref manager)) = (&mut frame_capture, &surface_manager) {
+        if capture.is_recording() {
+            let ctx = RenderContext::new(&voxel_buffer, &palette);
+            let pixels = manager.render_composite(&ctx);
+            capture.capture_frame(&pixels);
+        }
+    }
 }
 
 /// Call a generator method (init, reset).

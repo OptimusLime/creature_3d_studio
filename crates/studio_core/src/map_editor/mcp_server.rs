@@ -42,8 +42,7 @@ use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
 use super::playback::PlaybackState;
 use super::render::{
-    FrameCapture, RenderContext, RenderLayerStack, RenderSurfaceManager, SurfaceInfo,
-    RENDERER_LUA_PATH,
+    FrameCapture, RenderContext, RenderSurfaceManager, SurfaceInfo, RENDERER_LUA_PATH,
 };
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
@@ -839,13 +838,13 @@ fn handle_mcp_requests(
     channels: NonSend<McpChannels>,
     mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
-    render_stack: Option<Res<RenderLayerStack>>,
     surface_manager: Option<Res<RenderSurfaceManager>>,
     mut frame_capture: Option<ResMut<FrameCapture>>,
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
     playback: Option<Res<PlaybackState>>,
     step_registry: Option<Res<StepInfoRegistry>>,
     active_generator: Option<NonSend<super::generator::ActiveGenerator>>,
+    mut reload_flag: Option<ResMut<super::lua_generator::GeneratorReloadFlag>>,
 ) {
     // Process all pending requests
     loop {
@@ -882,11 +881,21 @@ fn handle_mcp_requests(
             Ok(McpRequest::GetOutput(req)) => {
                 let ctx = RenderContext::new(&buffer, &palette);
 
-                // Use surface manager if available, otherwise fall back to render stack or legacy
                 let png_data = if let Some(ref manager) = surface_manager {
                     // If specific surface requested, render just that surface
                     if let Some(ref surface_name) = req.surface {
-                        if let Some(pixels) = manager.render_surface(surface_name, &ctx) {
+                        if let Some(pixels) = if req.layers.is_some() {
+                            let names: Vec<&str> = req
+                                .layers
+                                .as_ref()
+                                .unwrap()
+                                .iter()
+                                .map(|s| s.as_str())
+                                .collect();
+                            manager.render_surface_filtered(surface_name, &ctx, &names)
+                        } else {
+                            manager.render_surface(surface_name, &ctx)
+                        } {
                             encode_png(&pixels)
                         } else {
                             let _ = channels.response_tx.send(McpResponse::Error(format!(
@@ -900,29 +909,20 @@ fn handle_mcp_requests(
                         let pixels = manager.render_composite(&ctx);
                         encode_png(&pixels)
                     }
-                } else if let Some(ref stack) = render_stack {
-                    let pixels = match req.layers {
-                        Some(layer_names) => {
-                            let names: Vec<&str> = layer_names.iter().map(|s| s.as_str()).collect();
-                            stack.render_filtered(&ctx, &names)
-                        }
-                        None => stack.render_all(&ctx),
-                    };
-                    encode_png(&pixels)
                 } else {
-                    // Legacy fallback
+                    // Legacy fallback when no surface manager
                     generate_png_from_buffer(&buffer, &palette)
                 };
                 let _ = channels.response_tx.send(McpResponse::Output(png_data));
             }
 
             Ok(McpRequest::ListLayers) => {
-                let layers = if let Some(ref stack) = render_stack {
-                    stack
-                        .list_layers()
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect()
+                let layers = if let Some(ref manager) = surface_manager {
+                    // List layers from the "grid" surface
+                    manager
+                        .get_surface("grid")
+                        .map(|s| s.list_layers().into_iter().map(|l| l.to_string()).collect())
+                        .unwrap_or_else(Vec::new)
                 } else {
                     vec!["base".to_string()] // Default when no stack
                 };
@@ -1162,7 +1162,11 @@ fn handle_mcp_requests(
                 if let Some(ref mut capture) = frame_capture {
                     capture.clear();
                     capture.start();
-                    info!("MCP: Started recording");
+                    // Trigger generator reset so it runs again and captures frames
+                    if let Some(ref mut flag) = reload_flag {
+                        flag.needs_reload = true;
+                    }
+                    info!("MCP: Started recording (triggering generator reset)");
                     let _ = channels
                         .response_tx
                         .send(McpResponse::RecordingStarted { success: true });

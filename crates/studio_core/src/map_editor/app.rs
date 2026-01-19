@@ -32,7 +32,7 @@ use super::{
     material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
-    render::{FrameCapture, RenderLayerStack, RenderSurfaceManager, SurfaceLayout},
+    render::{FrameCapture, RenderSurfaceManager, SurfaceLayout},
     voxel_buffer_2d::VoxelBuffer2D,
 };
 use bevy::asset::RenderAssetUsages;
@@ -256,18 +256,21 @@ impl MapEditor2DApp {
         });
         app.insert_resource(SearchState::default());
 
-        // Render layer stack (LuaLayerPlugin will add layers)
-        let render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
-        app.insert_resource(render_stack);
-
-        // Render surface manager (for multi-surface rendering in M10.4+)
+        // Render surface manager - single source of truth for all render surfaces
+        // M10.4: Foundation for multi-surface rendering
+        // Currently using single "grid" surface with all layers (base + visualizer)
+        // M10.8 will add "mj_structure" surface for Markov Jr. node tree visualization
         let mut surface_manager = RenderSurfaceManager::new();
         surface_manager.add_surface("grid", grid_size.0, grid_size.1);
         surface_manager.set_layout(SurfaceLayout::Single("grid".to_string()));
         app.insert_resource(surface_manager);
 
-        // Frame capture for video export (M10.4)
+        // Frame capture for video export
         app.insert_resource(FrameCapture::new(30));
+        app.insert_resource(RecordingState {
+            export_path: "generation.mp4".to_string(),
+            last_result: String::new(),
+        });
 
         // Lua layer plugin (manages all render layers and visualizers with hot-reload)
         // Replaces LuaRendererPlugin and LuaVisualizerPlugin
@@ -514,6 +517,15 @@ fn update_canvas_texture_system(
     image.data = Some(new_data);
 }
 
+/// Recording state for video export UI.
+#[derive(Resource, Default)]
+struct RecordingState {
+    /// Path for video export.
+    export_path: String,
+    /// Last export result message.
+    last_result: String,
+}
+
 /// Render ImGui UI.
 fn render_ui_system(
     mut context: NonSendMut<ImguiContext>,
@@ -523,6 +535,9 @@ fn render_ui_system(
     grid: Res<GridConfig>,
     mut gen_reload: ResMut<super::lua_generator::GeneratorReloadFlag>,
     mut search_state: ResMut<SearchState>,
+    mut frame_capture: ResMut<FrameCapture>,
+    _surface_manager: Res<RenderSurfaceManager>,
+    mut recording_state: ResMut<RecordingState>,
 ) {
     // NOTE: The canvas is displayed as a Bevy Sprite, not an ImGui Image.
     // ImGui's Image widget doesn't update when texture data changes.
@@ -703,7 +718,7 @@ fn render_ui_system(
 
     // === Playback Controls (Bottom) ===
     ui.window("Playback")
-        .size([400.0, 120.0], Condition::FirstUseEver)
+        .size([400.0, 180.0], Condition::FirstUseEver)
         .position(
             [220.0, grid.height as f32 * CELL_SIZE + 80.0],
             Condition::FirstUseEver,
@@ -748,6 +763,79 @@ fn render_ui_system(
 
             if playback.completed {
                 ui.text_colored([0.0, 1.0, 0.0, 1.0], "Generation complete!");
+            }
+
+            ui.separator();
+
+            // === Recording Controls ===
+            ui.text("Recording:");
+
+            let is_recording = frame_capture.is_recording();
+
+            // Record button
+            if is_recording {
+                let _color_token =
+                    ui.push_style_color(imgui::StyleColor::Button, [0.8, 0.2, 0.2, 1.0]);
+                if ui.button("Stop Recording") {
+                    frame_capture.stop();
+                    recording_state.last_result =
+                        format!("Recorded {} frames", frame_capture.frame_count());
+                }
+            } else {
+                let _color_token =
+                    ui.push_style_color(imgui::StyleColor::Button, [0.2, 0.5, 0.2, 1.0]);
+                if ui.button("Start Recording") {
+                    frame_capture.clear();
+                    frame_capture.start();
+                    recording_state.last_result.clear();
+                }
+            }
+
+            ui.same_line();
+            ui.text(format!("Frames: {}", frame_capture.frame_count()));
+
+            // Export path input
+            ui.input_text("Export path", &mut recording_state.export_path)
+                .build();
+
+            // Export button
+            if !frame_capture.is_recording() && frame_capture.frame_count() > 0 {
+                if ui.button("Export Video") {
+                    let path = std::path::Path::new(&recording_state.export_path);
+                    match frame_capture.export_video(path, "libx264") {
+                        Ok(_) => {
+                            recording_state.last_result =
+                                format!("Exported to {}", recording_state.export_path);
+                        }
+                        Err(e) => {
+                            recording_state.last_result = format!("Export failed: {}", e);
+                        }
+                    }
+                }
+
+                ui.same_line();
+
+                // Export PNGs button
+                if ui.button("Export PNGs") {
+                    let dir = std::path::Path::new(&recording_state.export_path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join("frames");
+                    match frame_capture.export_pngs(&dir) {
+                        Ok(count) => {
+                            recording_state.last_result =
+                                format!("Exported {} PNGs to {:?}", count, dir);
+                        }
+                        Err(e) => {
+                            recording_state.last_result = format!("Export failed: {}", e);
+                        }
+                    }
+                }
+            }
+
+            // Status message
+            if !recording_state.last_result.is_empty() {
+                ui.text_colored([0.7, 0.7, 1.0, 1.0], &recording_state.last_result);
             }
         });
 }

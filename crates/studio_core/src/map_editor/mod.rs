@@ -55,7 +55,7 @@ pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
 pub use render::{
     BaseRenderLayer, FrameCapture, LuaRenderLayer, LuaVisualizer, PixelBuffer, RenderContext,
-    RenderLayer, RenderLayerStack, RenderSurface, RenderSurfaceManager, SharedVisualizer,
-    SurfaceInfo, SurfaceLayout, RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
+    RenderLayer, RenderSurface, RenderSurfaceManager, SharedVisualizer, SurfaceInfo, SurfaceLayout,
+    RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
 pub use voxel_buffer_2d::VoxelBuffer2D;
