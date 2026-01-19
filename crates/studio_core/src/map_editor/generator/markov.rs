@@ -53,7 +53,11 @@ impl Generator for MjGenerator {
     }
 
     fn structure(&self) -> GeneratorStructure {
-        GeneratorStructure::mj_model(&self.path, &self.model.name)
+        GeneratorStructure::mj_model_with_structure(
+            &self.path,
+            &self.model.name,
+            self.model.structure(),
+        )
     }
 
     fn init(&mut self, ctx: &mut GeneratorContext) {

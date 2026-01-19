@@ -524,9 +524,9 @@ Phase 3.5 adds:
 
 | Criticality | Count | Status |
 |-------------|-------|--------|
-| High | 1 | Proposed unit tests for MjLuaModel bugs (M10.4 post-mortem) |
-| Medium | 1 | Duplicate structure representations (M10.5) |
-| Low | 8 | generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture, MjGeneratorPlaceholder can't execute, JSON round-trip, characters duplication |
+| High | 2 | Proposed unit tests (M10.4), **MjGenerator/MjGeneratorPlaceholder duplication (M10.5) - DO NOW** |
+| Medium | 1 | Duplicate structure representations (MjNodeStructure vs GeneratorStructure) |
+| Low | 7 | generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture, JSON round-trip, characters duplication |
 
 ---
 
@@ -550,22 +550,50 @@ These are two different struct types that serve similar purposes. `GeneratorStru
 
 ---
 
-### 2. MjGeneratorPlaceholder Cannot Execute
+### 2. MjGenerator vs MjGeneratorPlaceholder Duplication (CRITICAL)
 
 **Milestone:** M10.5
 
-**Current State:**
-- `MjGeneratorPlaceholder` in `lua_generator.rs` is used for structure introspection only
-- It extracts `mj_structure` from the Lua userdata via JSON serialization/deserialization
-- Its `step()` method just returns `true` immediately (always "done")
+**Current State - THREE separate MJ-related types:**
 
-**Issue:** There are now TWO code paths for MJ models:
-1. **Execution:** Lua calls `MjLuaModel:step()` directly
-2. **Introspection:** Rust creates `MjGeneratorPlaceholder` from Lua userdata
+| Type | Location | Purpose | Actually Used? |
+|------|----------|---------|----------------|
+| `MjGenerator` | `generator/markov.rs` | Full Rust generator with `init/step/reset` | **NO** - orphaned code |
+| `MjGeneratorPlaceholder` | `lua_generator.rs` | Fake generator for introspection only | Yes - for MCP structure |
+| `MjLuaModel` | `markov_junior/lua_api.rs` | Lua userdata wrapping `Model` | Yes - execution path |
 
-The placeholder cannot actually execute the model. If we ever want Rust-side execution of MJ models, we'd need to extract the actual `Model` from the Lua userdata.
+**The Problem:**
 
-**Criticality:** **Low** - Execution via Lua works fine. This is only an issue if we want pure-Rust execution.
+1. `MjGenerator` is a complete, tested implementation that is **never instantiated**
+2. `MjGeneratorPlaceholder` exists because Lua owns the model, so Rust can't execute it
+3. `MjLuaModel` is the actual execution path, but it's not a `Generator`
+
+This creates:
+- **Confusion:** Which is the "real" MJ generator? Answer: none of them do both jobs
+- **Bloat:** 200+ lines of dead code in `markov.rs` 
+- **Inconsistency:** `MjGenerator::structure()` was missing `mj_structure` (just fixed), but it doesn't matter because it's never used
+- **Maintenance burden:** Changes must consider all three types
+
+**Root Cause:**
+
+The architecture evolved backwards:
+1. M8: Made MJ callable from Lua (`MjLuaModel` userdata owns `Model`)
+2. M8.75: Needed Rust `Generator` trait for MCP → created `MjGenerator`
+3. M10.5: Couldn't extract `Model` from Lua → created `MjGeneratorPlaceholder`
+
+**Correct Architecture:**
+
+```
+Current (inverted):
+  Lua owns Model → Rust has placeholder for introspection
+
+Better:
+  Rust owns Model → Lua has thin wrapper for scripting
+```
+
+**Criticality:** **HIGH** - Three types doing partial jobs creates confusion, bloat, and maintenance burden.
+
+**Resolution:** See cleanup spec below.
 
 ---
 
@@ -771,4 +799,112 @@ fn test_mj_model_populates_buffer_after_completion() {
 ### Priority
 
 **High** - These tests would have saved hours of debugging and prevented shipping a broken feature.
+
+---
+
+## Cleanup Spec: MJ Generator Unification
+
+**Goal:** Eliminate `MjGeneratorPlaceholder` and make `MjGenerator` the single source of truth.
+
+### Current Architecture
+
+```
+Lua calls mj.load_model_xml()
+    ↓
+Returns MjLuaModel userdata (owns Model)
+    ↓
+Lua calls model:step() → executes via Model
+    ↓
+For MCP structure: lua_generator.rs creates MjGeneratorPlaceholder
+    ↓
+Placeholder calls Lua mj_structure() → JSON → MjNodeStructure
+    ↓
+MjGenerator in markov.rs sits unused
+```
+
+### Target Architecture
+
+```
+Lua calls mj.load_model_xml()
+    ↓
+Returns MjLuaModel userdata (holds Rc<RefCell<MjGenerator>>)
+    ↓
+MjGenerator owns Model, implements Generator trait
+    ↓
+Lua calls model:step() → MjLuaModel delegates to MjGenerator
+    ↓
+For MCP structure: lua_generator.rs gets MjGenerator directly from userdata
+    ↓
+MjGeneratorPlaceholder deleted - no longer needed
+```
+
+### Key Changes
+
+1. **MjLuaModel holds `Rc<RefCell<MjGenerator>>` instead of `Rc<RefCell<Model>>`**
+   - MjGenerator already owns Model
+   - MjLuaModel becomes a thin Lua wrapper
+
+2. **MjLuaModel methods delegate to MjGenerator**
+   - `init(ctx)` → extract seed, call `generator.init(&mut rust_ctx)`
+   - `step()` → call `generator.step(&mut rust_ctx)`, copy buffer to Lua ctx
+   - `is_done()` → `generator.is_done()`
+   - Structure comes from `generator.structure()` directly
+
+3. **lua_generator.rs extracts MjGenerator from userdata**
+   - Add method to MjLuaModel: `get_generator() -> Rc<RefCell<MjGenerator>>`
+   - `value_to_generator()` clones the Rc and returns it as `Box<dyn Generator>`
+
+4. **Delete MjGeneratorPlaceholder entirely**
+
+### Implementation Tasks
+
+| # | Task | File | Verification |
+|---|------|------|--------------|
+| 1 | Add `MjGenerator::new_with_path()` or setter | `generator/markov.rs` | Compiles |
+| 2 | Change `MjLuaModel.inner` type to `Rc<RefCell<MjGenerator>>` | `lua_api.rs` | Compiles |
+| 3 | Update `mj.load_model_xml()` to create `MjGenerator` | `lua_api.rs` | Compiles |
+| 4 | Update `MjLuaModel::step()` to use MjGenerator | `lua_api.rs` | Tests pass |
+| 5 | Add `MjLuaModel::get_generator()` method | `lua_api.rs` | Compiles |
+| 6 | Update `value_to_generator()` to use real generator | `lua_generator.rs` | Structure returned |
+| 7 | Delete `MjGeneratorPlaceholder` | `lua_generator.rs` | Compiles |
+| 8 | Verify MCP returns `mj_structure` | Manual | `curl` shows structure |
+| 9 | Run all tests | - | `cargo test` passes |
+
+### Verification
+
+```bash
+# 1. Build succeeds
+cargo build --example p_map_editor_2d
+
+# 2. Tests pass
+cargo test -p studio_core
+
+# 3. MCP returns mj_structure
+cargo run --example p_map_editor_2d &
+sleep 6
+curl -s http://127.0.0.1:8088/mcp/generator_state | jq '.structure.children.step_1.mj_structure.node_type'
+# Expected: "Markov"
+
+# 4. Generation still works (visual verification)
+# - App shows generated maze
+# - Stepping works
+
+pkill -f p_map_editor_2d
+```
+
+### Risk Assessment
+
+**Risk:** Breaking Lua execution path
+**Mitigation:** Keep `MjLuaModel` API identical, only change internals
+
+**Risk:** Breaking MCP introspection
+**Mitigation:** Verify with curl after each step
+
+### Estimated Time
+
+2-3 hours
+
+### Decision
+
+**DO NOW** - This is HIGH criticality cleanup that removes confusion and dead code.
 

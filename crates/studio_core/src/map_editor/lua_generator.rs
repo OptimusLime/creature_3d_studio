@@ -480,24 +480,35 @@ fn value_to_generator(_lua: &Lua, value: &Value) -> Option<Box<dyn Generator>> {
             // MjLuaModel has a _type field that returns "MjModel"
             if let Ok(type_name) = ud.get::<String>("_type") {
                 if type_name == "MjModel" {
-                    // Get the model name via the _path field (which contains model info)
+                    // Try to borrow the MjLuaModel and get its structure directly
+                    // MjLuaModel now wraps MjGenerator, which provides proper structure
+                    if let Ok(mj_model) = ud.borrow::<crate::markov_junior::lua_api::MjLuaModel>() {
+                        let structure = mj_model.structure();
+                        return Some(Box::new(MjStructureHolder { structure }));
+                    }
+
+                    // Fallback: try the old JSON method if borrow fails
                     let path: String = ud.get("_path").unwrap_or_else(|_| "root".to_string());
                     let model_name = path.split('.').last().unwrap_or("model").to_string();
 
-                    // Try to get MJ internal structure by calling mj_structure() method
-                    // Returns JSON string that we parse into MjNodeStructure
                     if let Ok(json_str) = ud.call_method::<String>("mj_structure", ()) {
                         if let Ok(mj_struct) =
                             serde_json::from_str::<crate::markov_junior::MjNodeStructure>(&json_str)
                         {
-                            return Some(Box::new(MjGeneratorPlaceholder::with_mj_structure(
-                                model_name, mj_struct,
-                            )));
+                            return Some(Box::new(MjStructureHolder {
+                                structure: GeneratorStructure::mj_model_with_structure(
+                                    &path,
+                                    &model_name,
+                                    mj_struct,
+                                ),
+                            }));
                         }
                     }
 
-                    // Fallback to placeholder without internal structure
-                    return Some(Box::new(MjGeneratorPlaceholder::new(model_name)));
+                    // Last fallback: structure without mj_structure
+                    return Some(Box::new(MjStructureHolder {
+                        structure: GeneratorStructure::mj_model(&path, &model_name),
+                    }));
                 }
             }
             None
@@ -506,51 +517,26 @@ fn value_to_generator(_lua: &Lua, value: &Value) -> Option<Box<dyn Generator>> {
     }
 }
 
-/// Placeholder for MjGenerator when we can't extract the actual Model.
-/// Used purely for structure introspection via MCP.
-struct MjGeneratorPlaceholder {
-    model_name: String,
-    path: String,
-    /// Internal MJ node structure (from mj_structure() method)
-    mj_structure: Option<crate::markov_junior::MjNodeStructure>,
+/// Holder for a pre-computed GeneratorStructure from MjGenerator.
+///
+/// This is used when extracting structure from MjLuaModel for MCP introspection.
+/// The actual MjGenerator lives inside MjLuaModel and provides the structure;
+/// this holder just stores a copy of that structure for the Generator trait.
+struct MjStructureHolder {
+    structure: GeneratorStructure,
 }
 
-impl MjGeneratorPlaceholder {
-    fn new(model_name: String) -> Self {
-        Self {
-            model_name,
-            path: "root".to_string(),
-            mj_structure: None,
-        }
-    }
-
-    fn with_mj_structure(
-        model_name: String,
-        mj_structure: crate::markov_junior::MjNodeStructure,
-    ) -> Self {
-        Self {
-            model_name,
-            path: "root".to_string(),
-            mj_structure: Some(mj_structure),
-        }
-    }
-}
-
-impl Generator for MjGeneratorPlaceholder {
+impl Generator for MjStructureHolder {
     fn type_name(&self) -> &str {
-        "MjModel"
+        &self.structure.type_name
     }
 
     fn path(&self) -> &str {
-        &self.path
+        &self.structure.path
     }
 
     fn structure(&self) -> GeneratorStructure {
-        if let Some(ref mj) = self.mj_structure {
-            GeneratorStructure::mj_model_with_structure(&self.path, &self.model_name, mj.clone())
-        } else {
-            GeneratorStructure::mj_model(&self.path, &self.model_name)
-        }
+        self.structure.clone()
     }
 
     fn init(&mut self, _ctx: &mut super::generator::GeneratorContext) {}
@@ -570,7 +556,7 @@ impl Generator for MjGeneratorPlaceholder {
     }
 
     fn set_path(&mut self, path: String) {
-        self.path = path;
+        self.structure.path = path;
     }
 }
 

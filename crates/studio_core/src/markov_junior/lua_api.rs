@@ -56,6 +56,7 @@ use std::rc::Rc;
 
 use super::model::Model;
 use super::MjGrid;
+use crate::map_editor::generator::{Generator, MjGenerator};
 
 /// Register the MarkovJunior Lua API.
 ///
@@ -85,9 +86,10 @@ pub fn register_markov_junior_api(lua: &Lua) -> LuaResult<()> {
             let model = Model::load(&path).map_err(|e| {
                 mlua::Error::RuntimeError(format!("Failed to load model '{}': {}", path, e))
             })?;
+            let generator = MjGenerator::new(model);
 
             Ok(MjLuaModel {
-                inner: Rc::new(RefCell::new(model)),
+                generator: Rc::new(RefCell::new(generator)),
                 path: Rc::new(RefCell::new("root".to_string())),
                 ctx: Rc::new(RefCell::new(None)),
             })
@@ -227,9 +229,10 @@ pub fn register_markov_junior_api(lua: &Lua) -> LuaResult<()> {
             let model = Model::load_with_size(&path, mx, my, mz).map_err(|e| {
                 mlua::Error::RuntimeError(format!("Failed to load model '{}': {}", path, e))
             })?;
+            let generator = MjGenerator::new(model);
 
             Ok(MjLuaModel {
-                inner: Rc::new(RefCell::new(model)),
+                generator: Rc::new(RefCell::new(generator)),
                 path: Rc::new(RefCell::new("root".to_string())),
                 ctx: Rc::new(RefCell::new(None)),
             })
@@ -294,17 +297,34 @@ fn parse_models_xml(path: &PathBuf) -> std::collections::HashMap<String, (usize,
     result
 }
 
-/// Wrapper around Model for Lua userdata.
+/// Wrapper around MjGenerator for Lua userdata.
 ///
 /// Uses Rc<RefCell<>> to allow shared ownership between Lua values.
 /// Supports scene tree integration via _path and _type fields.
+///
+/// The underlying MjGenerator owns the Model and implements the Generator trait.
+/// This wrapper provides Lua bindings and handles buffer copying to Lua context.
 #[derive(Clone)]
-struct MjLuaModel {
-    inner: Rc<RefCell<Model>>,
+pub struct MjLuaModel {
+    /// The underlying generator (owns Model, provides structure())
+    generator: Rc<RefCell<MjGenerator>>,
     /// Scene tree path (e.g., "root.step_1")
     path: Rc<RefCell<String>>,
     /// Generator context for emitting step info (optional)
     ctx: Rc<RefCell<Option<mlua::RegistryKey>>>,
+}
+
+impl MjLuaModel {
+    /// Get the structure from the underlying generator.
+    ///
+    /// This is used by lua_generator.rs to get the generator structure for MCP introspection,
+    /// eliminating the need for MjGeneratorPlaceholder.
+    pub fn structure(&self) -> crate::map_editor::generator::GeneratorStructure {
+        let mut structure = self.generator.borrow().structure();
+        // Update path from our tracked path (in case it differs)
+        structure.path = self.path.borrow().clone();
+        structure
+    }
 }
 
 impl UserData for MjLuaModel {
@@ -336,29 +356,31 @@ impl UserData for MjLuaModel {
         methods.add_method("init", |_, this, ctx: mlua::AnyUserData| {
             // Get seed from context (set by Rust GeneratorReloadFlag)
             let seed: u64 = ctx.get("seed").unwrap_or(42);
-            this.inner.borrow_mut().reset(seed);
+            this.generator.borrow_mut().model_mut().reset(seed);
             Ok(())
         });
 
         // is_done() -> bool - For scene tree compatibility
         methods.add_method("is_done", |_, this, ()| {
-            Ok(!this.inner.borrow().is_running())
+            Ok(!this.generator.borrow().model().is_running())
         });
 
         // get_structure() -> table - For scene tree introspection
         methods.add_method("get_structure", |lua, this, ()| {
             let table = lua.create_table()?;
+            let gen = this.generator.borrow();
+            let model = gen.model();
             table.set("type", "MjModel")?;
             table.set("path", this.path.borrow().clone())?;
-            table.set("model", this.inner.borrow().name.clone())?;
-            table.set("step", this.inner.borrow().counter())?;
-            table.set("running", this.inner.borrow().is_running())?;
+            table.set("model", model.name.clone())?;
+            table.set("step", model.counter())?;
+            table.set("running", model.is_running())?;
             Ok(table)
         });
 
         // mj_structure() -> string (JSON) - Get internal Markov Jr. node structure
         methods.add_method("mj_structure", |_, this, ()| {
-            let structure = this.inner.borrow().structure();
+            let structure = this.generator.borrow().model().structure();
             let json = serde_json::to_string(&structure).unwrap_or_else(|_| "null".to_string());
             Ok(json)
         });
@@ -367,7 +389,7 @@ impl UserData for MjLuaModel {
         methods.add_method("run", |_, this, args: (u64, Option<usize>)| {
             let (seed, max_steps) = args;
             let max_steps = max_steps.unwrap_or(0);
-            let steps = this.inner.borrow_mut().run(seed, max_steps);
+            let steps = this.generator.borrow_mut().model_mut().run(seed, max_steps);
             Ok(steps)
         });
 
@@ -376,14 +398,15 @@ impl UserData for MjLuaModel {
         // This follows the generator protocol where step() returns true = done, false = not done.
         // After stepping, copy grid to voxel buffer and emit step info if context is available.
         methods.add_method("step", |lua, this, ()| {
-            let _made_progress = this.inner.borrow_mut().step();
-            let is_done = !this.inner.borrow().is_running();
+            let _made_progress = this.generator.borrow_mut().model_mut().step();
+            let is_done = !this.generator.borrow().model().is_running();
 
             // If we have a context, copy grid to buffer and emit step info
             if let Some(ref key) = *this.ctx.borrow() {
                 if let Ok(ctx) = lua.registry_value::<mlua::AnyUserData>(key) {
                     // Get step info from the model
-                    let model = this.inner.borrow();
+                    let gen = this.generator.borrow();
+                    let model = gen.model();
                     let change_count = model.last_step_change_count();
                     let step_num = model.counter();
                     let path = this.path.borrow().clone();
@@ -435,7 +458,7 @@ impl UserData for MjLuaModel {
                     };
 
                     let completed = !model.is_running();
-                    drop(model); // Release borrow before calling Lua
+                    drop(gen); // Release borrow before calling Lua
 
                     // Create info table
                     if let Ok(info) = lua.create_table() {
@@ -461,27 +484,31 @@ impl UserData for MjLuaModel {
 
         // model:reset(seed)
         methods.add_method("reset", |_, this, seed: u64| {
-            this.inner.borrow_mut().reset(seed);
+            this.generator.borrow_mut().model_mut().reset(seed);
             Ok(())
         });
 
         // model:grid() -> MjLuaGrid
         methods.add_method("grid", |_, this, ()| {
             // Clone the grid for Lua access (safe copy)
-            let grid = this.inner.borrow().grid().clone();
+            let grid = this.generator.borrow().model().grid().clone();
             Ok(MjLuaGrid { inner: grid })
         });
 
         // model:is_running() -> bool
         methods.add_method("is_running", |_, this, ()| {
-            Ok(this.inner.borrow().is_running())
+            Ok(this.generator.borrow().model().is_running())
         });
 
         // model:counter() -> usize
-        methods.add_method("counter", |_, this, ()| Ok(this.inner.borrow().counter()));
+        methods.add_method("counter", |_, this, ()| {
+            Ok(this.generator.borrow().model().counter())
+        });
 
         // model:name() -> string
-        methods.add_method("name", |_, this, ()| Ok(this.inner.borrow().name.clone()));
+        methods.add_method("name", |_, this, ()| {
+            Ok(this.generator.borrow().model().name.clone())
+        });
 
         // model:run_animated(config) -> steps
         // config = { seed, max_steps, on_step, on_complete }
@@ -499,13 +526,13 @@ impl UserData for MjLuaModel {
             let on_complete: Option<mlua::Function> = config.get("on_complete").ok();
 
             // Reset the model with the seed
-            this.inner.borrow_mut().reset(seed);
+            this.generator.borrow_mut().model_mut().reset(seed);
 
             let mut step_count = 0;
 
             // Step through execution, calling on_step after each successful step
             loop {
-                let made_progress = this.inner.borrow_mut().step();
+                let made_progress = this.generator.borrow_mut().model_mut().step();
 
                 if made_progress {
                     step_count += 1;
@@ -513,7 +540,7 @@ impl UserData for MjLuaModel {
                     // Call on_step callback if provided
                     if let Some(ref callback) = on_step {
                         // Clone grid for safe Lua access
-                        let grid = this.inner.borrow().grid().clone();
+                        let grid = this.generator.borrow().model().grid().clone();
                         let lua_grid = MjLuaGrid { inner: grid };
                         callback.call::<()>((lua_grid, step_count))?;
                     }
@@ -530,7 +557,7 @@ impl UserData for MjLuaModel {
 
             // Call on_complete callback if provided
             if let Some(callback) = on_complete {
-                let grid = this.inner.borrow().grid().clone();
+                let grid = this.generator.borrow().model().grid().clone();
                 let lua_grid = MjLuaGrid { inner: grid };
                 callback.call::<()>((lua_grid, step_count))?;
             }
@@ -543,7 +570,8 @@ impl UserData for MjLuaModel {
         //
         // C# Reference: Interpreter.cs line 16: public List<(int, int, int)> changes;
         methods.add_method("changes", |lua, this, ()| {
-            let model = this.inner.borrow();
+            let gen = this.generator.borrow();
+            let model = gen.model();
             let changes = model.interpreter.changes();
             let table = lua.create_table()?;
             for (i, &(x, y, z)) in changes.iter().enumerate() {
@@ -560,7 +588,8 @@ impl UserData for MjLuaModel {
         // Returns positions changed in the most recent step only.
         // Uses the 'first' array to determine the boundary.
         methods.add_method("last_changes", |lua, this, ()| {
-            let model = this.inner.borrow();
+            let gen = this.generator.borrow();
+            let model = gen.model();
             let changes = model.interpreter.changes();
             let first = model.interpreter.first();
 
@@ -849,8 +878,9 @@ impl UserData for MjLuaModelBuilder {
         // Build the model without running it
         methods.add_method_mut("build", |_, this, ()| {
             let model = build_model_from_builder(this)?;
+            let generator = MjGenerator::new(model);
             Ok(MjLuaModel {
-                inner: Rc::new(RefCell::new(model)),
+                generator: Rc::new(RefCell::new(generator)),
                 path: Rc::new(RefCell::new("root".to_string())),
                 ctx: Rc::new(RefCell::new(None)),
             })
