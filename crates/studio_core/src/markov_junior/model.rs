@@ -175,6 +175,21 @@ impl Model {
     pub fn is_animated(&self) -> bool {
         self.interpreter.is_animated()
     }
+
+    /// Get the number of cells changed in the last step.
+    ///
+    /// Returns 0 if no steps have been executed or if the last step made no changes.
+    pub fn last_step_change_count(&self) -> usize {
+        self.interpreter.last_step_change_count()
+    }
+
+    /// Get the positions of cells changed in the last step.
+    ///
+    /// Returns an empty slice if no steps have been executed or if the last step
+    /// made no changes.
+    pub fn last_step_changes(&self) -> &[(i32, i32, i32)] {
+        self.interpreter.last_step_changes()
+    }
 }
 
 #[cfg(test)]

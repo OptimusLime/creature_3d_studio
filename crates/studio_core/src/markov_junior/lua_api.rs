@@ -49,7 +49,7 @@
 //! - `grid:size()` - Returns {mx, my, mz}
 //! - `grid:to_table()` - Convert to nested Lua table
 
-use mlua::{Lua, Result as LuaResult, UserData, UserDataMethods};
+use mlua::{Lua, ObjectLike, Result as LuaResult, UserData, UserDataMethods};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -356,8 +356,58 @@ impl UserData for MjLuaModel {
         });
 
         // model:step() -> bool
-        methods.add_method("step", |_, this, ()| {
+        // After stepping, emit step info if context is available
+        methods.add_method("step", |lua, this, ()| {
             let result = this.inner.borrow_mut().step();
+
+            // Emit step info if we have a context
+            if let Some(ref key) = *this.ctx.borrow() {
+                if let Ok(ctx) = lua.registry_value::<mlua::AnyUserData>(key) {
+                    // Get step info from the model
+                    let model = this.inner.borrow();
+                    let change_count = model.last_step_change_count();
+                    let step_num = model.counter();
+                    let path = this.path.borrow().clone();
+
+                    // Get position of first changed cell (for x, y fields)
+                    let (x, y) = if let Some(&(cx, cy, _)) = model.last_step_changes().first() {
+                        (cx as usize, cy as usize)
+                    } else {
+                        (0, 0)
+                    };
+
+                    // Get the material at the changed position
+                    let material_id: u32 = if change_count > 0 {
+                        let (cx, cy, cz) = model.last_step_changes()[0];
+                        model
+                            .grid()
+                            .get(cx as usize, cy as usize, cz as usize)
+                            .unwrap_or(0) as u32
+                    } else {
+                        0
+                    };
+
+                    let completed = !model.is_running();
+                    drop(model); // Release borrow before calling Lua
+
+                    // Create info table
+                    if let Ok(info) = lua.create_table() {
+                        let _ = info.set("step_number", step_num);
+                        let _ = info.set("x", x);
+                        let _ = info.set("y", y);
+                        let _ = info.set("material_id", material_id);
+                        let _ = info.set("completed", completed);
+                        let _ = info.set("affected_cells", change_count);
+                        // rule_name not available from interpreter architecture
+
+                        // Call ctx:emit_step(path, info)
+                        if let Ok(emit_fn) = ctx.get::<mlua::Function>("emit_step") {
+                            let _ = emit_fn.call::<()>((ctx.clone(), path, info));
+                        }
+                    }
+                }
+            }
+
             Ok(result)
         });
 

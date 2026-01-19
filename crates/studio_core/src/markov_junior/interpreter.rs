@@ -296,6 +296,33 @@ impl Interpreter {
     pub fn first(&self) -> &[usize] {
         &self.first
     }
+
+    /// Get the number of cells changed in the last step.
+    ///
+    /// Returns 0 if no steps have been executed or if the last step made no changes.
+    pub fn last_step_change_count(&self) -> usize {
+        if self.first.len() < 2 {
+            return 0;
+        }
+        let last_idx = self.first.len() - 1;
+        let prev_idx = last_idx - 1;
+        self.first[last_idx].saturating_sub(self.first[prev_idx])
+    }
+
+    /// Get the positions of cells changed in the last step.
+    ///
+    /// Returns an empty slice if no steps have been executed or if the last step
+    /// made no changes.
+    pub fn last_step_changes(&self) -> &[(i32, i32, i32)] {
+        if self.first.len() < 2 {
+            return &[];
+        }
+        let last_idx = self.first.len() - 1;
+        let prev_idx = last_idx - 1;
+        let start = self.first[prev_idx];
+        let end = self.first[last_idx];
+        &self.changes[start..end]
+    }
 }
 
 #[cfg(test)]
