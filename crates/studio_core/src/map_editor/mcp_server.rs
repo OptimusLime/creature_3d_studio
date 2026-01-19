@@ -899,7 +899,7 @@ fn handle_mcp_requests(
                     palette.available.len()
                 );
 
-                let ctx = RenderContext::new(&buffer, &palette);
+                let ctx = RenderContext::new(&*buffer, &palette);
 
                 let png_data = if let Some(ref manager) = surface_manager {
                     // If specific surface requested, render just that surface

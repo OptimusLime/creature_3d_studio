@@ -51,12 +51,15 @@
 
 use mlua::{Lua, ObjectLike, Result as LuaResult, UserData, UserDataMethods};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::model::Model;
 use super::MjGrid;
 use crate::map_editor::generator::{Generator, MjGenerator};
+use crate::map_editor::voxel_buffer_2d::VoxelGrid2D;
+use crate::markov_junior::MjGridView;
 
 /// Register the MarkovJunior Lua API.
 ///
@@ -324,6 +327,49 @@ impl MjLuaModel {
         // Update path from our tracked path (in case it differs)
         structure.path = self.path.borrow().clone();
         structure
+    }
+
+    /// Get the underlying generator reference.
+    ///
+    /// This is used for zero-copy rendering: the render system can access
+    /// the MjGrid directly through this Rc.
+    pub fn generator(&self) -> Rc<RefCell<MjGenerator>> {
+        self.generator.clone()
+    }
+
+    /// Execute a function with access to a grid view.
+    ///
+    /// This is the zero-copy rendering path. The closure receives a `MjGridView`
+    /// that translates grid values to material IDs on read.
+    ///
+    /// # Arguments
+    ///
+    /// * `char_to_material` - Mapping from MJ characters to material IDs
+    /// * `f` - Closure that receives the grid view
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// model.with_grid_view(&char_mapping, |view| {
+    ///     let ctx = RenderContext::new(view, &palette);
+    ///     surface.render(&ctx)
+    /// });
+    /// ```
+    pub fn with_grid_view<F, R>(&self, char_to_material: &HashMap<char, u32>, f: F) -> R
+    where
+        F: FnOnce(&MjGridView<'_>) -> R,
+    {
+        let gen = self.generator.borrow();
+        let grid = gen.model().grid();
+        let view = MjGridView::new(grid, char_to_material);
+        f(&view)
+    }
+
+    /// Get grid dimensions.
+    pub fn grid_size(&self) -> (usize, usize) {
+        let gen = self.generator.borrow();
+        let grid = gen.model().grid();
+        (grid.mx, grid.my)
     }
 }
 

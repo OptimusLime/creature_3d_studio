@@ -58,4 +58,4 @@ pub use render::{
     RenderLayer, RenderSurface, RenderSurfaceManager, SharedVisualizer, SurfaceInfo, SurfaceLayout,
     RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
-pub use voxel_buffer_2d::VoxelBuffer2D;
+pub use voxel_buffer_2d::{VoxelBuffer2D, VoxelGrid2D};

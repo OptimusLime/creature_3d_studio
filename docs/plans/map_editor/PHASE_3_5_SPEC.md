@@ -715,12 +715,13 @@ Visual verification:
 
 | Milestone | Time |
 |-----------|------|
+| M10.9 (Unified VoxelBuffer) | 3-4 hours |
 | M10.4 (Multi-Surface Rendering) | 6-8 hours |
 | M10.5 (Structure Introspection) | 4-6 hours |
 | M10.6 (Per-Node Step Info) | 6-8 hours |
 | M10.7 (Step Budget Control) | 2-3 hours |
 | M10.8 (Visualizer Layer) | 4-6 hours |
-| **Total** | **22-31 hours** |
+| **Total** | **25-35 hours** |
 
 ---
 
@@ -730,7 +731,10 @@ Visual verification:
 Phase 3 (M8-M10)
     │
     ▼
-M10.4: Multi-Surface Rendering  ◄── FOUNDATION (everything depends on this)
+M10.9: Unified VoxelBuffer  ◄── FOUNDATION (do this FIRST - unblocks everything)
+    │
+    ▼
+M10.4: Multi-Surface Rendering
     │
     ├───────────────────┐
     ▼                   ▼
@@ -747,6 +751,12 @@ Step Info               │
             ▼
     Phase 4 (Unified Store)
 ```
+
+**M10.9 is prerequisite for everything:**
+- Eliminates buffer copies that slow down visualization
+- Simplifies rendering path (no SharedBuffer → VoxelBuffer2D copy)
+- MJ batch copy makes single-stepping fast enough for visualization
+- Clean foundation before adding more complexity
 
 **Phase 3 → M10.4:**
 - `MjLuaModel` exists and integrates with step info system
@@ -789,6 +799,216 @@ Key patterns to study:
 1. How does it track current node during execution?
 2. How does it render the tree?
 3. How does it highlight affected cells?
+
+---
+
+## M10.9: Unified VoxelBuffer Architecture
+
+**Functionality:** All generators write to the same buffer. Rendering reads from that buffer. No copies, no intermediate buffers.
+
+**Foundation:** Single `VoxelBuffer` with interior mutability that serves as THE authoritative voxel storage.
+
+### Problem Statement
+
+Current architecture has THREE buffer implementations:
+
+```
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│  SharedBuffer   │   │  VoxelBuffer2D  │   │     MjGrid      │
+│ Arc<Mutex<...>> │   │    Vec<u32>     │   │    Vec<u8>      │
+└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
+         │                     │                     │
+         │     copy_to_buffer()│                     │
+         └─────────────────────┘                     │
+                   ▲                                 │
+                   │         per-pixel Lua calls    │
+                   └─────────────────────────────────┘
+```
+
+**Why this is wrong:**
+1. **Bloat:** Three implementations of "array of material IDs"
+2. **Copies:** Data flows SharedBuffer → VoxelBuffer2D (full copy every frame)
+3. **Slow:** MJ copies to SharedBuffer via N Lua calls (one per pixel!)
+4. **Inconsistent:** Different APIs for same concept
+5. **Future debt:** When we add 3D, we'd have SIX implementations
+
+### Target Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       VoxelBuffer                           │
+│                                                             │
+│  data: Arc<RwLock<Vec<u32>>>   (interior mutability)       │
+│  width: usize                                               │
+│  height: usize                                              │
+│  depth: usize  (1 for 2D, >1 for 3D)                       │
+│                                                             │
+│  impl VoxelGrid (read trait)                                │
+│  set(x, y, z, mat) / set_2d(x, y, mat)  (write methods)    │
+│                                                             │
+│  Clone = cheap (Arc clone)                                  │
+│  Can be passed to Lua as UserData                           │
+│  Can be read directly for rendering                         │
+└─────────────────────────────────────────────────────────────┘
+              ▲                           ▲
+              │                           │
+        writes│                     reads │
+              │                           │
+   ┌──────────┴──────────┐     ┌──────────┴──────────┐
+   │     Generators      │     │      Renderer       │
+   │  (Lua, MJ, etc.)    │     │                     │
+   └─────────────────────┘     └─────────────────────┘
+```
+
+**Key properties:**
+- ONE buffer, not three
+- Interior mutability allows sharing without &mut
+- Generators write directly (no intermediate buffer)
+- Renderer reads directly (no copy step)
+- Same buffer works for 2D and 3D (depth=1 vs depth>1)
+
+### MJ Integration
+
+MJ still needs its internal grid for the algorithm (MjGrid stores u8 values 0-N representing characters). But after each step, MJ writes translated material IDs directly to VoxelBuffer:
+
+```rust
+// In MjLuaModel::step(), INSTEAD of N Lua calls:
+fn copy_to_voxel_buffer(mj_grid: &MjGrid, buffer: &VoxelBuffer, char_to_mat: &[u32]) {
+    let mut data = buffer.data.write().unwrap();
+    for y in 0..mj_grid.my {
+        for x in 0..mj_grid.mx {
+            let val = mj_grid.get(x, y, 0).unwrap_or(0) as usize;
+            let mat_id = char_to_mat.get(val).copied().unwrap_or(0);
+            data[y * buffer.width + x] = mat_id;
+        }
+    }
+}
+```
+
+This is ONE Rust function call, not 1024 Lua boundary crossings.
+
+### API Design
+
+```rust
+/// Unified voxel buffer - THE authoritative storage for material IDs.
+/// 
+/// Supports both 2D (depth=1) and 3D modes with the same API.
+/// Uses interior mutability for safe sharing between systems.
+#[derive(Clone)]
+pub struct VoxelBuffer {
+    data: Arc<RwLock<Vec<u32>>>,
+    pub width: usize,
+    pub height: usize,
+    pub depth: usize,
+}
+
+impl VoxelBuffer {
+    /// Create a 2D buffer (depth = 1).
+    pub fn new_2d(width: usize, height: usize) -> Self;
+    
+    /// Create a 3D buffer.
+    pub fn new_3d(width: usize, height: usize, depth: usize) -> Self;
+    
+    /// Write a voxel. Thread-safe.
+    pub fn set(&self, x: usize, y: usize, z: usize, material_id: u32);
+    
+    /// Write a voxel (2D convenience, z=0).
+    pub fn set_2d(&self, x: usize, y: usize, material_id: u32);
+    
+    /// Read a voxel. Thread-safe.
+    pub fn get(&self, x: usize, y: usize, z: usize) -> u32;
+    
+    /// Read a voxel (2D convenience, z=0).
+    pub fn get_2d(&self, x: usize, y: usize) -> u32;
+    
+    /// Clear all voxels to 0.
+    pub fn clear(&self);
+    
+    /// Get read access to underlying data (for batch operations).
+    pub fn read(&self) -> RwLockReadGuard<Vec<u32>>;
+    
+    /// Get write access to underlying data (for batch operations).
+    pub fn write(&self) -> RwLockWriteGuard<Vec<u32>>;
+}
+
+/// Read-only trait for rendering.
+pub trait VoxelGrid {
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+    fn depth(&self) -> usize;
+    fn get(&self, x: usize, y: usize, z: usize) -> u32;
+}
+
+impl VoxelGrid for VoxelBuffer { ... }
+```
+
+### Implementation Tasks
+
+1. **Create unified `VoxelBuffer`** in `map_editor/voxel_buffer.rs`
+   - Interior mutability via `Arc<RwLock<...>>`
+   - Support 2D and 3D with same struct
+   - Implement `VoxelGrid` trait
+
+2. **Delete `SharedBuffer`** from `lua_generator.rs`
+   - Replace with `VoxelBuffer`
+   - `GeneratorContext` holds `VoxelBuffer` directly
+
+3. **Delete `VoxelBuffer2D`** 
+   - Replace all uses with `VoxelBuffer`
+   - Update `RenderContext` to take `&dyn VoxelGrid`
+
+4. **Update Lua bindings**
+   - `ctx:set_voxel(x, y, mat)` writes to `VoxelBuffer`
+   - `ctx:get_voxel(x, y)` reads from `VoxelBuffer`
+
+5. **Update MJ integration**
+   - `MjLuaModel::step()` calls batch copy function (Rust-side)
+   - Remove per-pixel Lua calls
+   - Pass `VoxelBuffer` reference to MJ, not registry key dance
+
+6. **Update renderer**
+   - `RenderContext::new(buffer: &dyn VoxelGrid, palette: &MaterialPalette)`
+   - Remove `copy_to_buffer()` call in `run_generator_step`
+
+7. **Update tests**
+   - All tests use `VoxelBuffer`
+   - Verify no copies occur
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `map_editor/voxel_buffer.rs` | NEW - Unified `VoxelBuffer` |
+| `map_editor/voxel_buffer_2d.rs` | DELETE |
+| `map_editor/lua_generator.rs` | Remove `SharedBuffer`, use `VoxelBuffer` |
+| `map_editor/render/mod.rs` | Update `RenderContext` to use `VoxelGrid` trait |
+| `map_editor/mcp_server.rs` | Update to use `VoxelBuffer` |
+| `markov_junior/lua_api.rs` | Batch copy instead of per-pixel Lua calls |
+| `map_editor/mod.rs` | Update exports |
+
+### Verification
+
+```bash
+# Build succeeds
+cargo build -p studio_core
+
+# All map_editor tests pass
+cargo test -p studio_core map_editor
+
+# Run example - should work identically
+cargo run --example p_map_editor_2d
+
+# Performance: MJ step should be faster (no N Lua calls)
+# Measure with: time for generation of 32x32 MazeGrowth
+```
+
+### Why This Matters
+
+1. **Library-centric:** One abstraction, not three feature-specific implementations
+2. **Zero-copy rendering:** Read directly from authoritative buffer
+3. **Accelerates Phase 4:** 3D support is just `depth > 1`, no new buffer type
+4. **Cleaner code:** Delete ~100 lines of SharedBuffer + copy logic
+5. **Faster MJ:** Batch copy vs N Lua calls = massive speedup
 
 ---
 

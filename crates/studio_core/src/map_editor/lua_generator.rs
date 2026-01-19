@@ -281,6 +281,35 @@ impl UserData for GeneratorContext {
             this.buffer.emit_step(pending);
             Ok(())
         });
+
+        // Batch copy from MJ grid - replaces N set_voxel calls with one Rust operation.
+        // Arguments: grid_data (flat u8 array), width, height, characters (e.g. "BWR")
+        // This uses the mj_char_map to translate MJ values to material IDs.
+        methods.add_method(
+            "copy_mj_grid",
+            |_, this, (grid_data, width, height, characters): (Vec<u8>, usize, usize, String)| {
+                // Build value-to-material mapping from characters string
+                let chars: Vec<char> = characters.chars().collect();
+                let value_to_mat: Vec<u32> = chars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &ch)| this.mj_char_map.get(&ch).copied().unwrap_or(i as u32 + 1))
+                    .collect();
+
+                // Batch copy with translation
+                let mut data = this.buffer.data.lock().unwrap();
+                let mx = width.min(this.buffer.width);
+                let my = height.min(this.buffer.height);
+                for y in 0..my {
+                    for x in 0..mx {
+                        let val = grid_data[y * width + x] as usize;
+                        let mat_id = value_to_mat.get(val).copied().unwrap_or(0);
+                        data[y * this.buffer.width + x] = mat_id;
+                    }
+                }
+                Ok(())
+            },
+        );
     }
 }
 

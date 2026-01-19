@@ -38,7 +38,7 @@ pub use surface::{RenderSurface, RenderSurfaceManager, SurfaceInfo, SurfaceLayou
 pub use visualizer::{LuaVisualizer, SharedVisualizer, VISUALIZER_LUA_PATH};
 
 use super::material::MaterialPalette;
-use super::voxel_buffer_2d::VoxelBuffer2D;
+use super::voxel_buffer_2d::{VoxelBuffer2D, VoxelGrid2D};
 
 /// Trait for render layers that can draw into a pixel buffer.
 ///
@@ -61,32 +61,43 @@ pub trait RenderLayer: Send + Sync {
 }
 
 /// Context passed to render layers containing shared data.
+///
+/// The grid can be any implementation of `VoxelGrid2D`:
+/// - `VoxelBuffer2D`: Direct buffer access (for Lua generators)
+/// - `MjGridView`: Zero-copy view with translation (for MJ generators)
 pub struct RenderContext<'a> {
-    /// The voxel buffer to render.
-    pub buffer: &'a VoxelBuffer2D,
+    /// The voxel grid to render (trait object for flexibility).
+    pub grid: &'a dyn VoxelGrid2D,
     /// Material palette for color lookups.
     pub palette: &'a MaterialPalette,
 }
 
 impl<'a> RenderContext<'a> {
-    /// Create a new render context.
-    pub fn new(buffer: &'a VoxelBuffer2D, palette: &'a MaterialPalette) -> Self {
-        Self { buffer, palette }
+    /// Create a new render context with any VoxelGrid2D implementation.
+    pub fn new(grid: &'a dyn VoxelGrid2D, palette: &'a MaterialPalette) -> Self {
+        Self { grid, palette }
     }
 
-    /// Get the width of the buffer.
+    /// Create a render context from a VoxelBuffer2D (convenience method).
+    ///
+    /// This is the most common case for Lua-based generators.
+    pub fn from_buffer(buffer: &'a VoxelBuffer2D, palette: &'a MaterialPalette) -> Self {
+        Self::new(buffer, palette)
+    }
+
+    /// Get the width of the grid.
     pub fn width(&self) -> usize {
-        self.buffer.width
+        self.grid.width()
     }
 
-    /// Get the height of the buffer.
+    /// Get the height of the grid.
     pub fn height(&self) -> usize {
-        self.buffer.height
+        self.grid.height()
     }
 
     /// Get the voxel (material ID) at a position.
     pub fn get_voxel(&self, x: usize, y: usize) -> u32 {
-        self.buffer.get(x, y)
+        self.grid.get(x, y)
     }
 
     /// Get material color by ID, returns None if not found.
