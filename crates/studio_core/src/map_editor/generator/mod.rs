@@ -89,6 +89,46 @@ impl CurrentStepInfo {
     }
 }
 
+/// Resource that holds registered generator listeners.
+///
+/// The generator calls all listeners when it emits step events.
+/// Listeners can be added/removed dynamically.
+#[derive(Resource, Default)]
+pub struct GeneratorListeners {
+    listeners: Vec<Box<dyn GeneratorListener>>,
+}
+
+impl GeneratorListeners {
+    /// Add a listener.
+    pub fn add(&mut self, listener: Box<dyn GeneratorListener>) {
+        self.listeners.push(listener);
+    }
+
+    /// Notify all listeners of a step.
+    pub fn notify_step(&mut self, info: &StepInfo) {
+        for listener in &mut self.listeners {
+            listener.on_step(info);
+        }
+    }
+
+    /// Notify all listeners of a reset.
+    pub fn notify_reset(&mut self) {
+        for listener in &mut self.listeners {
+            listener.on_reset();
+        }
+    }
+
+    /// Get the number of registered listeners.
+    pub fn len(&self) -> usize {
+        self.listeners.len()
+    }
+
+    /// Check if there are no listeners.
+    pub fn is_empty(&self) -> bool {
+        self.listeners.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

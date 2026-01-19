@@ -1,125 +1,67 @@
-//! Lua renderer hot-reload plugin for the map editor.
+//! Lua renderer plugin for the map editor.
 //!
-//! Watches the renderer Lua file and reloads it when changed.
-//! Works with the `RenderLayerStack` to update the Lua-based render layer.
+//! Manages the base render layer with hot-reload support.
 
+use super::hot_reload::{check_hot_reload, setup_hot_reload, HotReloadConfig, HotReloadFlag};
 use super::render::{LuaRenderLayer, RenderLayerStack, RENDERER_LUA_PATH};
 use bevy::prelude::*;
-use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::Path;
-use std::sync::mpsc::{channel, Receiver};
+
+/// Marker type for renderer hot-reload.
+pub struct RendererMarker;
+
+/// Type alias for cleaner API.
+pub type RendererReloadFlag = HotReloadFlag<RendererMarker>;
 
 /// Plugin that enables hot-reload for Lua renderers.
 pub struct LuaRendererPlugin {
     /// Path to the renderer directory to watch.
-    pub path: String,
+    pub watch_path: String,
+    /// Path to the Lua file.
+    pub lua_path: String,
 }
 
 impl Default for LuaRendererPlugin {
     fn default() -> Self {
         Self {
-            path: "assets/map_editor/renderers".to_string(),
+            watch_path: "assets/map_editor/renderers".to_string(),
+            lua_path: RENDERER_LUA_PATH.to_string(),
         }
     }
 }
 
 impl Plugin for LuaRendererPlugin {
     fn build(&self, app: &mut App) {
-        let path = self.path.clone();
+        app.insert_resource(HotReloadConfig::<RendererMarker>::new(
+            &self.watch_path,
+            &self.lua_path,
+        ));
+        app.insert_resource(HotReloadFlag::<RendererMarker>::default());
 
-        app.insert_resource(LuaRendererConfig { path: path.clone() });
-        app.insert_resource(RendererReloadFlag { needs_reload: true }); // Load on first frame
-
-        app.add_systems(Startup, setup_renderer_watcher);
-        app.add_systems(Update, (check_renderer_reload, reload_renderer).chain());
-    }
-}
-
-/// Configuration for the Lua renderer.
-#[derive(Resource)]
-pub struct LuaRendererConfig {
-    pub path: String,
-}
-
-/// Flag to trigger renderer reload.
-#[derive(Resource)]
-pub struct RendererReloadFlag {
-    pub needs_reload: bool,
-}
-
-/// Resource holding the file watcher for renderers.
-struct RendererWatcher {
-    _watcher: RecommendedWatcher,
-    receiver: Receiver<Result<Event, notify::Error>>,
-}
-
-/// Setup the file watcher for the renderer directory and add initial base layer.
-fn setup_renderer_watcher(world: &mut World) {
-    // Get config path first, clone to avoid borrow issues
-    let watch_path_str = world.resource::<LuaRendererConfig>().path.clone();
-    let watch_path = Path::new(&watch_path_str);
-
-    // Add initial base layer to render stack (will be reloaded from Lua on first update)
-    let base_layer = LuaRenderLayer::new("base", RENDERER_LUA_PATH);
-    if let Some(mut stack) = world.get_resource_mut::<RenderLayerStack>() {
-        stack.add_layer(Box::new(base_layer));
-        info!("Added base render layer to stack");
-    }
-
-    let (tx, rx) = channel();
-
-    let mut watcher = match recommended_watcher(move |res| {
-        let _ = tx.send(res);
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            error!("Failed to create renderer file watcher: {:?}", e);
-            return;
-        }
-    };
-
-    if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-        error!(
-            "Failed to watch renderer directory {:?}: {:?}",
-            watch_path, e
+        app.add_systems(
+            Startup,
+            (setup_renderer, setup_hot_reload::<RendererMarker>).chain(),
         );
-        return;
+        app.add_systems(
+            Update,
+            (check_hot_reload::<RendererMarker>, reload_renderer).chain(),
+        );
     }
-
-    info!("Hot reload enabled for renderers at {}", watch_path_str);
-
-    world.insert_non_send_resource(RendererWatcher {
-        _watcher: watcher,
-        receiver: rx,
-    });
 }
 
-/// Check for file changes and set reload flag.
-fn check_renderer_reload(
-    watcher: Option<NonSend<RendererWatcher>>,
-    mut reload_flag: ResMut<RendererReloadFlag>,
+/// Setup the initial base layer in the render stack.
+fn setup_renderer(
+    mut render_stack: ResMut<RenderLayerStack>,
+    config: Res<HotReloadConfig<RendererMarker>>,
 ) {
-    let Some(watcher) = watcher else { return };
-
-    while let Ok(event) = watcher.receiver.try_recv() {
-        if let Ok(event) = event {
-            for path in &event.paths {
-                // Check if it's a Lua file in the renderers directory
-                if path.extension().map(|e| e == "lua").unwrap_or(false) {
-                    info!(
-                        "Detected change in renderer {:?}, scheduling reload...",
-                        path.file_name()
-                    );
-                    reload_flag.needs_reload = true;
-                }
-            }
-        }
-    }
+    let base_layer = LuaRenderLayer::new("base", &config.lua_path);
+    render_stack.add_layer(Box::new(base_layer));
+    info!("Added base render layer to stack");
 }
 
 /// Reload the Lua renderer when flag is set.
 fn reload_renderer(
-    mut reload_flag: ResMut<RendererReloadFlag>,
+    config: Res<HotReloadConfig<RendererMarker>>,
+    mut reload_flag: ResMut<HotReloadFlag<RendererMarker>>,
     mut render_stack: ResMut<RenderLayerStack>,
 ) {
     if !reload_flag.needs_reload {
@@ -129,8 +71,7 @@ fn reload_renderer(
 
     info!("Reloading Lua renderer...");
 
-    // Create and reload the layer, then replace it in the stack
-    let mut lua_layer = LuaRenderLayer::new("base", RENDERER_LUA_PATH);
+    let mut lua_layer = LuaRenderLayer::new("base", &config.lua_path);
     if let Err(e) = lua_layer.reload() {
         error!("Failed to reload Lua renderer: {}", e);
     } else {

@@ -95,11 +95,6 @@ struct LuaRenderContext {
     // We store the voxel and material data as copies since RenderContext borrows
     voxels: Vec<u32>,
     material_colors: Vec<Option<[f32; 3]>>,
-    // Step info for visualizers
-    step_x: Option<usize>,
-    step_y: Option<usize>,
-    step_material_id: Option<u32>,
-    step_completed: bool,
 }
 
 impl LuaRenderContext {
@@ -118,27 +113,11 @@ impl LuaRenderContext {
             material_colors.push(ctx.get_material_color(id));
         }
 
-        // Extract step info if available
-        let (step_x, step_y, step_material_id, step_completed) = if let Some(info) = ctx.step_info {
-            (
-                Some(info.x),
-                Some(info.y),
-                Some(info.material_id),
-                info.completed,
-            )
-        } else {
-            (None, None, None, false)
-        };
-
         Self {
             width: ctx.width(),
             height: ctx.height(),
             voxels,
             material_colors,
-            step_x,
-            step_y,
-            step_material_id,
-            step_completed,
         }
     }
 
@@ -159,11 +138,6 @@ impl UserData for LuaRenderContext {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("width", |_, this| Ok(this.width));
         fields.add_field_method_get("height", |_, this| Ok(this.height));
-        // Step info fields for visualizers
-        fields.add_field_method_get("step_x", |_, this| Ok(this.step_x));
-        fields.add_field_method_get("step_y", |_, this| Ok(this.step_y));
-        fields.add_field_method_get("step_material_id", |_, this| Ok(this.step_material_id));
-        fields.add_field_method_get("step_completed", |_, this| Ok(this.step_completed));
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
@@ -177,9 +151,6 @@ impl UserData for LuaRenderContext {
                 None => Ok((None, None, None)),
             }
         });
-
-        // Check if step info is available
-        methods.add_method("has_step_info", |_, this, ()| Ok(this.step_x.is_some()));
     }
 }
 

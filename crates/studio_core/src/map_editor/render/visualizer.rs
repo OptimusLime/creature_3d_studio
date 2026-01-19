@@ -1,8 +1,8 @@
 //! Lua-based generator visualizer with hot reload support.
 //!
-//! The visualizer renders an overlay showing the current generation state
-//! (e.g., highlighting the most recently filled cell). Step info is passed
-//! through the render context.
+//! The visualizer implements `GeneratorListener` to receive step events
+//! and `RenderLayer` to render an overlay. Step info is stored internally,
+//! NOT passed through RenderContext.
 //!
 //! # Lua Protocol
 //!
@@ -24,6 +24,7 @@
 //! ```
 
 use super::{PixelBuffer, RenderContext, RenderLayer};
+use crate::map_editor::generator::{GeneratorListener, StepInfo};
 use bevy::prelude::*;
 use mlua::{Function, Lua, Table, UserData, UserDataMethods};
 use std::path::{Path, PathBuf};
@@ -32,13 +33,18 @@ use std::sync::{Arc, Mutex};
 /// Default path for the visualizer Lua script.
 pub const VISUALIZER_LUA_PATH: &str = "assets/map_editor/visualizers/step_highlight.lua";
 
-/// A visualizer implemented in Lua that renders overlays based on step info.
+/// A visualizer implemented in Lua that receives step events and renders overlays.
+///
+/// Implements both `GeneratorListener` (to receive step events) and `RenderLayer`
+/// (to render the overlay). Step info is stored internally.
 pub struct LuaVisualizer {
     name: String,
     lua: Lua,
     visualizer_table: Option<Table>,
     enabled: bool,
     path: PathBuf,
+    /// Current step info, updated by on_step()
+    current_step: Option<StepInfo>,
 }
 
 impl LuaVisualizer {
@@ -54,6 +60,7 @@ impl LuaVisualizer {
             visualizer_table: None,
             enabled: true,
             path,
+            current_step: None,
         }
     }
 
@@ -91,23 +98,39 @@ impl LuaVisualizer {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Get the current step info (for rendering).
+    pub fn current_step(&self) -> Option<&StepInfo> {
+        self.current_step.as_ref()
+    }
 }
 
-/// Wrapper for RenderContext to expose to Lua.
-struct LuaRenderContext {
+impl GeneratorListener for LuaVisualizer {
+    fn on_step(&mut self, info: &StepInfo) {
+        self.current_step = Some(info.clone());
+    }
+
+    fn on_reset(&mut self) {
+        self.current_step = None;
+    }
+}
+
+/// Wrapper for context to expose to Lua during rendering.
+/// Includes step info from the visualizer's internal state.
+struct LuaVisualizerContext {
     width: usize,
     height: usize,
     voxels: Vec<u32>,
     material_colors: Vec<Option<[f32; 3]>>,
-    // Step info for visualizers
+    // Step info from visualizer's internal state
     step_x: Option<usize>,
     step_y: Option<usize>,
     step_material_id: Option<u32>,
     step_completed: bool,
 }
 
-impl LuaRenderContext {
-    fn from_context(ctx: &RenderContext) -> Self {
+impl LuaVisualizerContext {
+    fn new(ctx: &RenderContext, step_info: Option<&StepInfo>) -> Self {
         let mut voxels = Vec::with_capacity(ctx.width() * ctx.height());
         for y in 0..ctx.height() {
             for x in 0..ctx.width() {
@@ -120,8 +143,8 @@ impl LuaRenderContext {
             material_colors.push(ctx.get_material_color(id));
         }
 
-        // Extract step info if available
-        let (step_x, step_y, step_material_id, step_completed) = if let Some(info) = ctx.step_info {
+        // Extract step info from visualizer's internal state (NOT RenderContext)
+        let (step_x, step_y, step_material_id, step_completed) = if let Some(info) = step_info {
             (
                 Some(info.x),
                 Some(info.y),
@@ -157,11 +180,11 @@ impl LuaRenderContext {
     }
 }
 
-impl UserData for LuaRenderContext {
+impl UserData for LuaVisualizerContext {
     fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("width", |_, this| Ok(this.width));
         fields.add_field_method_get("height", |_, this| Ok(this.height));
-        // Step info fields for visualizers
+        // Step info fields
         fields.add_field_method_get("step_x", |_, this| Ok(this.step_x));
         fields.add_field_method_get("step_y", |_, this| Ok(this.step_y));
         fields.add_field_method_get("step_material_id", |_, this| Ok(this.step_material_id));
@@ -180,7 +203,6 @@ impl UserData for LuaRenderContext {
             }
         });
 
-        // Check if step info is available
         methods.add_method("has_step_info", |_, this, ()| Ok(this.step_x.is_some()));
     }
 }
@@ -259,8 +281,8 @@ impl RenderLayer for LuaVisualizer {
             }
         };
 
-        // Create Lua-compatible wrappers
-        let lua_ctx = LuaRenderContext::from_context(ctx);
+        // Create Lua context with step info from visualizer's internal state
+        let lua_ctx = LuaVisualizerContext::new(ctx, self.current_step.as_ref());
         let shared_pixels = Arc::new(Mutex::new(pixels.clone()));
         let lua_pixels = LuaPixelBuffer::new(Arc::clone(&shared_pixels));
 
@@ -283,6 +305,64 @@ impl RenderLayer for LuaVisualizer {
 unsafe impl Send for LuaVisualizer {}
 unsafe impl Sync for LuaVisualizer {}
 
+/// Shared visualizer that can be used as both a listener and a render layer.
+///
+/// Wraps `LuaVisualizer` in `Arc<Mutex>` so it can be:
+/// - Registered as a `GeneratorListener`
+/// - Added to `RenderLayerStack` as a `RenderLayer`
+#[derive(Clone)]
+pub struct SharedVisualizer {
+    inner: Arc<Mutex<LuaVisualizer>>,
+}
+
+impl SharedVisualizer {
+    /// Create a new shared visualizer.
+    pub fn new(visualizer: LuaVisualizer) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(visualizer)),
+        }
+    }
+
+    /// Get access to the inner visualizer for reloading.
+    pub fn lock(&self) -> std::sync::MutexGuard<'_, LuaVisualizer> {
+        self.inner.lock().unwrap()
+    }
+}
+
+impl GeneratorListener for SharedVisualizer {
+    fn on_step(&mut self, info: &StepInfo) {
+        if let Ok(mut vis) = self.inner.lock() {
+            vis.on_step(info);
+        }
+    }
+
+    fn on_reset(&mut self) {
+        if let Ok(mut vis) = self.inner.lock() {
+            vis.on_reset();
+        }
+    }
+}
+
+impl RenderLayer for SharedVisualizer {
+    fn name(&self) -> &str {
+        "visualizer"
+    }
+
+    fn enabled(&self) -> bool {
+        if let Ok(vis) = self.inner.lock() {
+            vis.enabled()
+        } else {
+            false
+        }
+    }
+
+    fn render(&self, ctx: &RenderContext, pixels: &mut PixelBuffer) {
+        if let Ok(vis) = self.inner.lock() {
+            vis.render(ctx, pixels);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +373,26 @@ mod tests {
         assert_eq!(vis.name(), "test");
         assert!(!vis.is_loaded());
         assert!(vis.enabled());
+        assert!(vis.current_step().is_none());
+    }
+
+    #[test]
+    fn test_visualizer_listener() {
+        let mut vis = LuaVisualizer::new("test", "test.lua");
+
+        // Initially no step info
+        assert!(vis.current_step().is_none());
+
+        // Receive a step
+        vis.on_step(&StepInfo::new(0, 5, 3, 42, false));
+        let step = vis.current_step().unwrap();
+        assert_eq!(step.x, 5);
+        assert_eq!(step.y, 3);
+        assert_eq!(step.material_id, 42);
+        assert!(!step.completed);
+
+        // Reset clears step info
+        vis.on_reset();
+        assert!(vis.current_step().is_none());
     }
 }

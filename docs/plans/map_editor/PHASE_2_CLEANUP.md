@@ -218,75 +218,42 @@ Verified with `scripts/verify_m5_renderer_hotreload.py` - PNG output hash change
 
 ## M6 Audit: Generator Visualizer
 
-### 1. Visualizer Plugin Duplicates Pattern from Renderer Plugin
+### 1. ~~Visualizer Plugin Duplicates Pattern from Renderer Plugin~~ ✅ COMPLETED
 
 **Milestone:** M6 (Generator Visualizer)
 
-**Current State:**
-```rust
-// lua_renderer.rs and lua_visualizer.rs have nearly identical patterns:
-// - Config resource
-// - ReloadFlag resource
-// - setup_X system (Startup)
-// - check_X_reload system (Update)
-// - reload_X system (Update)
-```
+**Resolution:** Created generic `hot_reload.rs` module with:
+- `HotReloadConfig<T>` - generic config holding watch path and lua path
+- `HotReloadFlag<T>` - generic reload flag
+- `setup_hot_reload<T>` - generic file watcher setup
+- `check_hot_reload<T>` - generic file change detection
 
-**Why:** Both plugins follow the same hot-reload pattern with file watching. The code is almost identical.
-
-**Proposed Change:** Extract a generic `HotReloadPlugin<T>` that takes a loader function and path.
-
-**Criticality:** **Low** - Both plugins work correctly. The duplication is ~100 lines but doesn't cause bugs.
-
-**When to Do:** Consider for Phase 3 if we add more hot-reloadable assets.
+Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructure, reducing each from ~140 lines to ~70 lines.
 
 ---
 
-### 2. GeneratorListener Trait Not Used
+### 2. ~~GeneratorListener Trait Not Used~~ ✅ COMPLETED
 
 **Milestone:** M6 (Generator Visualizer)
 
-**Current State:**
-```rust
-// generator/mod.rs defines:
-pub trait GeneratorListener: Send + Sync {
-    fn on_step(&mut self, info: &StepInfo);
-    fn on_reset(&mut self) { /* default */ }
-}
-```
-
-**Why:** The trait was designed for the visualizer to receive step events, but the actual implementation passes step info through `RenderContext` instead. This is simpler and avoids the complexity of managing trait objects.
-
-**Proposed Change:** Either:
-- Remove the trait (we're not using it)
-- Keep it for future use (logging, analytics, debugging tools)
-
-**Criticality:** **Low** - Unused code doesn't cause problems.
-
-**When to Do:** Can be removed if we're confident we won't need it. Keep if future milestones might use listener pattern.
+**Resolution:** Now properly used! The architecture was fixed:
+- `GeneratorListeners` resource holds list of listeners
+- Generator calls `listeners.notify_step(info)` when it fills a cell
+- `SharedVisualizer` wraps `LuaVisualizer` in `Arc<Mutex<>>` so same instance can be both `GeneratorListener` AND `RenderLayer`
+- Visualizer stores step info internally via `on_step()` callback, reads during render
+- Removed `step_info` from `RenderContext` (visualizer no longer needs it passed through)
 
 ---
 
-### 3. VisualizerState Resource Unused
+### 3. ~~VisualizerState Resource Unused~~ ✅ COMPLETED
 
 **Milestone:** M6 (Generator Visualizer)
 
-**Current State:**
-```rust
-// lua_visualizer.rs creates but doesn't use:
-#[derive(Resource)]
-pub struct VisualizerState {
-    pub visualizer: LuaVisualizer,
-}
-```
-
-**Why:** Originally planned for the visualizer to be updated via the ECS resource, but the actual implementation recreates the visualizer in `RenderLayerStack` on reload.
-
-**Proposed Change:** Remove `VisualizerState` or use it consistently.
-
-**Criticality:** **Low** - Unused resource, doesn't affect functionality.
-
-**When to Do:** Can be removed when cleaning up M6 code.
+**Resolution:** `VisualizerState` now holds `SharedVisualizer` and is properly used:
+- `setup_visualizer` creates `SharedVisualizer` and stores in `VisualizerState`
+- Same `SharedVisualizer` is added to both `RenderLayerStack` and `GeneratorListeners`
+- `reload_visualizer` uses `VisualizerState` to access and reload the visualizer in-place
+- Because it's `Arc<Mutex<>>`, the render stack and listener registry both see the reloaded visualizer
 
 ---
 
@@ -300,9 +267,9 @@ pub struct VisualizerState {
 | Duplicate PNG code | Defer | Low criticality, works fine |
 | Lua hot reload not integrated | ✅ Done during M5 cleanup | Created `LuaRendererPlugin` with file watcher |
 | BaseRenderLayer vs LuaRenderLayer | ✅ Done during M5 cleanup | App now uses `LuaRendererPlugin` |
-| Hot-reload plugin duplication | Defer | Low criticality, consider for Phase 3 |
-| GeneratorListener unused | Defer | Keep for potential future use |
-| VisualizerState unused | Defer | Low criticality |
+| Hot-reload plugin duplication | ✅ Done during M6 cleanup | Created generic `hot_reload.rs` module |
+| GeneratorListener unused | ✅ Done during M6 cleanup | Generator now calls listeners, visualizer implements trait |
+| VisualizerState unused | ✅ Done during M6 cleanup | Now holds SharedVisualizer, used for reload |
 
 ---
 
@@ -312,9 +279,9 @@ pub struct VisualizerState {
 |-------------|-------|--------|
 | High | 0 | - |
 | Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
-| Low | 6 | 1 Completed (M4.5), 5 Deferred |
+| Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
 
-**M6 Cleanup complete.** No blocking items. M6 functionality verified with `verify_m6_visualizer.py` script.
+**M6 Cleanup complete.** All M6 items resolved. M6 functionality verified with `verify_m6_visualizer.py` script.
 
 ---
 
@@ -333,5 +300,11 @@ All four milestones completed:
 4. Hot-reload pattern for Lua assets (renderers, visualizers)
 
 **Deferred Cleanup Items:**
-- 5 low-criticality items deferred to Phase 3
+- 2 low-criticality items deferred to Phase 3 (MCP Error variant, Duplicate PNG code)
 - No blocking technical debt identified
+
+**M6 Cleanup Refactor:**
+- Created generic `hot_reload.rs` module (reduced duplication by ~70 lines per plugin)
+- Fixed GeneratorListener pattern (generator calls listeners, not render layers reading context)
+- Created `SharedVisualizer` wrapper for proper Arc<Mutex<>> sharing
+- Removed `step_info` from `RenderContext` (visualizer stores internally)
