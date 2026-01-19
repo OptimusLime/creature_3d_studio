@@ -11,6 +11,7 @@
 | **1. Foundation** | I can edit Lua materials and generators, see changes live in 2D, and external AI can create assets via MCP. Playback controls let me step through generation. |
 | **2. Lua Rendering + Visualization** | I can define how terrain is rendered and visualized in Lua. I can see which rules the generator is executing as it runs. |
 | **3. Advanced Generation** | I can load Markov Jr. models, chain generators together, and save/load generation checkpoints—all in 2D. |
+| **3.5. Markov Jr. Introspection** | I can see inside Markov Jr. models—their node structure, which rules are firing, with fine-grained step control and dedicated visualization. |
 | **4. Unified Asset Store (Database-Backed)** | All my Lua assets (materials, generators, renderers, visualizers) live in a database with unified search. I can browse, search semantically, and AI can write assets that appear automatically. |
 | **5. 3D Upgrade** | I can generate and render 3D terrain with PBR materials. Wet stone looks different from dry stone. |
 | **6. Polish** | When my Lua script has an error, I see the message and can fix it without losing state. |
@@ -161,6 +162,62 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 - Load state, continue from where we left off
 - Uses existing MJ sim file format
 - Implements: State serialization, checkpoint save/load UI
+
+---
+
+## Phase 3.5: Markov Jr. Introspection & Visualization
+
+*Removes the opacity of Markov Jr. models by exposing their internal structure and per-node step info.*
+
+### M10.5: Markov Jr. Structure Introspection
+**Functionality:** I can see the internal node tree of a Markov Jr. model via MCP.
+
+**Foundation:** `MjNode` trait with `structure()` method. All Markov nodes (MarkovNode, SequenceNode, OneNode, etc.) implement this trait. Structure is serializable and returned via `GET /mcp/generator_state`.
+
+- MCP returns nested structure: `{"type":"Sequence","children":[{"type":"Markov","children":[{"type":"One","rules":["WB=WW"]}]}]}`
+- Structure includes rule strings for leaf nodes (OneNode, AllNode)
+- Node paths follow same convention as Lua generators (e.g., "root.step_1.markov.children[0]")
+- Implements: `MjNode::structure()` on all node types, serialization
+
+---
+
+### M10.6: Per-Node Step Info from Markov Jr.
+**Functionality:** I can see which specific Markov Jr. node made a change and what rule it applied.
+
+**Foundation:** `ExecutionContext` extended with `current_path` tracking. Nodes push/pop their path during `go()`. Step info includes the full path to the node that made the change.
+
+- Step info includes `path` field showing exact node (e.g., "root.step_1.markov.one[0]")
+- Step info includes `rule_name` when applicable (e.g., "WB=WW")
+- Multiple nodes in parallel emit separate step info entries
+- MCP `steps` field keyed by full path, not just top-level generator path
+- Implements: Path tracking in `ExecutionContext`, node-level step emission
+
+---
+
+### M10.7: Markov Jr. Step Budget Control
+**Functionality:** I can control exactly how many atomic rule applications happen per frame.
+
+**Foundation:** Step budget system that counts rule applications, not `interpreter.step()` calls. Visualizer can request fine-grained stepping (1 rule at a time) or coarse stepping (100 rules per frame).
+
+- New `step_budget` parameter: "how many rule applications this frame"
+- `interpreter.step_n(budget)` runs until budget exhausted or completion
+- Each rule application emits step info (path, rule, affected cells)
+- Playback UI can set budget: single-step mode (budget=1) vs fast-forward (budget=1000)
+- Implements: Budget-aware stepping, step info per rule application
+
+---
+
+### M10.8: Markov Jr. Visualizer Layer
+**Functionality:** I can see a real-time overlay showing which Markov Jr. nodes are active and what rules are firing.
+
+**Foundation:** Dedicated visualizer texture that renders the Markov Jr. structure tree and highlights active nodes based on step info paths.
+
+- Visualizer shows node tree on screen (structure from M10.5)
+- Active node highlighted based on most recent step info path (from M10.6)
+- Rule being applied shown next to active node
+- Affected cells highlighted on the main grid
+- Works with step budget from M10.7 for smooth animation
+- Implements: `MjVisualizerLayer` Lua renderer, structure-aware layout
 
 ---
 
@@ -329,6 +386,10 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 | 8 | Load Markov Jr. model in 2D | Generation |
 | 9 | Chain generators together | Generation |
 | 10 | Save/load generation checkpoints | Generation |
+| 10.5 | See internal Markov Jr. node tree via MCP | MJ Introspection |
+| 10.6 | See which Markov Jr. node made each change | MJ Introspection |
+| 10.7 | Control step budget (rules per frame) | MJ Introspection |
+| 10.8 | Visualizer overlay for Markov Jr. structure | MJ Introspection |
 | 11 | All assets persist in database | Unified Store |
 | 12 | Semantic search across all assets | Unified Store |
 | 13 | Browse all assets in one panel | Unified Store |

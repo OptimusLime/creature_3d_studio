@@ -387,6 +387,8 @@ end
 
 **M8.75 Complete.** All critical items resolved. Ready for M9.
 
+**Note:** Markov Jr. internal visibility limitations are addressed in Phase 3.5, not deferred indefinitely. See [PHASE_3_5_SPEC.md](./PHASE_3_5_SPEC.md) for the plan.
+
 ---
 
 ## M8.75 Verification Checklist (Updated)
@@ -410,12 +412,19 @@ Per the spec, here's what was completed:
 | Lua `mj.load_model()` returns Rust-backed `MjGenerator` | **Partial** | Returns MjLuaModel which emits step info |
 | 84 tests pass | **Done** | `cargo test -p studio_core map_editor::` |
 
-### Note on rule_name
+### Note on rule_name and Internal Structure
 
-The `rule_name` field is not populated because:
-1. The Markov Junior interpreter architecture doesn't track which specific rule fired during a step
+The `rule_name` field is not populated and internal Markov Jr. structure is opaque because:
+1. The interpreter architecture doesn't track which specific node/rule fired during a step
 2. Rules are executed through a tree of nodes (MarkovNode, SequenceNode, OneNode, etc.)
 3. The "rule" concept is spread across the node hierarchy, not exposed as a single string
+4. Path tracking doesn't exist in the current `ExecutionContext`
 
-This is a known limitation. The `affected_cells` count is the primary metric for visualizers to understand step impact.
+**This is addressed in Phase 3.5 (Markov Jr. Introspection).** See [PHASE_3_5_SPEC.md](./PHASE_3_5_SPEC.md).
+
+Phase 3.5 adds:
+- M10.5: `Node::structure()` for introspecting the Markov node tree
+- M10.6: Path tracking in `ExecutionContext` for per-node step info
+- M10.7: Budget-controlled stepping for fine-grained control
+- M10.8: Dedicated visualizer that shows the node tree and active rules
 
