@@ -20,13 +20,13 @@ pub struct MjNodeStructure {
     /// Node type: "Markov", "Sequence", "One", "All", "Path", etc.
     pub node_type: String,
     /// Children (for branch nodes)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub children: Vec<MjNodeStructure>,
     /// Rule strings (for One/All nodes)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub rules: Vec<String>,
     /// Additional config as JSON
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub config: Option<serde_json::Value>,
 }
 
