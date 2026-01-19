@@ -17,10 +17,92 @@
 //! - `mj_char = Some('B')` means this material represents MJ's 'B' (Black)
 //! - When an MJ model uses character 'B', it resolves to this material's ID
 //! - If no material binds to a character, auto-create from MJ palette.xml colors
+//!
+//! Colors are loaded from `MarkovJunior/resources/palette.xml` when available.
 
 use bevy::prelude::*;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use super::asset::{Asset, AssetStore, InMemoryStore};
+
+/// Path to the MJ palette.xml file.
+const MJ_PALETTE_PATH: &str = "MarkovJunior/resources/palette.xml";
+
+/// Cached palette colors loaded from palette.xml.
+/// Loaded once on first access.
+static MJ_PALETTE_CACHE: OnceLock<HashMap<char, [f32; 3]>> = OnceLock::new();
+
+/// Load a color from palette.xml for a given character.
+/// Returns None if the file cannot be loaded or the character is not found.
+fn load_palette_xml_color(ch: char) -> Option<[f32; 3]> {
+    let palette = MJ_PALETTE_CACHE.get_or_init(|| load_palette_xml());
+    palette.get(&ch).copied()
+}
+
+/// Load and parse the entire palette.xml file.
+/// Returns an empty map if the file cannot be loaded.
+fn load_palette_xml() -> HashMap<char, [f32; 3]> {
+    let mut colors = HashMap::new();
+
+    let content = match std::fs::read_to_string(MJ_PALETTE_PATH) {
+        Ok(c) => c,
+        Err(_) => return colors, // File not found, return empty
+    };
+
+    // Simple XML parsing - look for <color symbol="X" value="RRGGBB"/>
+    for line in content.lines() {
+        if !line.contains("<color") {
+            continue;
+        }
+
+        // Extract symbol
+        let symbol = if let Some(start) = line.find("symbol=\"") {
+            let rest = &line[start + 8..];
+            if let Some(end) = rest.find('"') {
+                rest[..end].chars().next()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Extract value (hex color)
+        let value = if let Some(start) = line.find("value=\"") {
+            let rest = &line[start + 7..];
+            if let Some(end) = rest.find('"') {
+                Some(&rest[..end])
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Parse and store
+        if let (Some(sym), Some(hex)) = (symbol, value) {
+            if let Some(color) = parse_hex_color(hex) {
+                colors.insert(sym, color);
+            }
+        }
+    }
+
+    colors
+}
+
+/// Parse a hex color string (e.g., "FF00AA") to RGB floats.
+fn parse_hex_color(hex: &str) -> Option<[f32; 3]> {
+    if hex.len() != 6 {
+        return None;
+    }
+
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+
+    Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
+}
 
 /// A voxel material with an ID, name, color, and tags.
 #[derive(Clone, Debug)]
@@ -301,9 +383,23 @@ impl MaterialPalette {
     }
 
     /// Get the MJ palette.xml color for a character as RGB floats.
+    /// Loads from MarkovJunior/resources/palette.xml if available,
+    /// otherwise falls back to hardcoded defaults.
     /// Returns magenta for unknown characters.
     pub fn mj_palette_color(ch: char) -> [f32; 3] {
-        // Colors from MarkovJunior palette.xml (converted to 0-1 range)
+        // Try to load from palette.xml (cached via lazy_static would be better,
+        // but for now we use a simple approach)
+        if let Some(color) = load_palette_xml_color(ch) {
+            return color;
+        }
+
+        // Fallback to hardcoded defaults if file not found or parse error
+        Self::mj_palette_color_fallback(ch)
+    }
+
+    /// Hardcoded fallback colors from palette.xml.
+    /// Used when the XML file cannot be loaded.
+    fn mj_palette_color_fallback(ch: char) -> [f32; 3] {
         match ch {
             // Primary colors (uppercase)
             'B' => [0.0, 0.0, 0.0],       // Black
