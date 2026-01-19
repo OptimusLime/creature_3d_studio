@@ -4,12 +4,16 @@
 //!
 //! # Architecture
 //!
-//! - `MaterialPalette.available` - All materials loaded from Lua (read-only source)
-//! - `MaterialPalette.active` - Materials added to the active palette for generation
+//! - `MaterialPalette.available` - `InMemoryStore<Material>` storing all materials from Lua
+//! - `MaterialPalette.active` - Material IDs selected for the active generation palette
 //!
 //! The generator receives the active palette and can use materials by index.
+//!
+//! `Material` implements the `Asset` trait, enabling unified search and storage via `AssetStore`.
 
 use bevy::prelude::*;
+
+use super::asset::{Asset, AssetStore, InMemoryStore};
 
 /// A voxel material with an ID, name, and color.
 #[derive(Clone, Debug)]
@@ -33,11 +37,21 @@ impl Material {
     }
 }
 
+impl Asset for Material {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn asset_type() -> &'static str {
+        "material"
+    }
+}
+
 /// Collection of available and active materials for terrain generation.
 #[derive(Resource)]
 pub struct MaterialPalette {
-    /// All available materials (loaded from Lua).
-    pub available: Vec<Material>,
+    /// All available materials (loaded from Lua), stored via `AssetStore`.
+    pub available: InMemoryStore<Material>,
     /// Active palette - material IDs in order, passed to generator.
     /// Generator uses palette[0], palette[1], etc.
     pub active: Vec<u32>,
@@ -48,10 +62,10 @@ pub struct MaterialPalette {
 impl MaterialPalette {
     /// Create a new palette with the given available materials.
     /// Initializes active palette with first 2 materials if available.
-    pub fn new(available: Vec<Material>) -> Self {
-        let active: Vec<u32> = available.iter().take(2).map(|m| m.id).collect();
+    pub fn new(materials: Vec<Material>) -> Self {
+        let active: Vec<u32> = materials.iter().take(2).map(|m| m.id).collect();
         Self {
-            available,
+            available: InMemoryStore::with_assets(materials),
             active,
             changed: true,
         }
@@ -67,7 +81,12 @@ impl MaterialPalette {
 
     /// Get a material by its ID from available materials.
     pub fn get_by_id(&self, id: u32) -> Option<&Material> {
-        self.available.iter().find(|m| m.id == id)
+        self.available.find(|m| m.id == id)
+    }
+
+    /// Get a mutable material by its ID from available materials.
+    pub fn get_by_id_mut(&mut self, id: u32) -> Option<&mut Material> {
+        self.available.find_mut(|m| m.id == id)
     }
 
     /// Check if a material ID is in the active palette.
@@ -106,17 +125,33 @@ impl MaterialPalette {
 
     /// Update available materials (from Lua reload).
     /// Preserves active palette entries that still exist.
-    pub fn set_available(&mut self, available: Vec<Material>) {
-        // Filter active to only include IDs that exist in new available
-        let valid_ids: std::collections::HashSet<u32> = available.iter().map(|m| m.id).collect();
+    pub fn set_available(&mut self, materials: Vec<Material>) {
+        // Filter active to only include IDs that exist in new materials
+        let valid_ids: std::collections::HashSet<u32> = materials.iter().map(|m| m.id).collect();
         self.active.retain(|id| valid_ids.contains(id));
 
         // If active is empty, initialize with first 2
         if self.active.is_empty() {
-            self.active = available.iter().take(2).map(|m| m.id).collect();
+            self.active = materials.iter().take(2).map(|m| m.id).collect();
         }
 
-        self.available = available;
+        self.available.set_all(materials);
+        self.changed = true;
+    }
+
+    /// Search materials by name using the `AssetStore::search` method.
+    pub fn search(&self, query: &str) -> Vec<&Material> {
+        self.available.search(query)
+    }
+
+    /// Check if a material with the given ID exists.
+    pub fn has_material(&self, id: u32) -> bool {
+        self.available.any(|m| m.id == id)
+    }
+
+    /// Add a new material to the store.
+    pub fn add_material(&mut self, material: Material) {
+        self.available.set(material);
         self.changed = true;
     }
 }
@@ -135,8 +170,10 @@ mod tests {
     fn test_default_palette() {
         let palette = MaterialPalette::default_palette();
         assert_eq!(palette.available.len(), 2);
-        assert_eq!(palette.available[0].name, "stone");
-        assert_eq!(palette.available[1].name, "dirt");
+        // Use list() to access materials by index
+        let materials = palette.available.list();
+        assert_eq!(materials[0].name, "stone");
+        assert_eq!(materials[1].name, "dirt");
         // Active should have first 2
         assert_eq!(palette.active, vec![1, 2]);
     }
@@ -189,5 +226,35 @@ mod tests {
 
         // Active should only have stone now (dirt was removed)
         assert_eq!(palette.active, vec![1]);
+    }
+
+    #[test]
+    fn test_search() {
+        let palette = MaterialPalette::new(vec![
+            Material::new(1, "stone", [0.5, 0.5, 0.5]),
+            Material::new(2, "dirt", [0.6, 0.4, 0.2]),
+            Material::new(3, "cobblestone", [0.4, 0.4, 0.4]),
+        ]);
+
+        // Search for "stone" should find both stone and cobblestone
+        let results = palette.search("stone");
+        assert_eq!(results.len(), 2);
+
+        // Search for "dirt" should find only dirt
+        let results = palette.search("dirt");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "dirt");
+
+        // Search for "xyz" should find nothing
+        let results = palette.search("xyz");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_has_material() {
+        let palette = MaterialPalette::default_palette();
+        assert!(palette.has_material(1));
+        assert!(palette.has_material(2));
+        assert!(!palette.has_material(99));
     }
 }

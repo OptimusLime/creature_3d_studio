@@ -1,9 +1,10 @@
 //! MCP (Model Context Protocol) HTTP server for external AI interaction.
 //!
-//! Provides a simple REST API on port 8080 for:
+//! Provides a simple REST API on port 8088 for:
 //! - Listing materials
 //! - Creating new materials  
 //! - Getting PNG output
+//! - Searching assets by name
 //!
 //! # Endpoints
 //!
@@ -11,12 +12,15 @@
 //! - `GET /mcp/list_materials` - Get all materials as JSON
 //! - `POST /mcp/create_material` - Add new material
 //! - `GET /mcp/get_output` - Get current render as PNG
+//! - `GET /mcp/search?q=<query>&type=<type>` - Search assets by name
 
+use super::asset::{Asset, AssetStore};
 use super::material::{Material, MaterialPalette};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
@@ -74,6 +78,14 @@ enum McpRequest {
     ListMaterials,
     CreateMaterial(MaterialCreateRequest),
     GetOutput,
+    Search(SearchRequest),
+}
+
+/// Request parameters for search.
+#[derive(Debug)]
+struct SearchRequest {
+    query: String,
+    asset_type: Option<String>,
 }
 
 /// Response types from Bevy to HTTP server.
@@ -81,7 +93,17 @@ enum McpResponse {
     Materials(Vec<MaterialJson>),
     MaterialCreated { success: bool, id: u32 },
     Output(Vec<u8>),
+    SearchResults(Vec<SearchResultJson>),
     Error(String),
+}
+
+/// JSON representation of a search result.
+#[derive(Serialize)]
+struct SearchResultJson {
+    #[serde(rename = "type")]
+    asset_type: String,
+    name: String,
+    id: u32,
 }
 
 /// JSON representation of a material.
@@ -128,6 +150,30 @@ fn run_http_server(port: u16, request_tx: Sender<McpRequest>, response_rx: Recei
     }
 }
 
+/// Parse query string into a HashMap.
+fn parse_query_string(url: &str) -> HashMap<String, String> {
+    let mut params = HashMap::new();
+
+    if let Some(query_start) = url.find('?') {
+        let query = &url[query_start + 1..];
+        for pair in query.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                params.insert(
+                    key.to_string(),
+                    urlencoding::decode(value).unwrap_or_default().into_owned(),
+                );
+            }
+        }
+    }
+
+    params
+}
+
+/// Get the path portion of a URL (before the query string).
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
 /// Handle a single HTTP request.
 fn handle_http_request(
     mut request: Request,
@@ -136,8 +182,9 @@ fn handle_http_request(
 ) {
     let url = request.url().to_string();
     let method = request.method().clone();
+    let path = url_path(&url);
 
-    match (method, url.as_str()) {
+    match (method, path) {
         (Method::Get, "/health") => {
             let response =
                 Response::from_string(r#"{"status":"ok"}"#).with_header(content_type_json());
@@ -232,6 +279,44 @@ fn handle_http_request(
             }
         }
 
+        (Method::Get, "/mcp/search") => {
+            let params = parse_query_string(&url);
+
+            let query = match params.get("q") {
+                Some(q) => q.clone(),
+                None => {
+                    let _ = request.respond(error_response("Missing 'q' parameter"));
+                    return;
+                }
+            };
+
+            let asset_type = params.get("type").cloned();
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::Search(SearchRequest { query, asset_type }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::SearchResults(results)) => {
+                    let json = serde_json::to_string(&results).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -268,12 +353,9 @@ fn handle_mcp_requests(
             }
 
             Ok(McpRequest::CreateMaterial(req)) => {
-                // Check if material with this ID already exists
-                let exists = palette.available.iter().any(|m| m.id == req.id);
-
-                if exists {
+                if palette.has_material(req.id) {
                     // Update existing material
-                    if let Some(mat) = palette.available.iter_mut().find(|m| m.id == req.id) {
+                    if let Some(mat) = palette.get_by_id_mut(req.id) {
                         mat.name = req.name.clone();
                         mat.color = req.color;
                     }
@@ -281,9 +363,7 @@ fn handle_mcp_requests(
                     info!("MCP: Updated material {} (id={})", req.name, req.id);
                 } else {
                     // Add new material
-                    palette
-                        .available
-                        .push(Material::new(req.id, req.name.clone(), req.color));
+                    palette.add_material(Material::new(req.id, req.name.clone(), req.color));
                     // Also add to active palette so it's immediately usable
                     palette.add_to_active(req.id);
                     info!("MCP: Created material {} (id={})", req.name, req.id);
@@ -299,6 +379,32 @@ fn handle_mcp_requests(
                 // Generate PNG from current buffer state
                 let png_data = generate_png_from_buffer(&buffer, &palette);
                 let _ = channels.response_tx.send(McpResponse::Output(png_data));
+            }
+
+            Ok(McpRequest::Search(req)) => {
+                // Search materials using MaterialPalette::search
+                // In future, this can search across all asset types
+                let results: Vec<SearchResultJson> = if let Some(ref t) = req.asset_type {
+                    // Filter by type - only search if type matches
+                    if t == Material::asset_type() {
+                        palette.search(&req.query)
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    palette.search(&req.query)
+                }
+                .into_iter()
+                .map(|mat| SearchResultJson {
+                    asset_type: Material::asset_type().to_string(),
+                    name: mat.name.clone(),
+                    id: mat.id,
+                })
+                .collect();
+
+                let _ = channels
+                    .response_tx
+                    .send(McpResponse::SearchResults(results));
             }
 
             Err(TryRecvError::Empty) => break,

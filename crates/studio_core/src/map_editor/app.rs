@@ -23,11 +23,12 @@
 //! ```
 
 use super::{
+    asset::{Asset, AssetStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
-    material::MaterialPalette,
+    material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
     voxel_buffer_2d::VoxelBuffer2D,
@@ -251,6 +252,7 @@ impl MapEditor2DApp {
             width: grid_size.0,
             height: grid_size.1,
         });
+        app.insert_resource(SearchState::default());
 
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
         // Must be added AFTER VoxelBuffer2D resource is inserted
@@ -320,6 +322,22 @@ struct ScreenshotConfig {
 /// Frame counter for screenshot timing.
 #[derive(Resource)]
 struct FrameCounter(u32);
+
+/// Search state for the UI.
+#[derive(Resource, Default)]
+struct SearchState {
+    /// Current search query.
+    query: String,
+    /// Cached search results.
+    results: Vec<SearchResult>,
+}
+
+/// A search result entry.
+struct SearchResult {
+    asset_type: String,
+    name: String,
+    id: u32,
+}
 
 // =============================================================================
 // Systems
@@ -484,6 +502,7 @@ fn render_ui_system(
     buffer: Res<VoxelBuffer2D>,
     grid: Res<GridConfig>,
     mut gen_reload: ResMut<super::lua_generator::GeneratorReloadFlag>,
+    mut search_state: ResMut<SearchState>,
 ) {
     // NOTE: The canvas is displayed as a Bevy Sprite, not an ImGui Image.
     // ImGui's Image widget doesn't update when texture data changes.
@@ -501,7 +520,7 @@ fn render_ui_system(
             // Collect actions to avoid borrow issues
             let mut add_id = None;
 
-            for mat in &palette.available {
+            for mat in palette.available.iter() {
                 let is_active = palette.is_active(mat.id);
                 let color = [mat.color[0], mat.color[1], mat.color[2], 1.0];
 
@@ -572,6 +591,78 @@ fn render_ui_system(
 
             ui.separator();
             ui.text(format!("Generator uses: {:?}", palette.active));
+        });
+
+    // === Search Panel ===
+    ui.window("Search")
+        .size([200.0, 200.0], Condition::FirstUseEver)
+        .position([20.0, 460.0], Condition::FirstUseEver)
+        .build(|| {
+            ui.text("Search assets by name");
+            ui.separator();
+
+            // Search input
+            if ui.input_text("##search", &mut search_state.query).build() {
+                // Query changed, update results
+                let query = search_state.query.to_lowercase();
+
+                if query.is_empty() {
+                    search_state.results.clear();
+                } else {
+                    // Search materials using AssetStore::search
+                    search_state.results = palette
+                        .search(&query)
+                        .iter()
+                        .map(|mat| SearchResult {
+                            asset_type: Material::asset_type().to_string(),
+                            name: mat.name().to_string(),
+                            id: mat.id,
+                        })
+                        .collect();
+                }
+            }
+
+            ui.separator();
+
+            // Results list
+            if search_state.results.is_empty() {
+                if !search_state.query.is_empty() {
+                    ui.text_disabled("No results");
+                }
+            } else {
+                ui.text(format!("{} result(s):", search_state.results.len()));
+
+                // Collect click actions
+                let mut add_id = None;
+
+                for result in &search_state.results {
+                    // Get color from palette if it's a material
+                    let color = if result.asset_type == "material" {
+                        palette
+                            .get_by_id(result.id)
+                            .map(|m| [m.color[0], m.color[1], m.color[2], 1.0])
+                            .unwrap_or([0.5, 0.5, 0.5, 1.0])
+                    } else {
+                        [0.5, 0.5, 0.5, 1.0]
+                    };
+
+                    // Clickable result
+                    let _color_token = ui.push_style_color(imgui::StyleColor::Button, color);
+                    if ui.button_with_size(format!("{}", result.name), [180.0, 20.0]) {
+                        // Add to active palette if material
+                        if result.asset_type == "material" {
+                            add_id = Some(result.id);
+                        }
+                    }
+                }
+
+                if let Some(id) = add_id {
+                    if !palette.is_active(id) {
+                        palette.add_to_active(id);
+                        info!("Added material {} from search to active palette", id);
+                    }
+                }
+            }
         });
 
     // === Canvas info window ===

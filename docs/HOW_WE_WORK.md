@@ -4,7 +4,22 @@ This document describes our collaboration process for building features, fixing 
 
 ## Core Principles
 
-### 1. Incremental Building with Verification
+### 1. The Dual Nature of All Work
+
+Every phase and task has two equally important components:
+
+1. **User Functionality:** What the user can DO when this is done.
+2. **Backend Foundation:** What abstractions exist that accelerate future work.
+
+When designing phases, state both explicitly:
+- **Outcome:** What can the user do?
+- **Foundation:** What abstraction does this build? What future work does it enable?
+
+**The Library-Centric Rule:** When choosing between feature-specific code and a library abstraction, choose the abstraction. Feature-specific code is tech debt.
+
+**Test:** After this phase, can the next phase be implemented by USING the abstractions, or by WRITING new code? If writing, the foundation is missing.
+
+### 2. Incremental Building with Verification
 
 We build in **phases**. Each phase has **subtasks**. Both phases and tasks are **verifiably complete**.
 
@@ -12,7 +27,7 @@ We build in **phases**. Each phase has **subtasks**. Both phases and tasks are *
 - Use **SMART principles** (Specific, Measurable, Achievable, Relevant, Time-bound)
 - Emphasis on **Specific** and **Measurable**: at the end, we can say definitively "this is done"
 
-### 2. Verification is a First-Class Citizen
+### 3. Verification is a First-Class Citizen
 
 Verification **designs** our phases. If we cannot easily verify at the end of a phase that it's done, the phase is improperly designed.
 
@@ -22,7 +37,7 @@ Verification **designs** our phases. If we cannot easily verify at the end of a 
 - If we need artifacts to make verification easier (e.g., a test harness), those are **dependencies** and belong in earlier phases
 - The harness may start empty, then we build it up and complexify over time
 
-### 3. Complexity Over Time, Not Upfront
+### 4. Complexity Over Time, Not Upfront
 
 Prefer **end-to-end pipelines** that demonstrate the full path through the code early. Then complexify those pipelines over time.
 
@@ -35,7 +50,7 @@ Prefer **end-to-end pipelines** that demonstrate the full path through the code 
 
 **Critical guarantee:** Phases build on each other. Verification means we know at the end of the phase that the work was done, completed, and verified absolutely correct. We will **not** proceed through multiple phases only to discover in phase 3 that phase 1 was incomplete or incorrect.
 
-### 4. Tasks Must Be Specific and Measurable
+### 5. Tasks Must Be Specific and Measurable
 
 Tasks are verifiable, specific, and measurable.
 
@@ -47,7 +62,7 @@ When listing files:
 - Specify exact names
 - Include the directory structure
 
-### 5. Naming Principles
+### 6. Naming Principles
 
 Follow the principles from *Naming Things* by Tom Benner.
 
@@ -164,7 +179,8 @@ Why are we building this? What problem does it solve?
 ## Phases
 
 ### Phase 1: [Phase Name]
-**Outcome:** [What will be true when this phase is complete]  
+**Outcome:** [What the user can DO when this phase is complete]  
+**Foundation:** [What abstraction this builds and what future phases it enables]
 **Verification:** [How we prove it's done - must be simple and clear]
 
 Tasks:
@@ -174,6 +190,17 @@ Tasks:
 
 ### Phase 2: [Phase Name]
 ...
+
+## Phase Cleanup Notes
+
+[Accumulated cleanup candidates from milestone audits. Review at phase end.]
+
+### Cleanup Decision
+
+At phase end, categorize accumulated items:
+- **Do now:** Items that block next phase or create significant tech debt
+- **Defer:** Nice-to-have items that don't block progress
+- **Drop:** Items that turned out to be unnecessary
 
 ## Full Outcome Across All Phases
 Summary of what the completed feature looks like.
@@ -207,9 +234,11 @@ Once the plan exists:
 For each phase:
 1. Work through tasks sequentially
 2. Mark tasks complete as you go (not batched at the end)
-3. At phase end, perform verification
-4. Only proceed to next phase after verification passes
-5. **If verification fails**: Enter hypothesis-driven debugging loop. Do not skip ahead.
+3. **After each milestone:** Do a quick cleanup audit (5 min). Flag refactoring opportunities, don't necessarily fix them.
+4. At phase end, perform verification
+5. **At phase end:** Review accumulated cleanup notes. Decide what to do now, defer, or drop.
+6. Only proceed to next phase after verification passes
+7. **If verification fails**: Enter hypothesis-driven debugging loop. Do not skip ahead.
 
 ### Step 4: Complete PR
 
@@ -366,16 +395,19 @@ If ANY answer is negative, the task is NOT DONE. Return to debugging.
 
 ## Summary
 
-1. **Plan first** - Create a plan document before coding
-2. **Phase the work** - Break into verifiable phases
-3. **Verify constantly** - Each phase ends with verification
-4. **Debug systematically** - Hypothesis → Test → Analyze → Iterate
-5. **Never abandon** - If stuck, debug; don't substitute
-6. **Name clearly** - Names are documentation
-7. **Be specific** - File paths, exact names, measurable outcomes
-8. **Stay honest** - PR checklists reflect reality, not aspirations
-9. **Evaluate objectively** - See what IS, not what you HOPE to see
-10. **Quality gates** - "Does it work?" is not the same as "Is it good enough?"
+1. **Dual nature** - Every phase has functionality AND foundation; state both explicitly
+2. **Library-centric** - Choose abstractions over feature-specific code; feature-specific code is tech debt
+3. **Plan first** - Create a plan document before coding
+4. **Phase the work** - Break into verifiable phases
+5. **Verify constantly** - Each phase ends with verification
+6. **Cleanup audits** - After each milestone, flag refactoring opportunities; review at phase end
+7. **Debug systematically** - Hypothesis → Test → Analyze → Iterate
+8. **Never abandon** - If stuck, debug; don't substitute
+9. **Name clearly** - Names are documentation
+10. **Be specific** - File paths, exact names, measurable outcomes
+11. **Stay honest** - PR checklists reflect reality, not aspirations
+12. **Evaluate objectively** - See what IS, not what you HOPE to see
+13. **Quality gates** - "Does it work?" is not the same as "Is it good enough?"
 
 ---
 

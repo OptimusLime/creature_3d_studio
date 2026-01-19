@@ -5,6 +5,7 @@
 //!
 //! # Architecture
 //!
+//! - `Asset` / `AssetStore<T>`: Generic asset storage with search (Phase 2)
 //! - `VoxelBuffer2D`: 2D grid of material IDs
 //! - `Material` / `MaterialPalette`: Material definitions and selection
 //! - `PlaybackState`: Step-by-step generation playback controls
@@ -26,6 +27,7 @@
 //! ```
 
 pub mod app;
+pub mod asset;
 pub mod checkerboard;
 pub mod imgui_screenshot;
 pub mod lua_generator;
@@ -36,6 +38,7 @@ pub mod playback;
 pub mod voxel_buffer_2d;
 
 pub use app::MapEditor2DApp;
+pub use asset::{Asset, AssetStore, InMemoryStore};
 pub use checkerboard::CheckerboardState;
 pub use imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin};
 pub use lua_generator::{GeneratorReloadFlag, LuaGeneratorPlugin, GENERATOR_LUA_PATH};
