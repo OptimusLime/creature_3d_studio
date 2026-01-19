@@ -250,4 +250,174 @@ ctx:set_step_info({
 | Medium | 0 | - |
 | Low | 5 | All Deferred (2 M8, 2 M8.5, 1 Phase 2) |
 
-**M8.5 Cleanup complete.** No blocking items. Ready for M9.
+**M8.5 Cleanup complete.** No blocking items. Ready for M8.75.
+
+---
+
+## M8.75 Audit: Generator Foundation in Rust
+
+### 1. MjModel Still Doesn't Emit Step Info
+
+**Milestone:** M8.75 (Generator Foundation in Rust)
+
+**Spec Expected:**
+```rust
+impl Generator for MjGenerator {
+    fn step(&mut self, ctx: &mut GeneratorContext) -> bool {
+        let made_progress = self.model.step();
+        
+        if made_progress {
+            let rule_name = self.model.interpreter.current_rule_name();
+            let changes = self.model.interpreter.last_changes();
+            
+            self.last_step_info = Some(StepInfo {
+                path: self.path.clone(),
+                rule_name: Some(rule_name),
+                affected_cells: Some(changes.len()),
+                // ...
+            });
+        }
+        !self.model.is_running()
+    }
+}
+```
+
+**Actual Implementation:**
+- Created `MjGeneratorPlaceholder` for structure introspection only
+- `MjLuaModel::step()` in `lua_api.rs` does NOT emit step info
+- The placeholder's `step()` just returns `true` (always done)
+- The actual Markov execution happens in Lua calling `MjLuaModel::step()`
+
+**Why Deferred:**
+- Structure introspection was the primary goal and works
+- Step info requires deeper integration with `MjLuaModel::step()` which would need:
+  1. Access to the Lua context to call `ctx:emit_step()`
+  2. Extracting rule name from interpreter (may not be exposed)
+  3. Tracking affected cells (interpreter doesn't expose `last_changes()`)
+
+**Criticality:** **Medium** - Structure works, but step info from MjModel is missing. This means visualizers can't see what's happening inside Markov generators.
+
+**When to Do:** M9 or dedicated follow-up. Requires:
+1. Add `current_rule_name()` method to interpreter
+2. Add `last_changes()` method to interpreter  
+3. Modify `MjLuaModel::step()` to emit step info via context
+
+---
+
+### 2. Structure Field Now Returns Data
+
+**Milestone:** M8.75 (Generator Foundation in Rust)
+
+**Previous Status (M8.5):** Structure field was not returned, deferred.
+
+**Current Status:** **RESOLVED** - M8.75 added `ActiveGenerator` resource and wired Lua generators to Rust implementations. The MCP endpoint now returns:
+```json
+{
+  "structure": {
+    "type": "Sequential",
+    "path": "root",
+    "children": {
+      "step_1": {"type": "MjModel", "path": "root.step_1", "model_name": "step_1"},
+      "step_2": {"type": "Scatter", "path": "root.step_2", "config": {...}}
+    }
+  }
+}
+```
+
+**Implementation:**
+- `lua_table_to_rust_generator()` in `lua_generator.rs` converts Lua tables to `Box<dyn Generator>`
+- `MjGeneratorPlaceholder` provides structure for MjModel nodes
+- `reload_generator()` stores converted generator in `ActiveGenerator`
+- MCP endpoint calls `active_generator.structure()` directly
+
+---
+
+### 3. Hot Reload Works for Sequential Generators
+
+**Milestone:** M8.75 (Generator Foundation in Rust)
+
+**Verified:** Editing `generator.lua` and saving triggers hot reload:
+- Config changes (e.g., scatter density) immediately reflected
+- Structure is re-converted from Lua on reload
+- MCP endpoint shows updated structure
+
+---
+
+### 4. Lua Generators Could Be Replaced by Rust
+
+**Milestone:** M8.75 (Generator Foundation in Rust)
+
+**Current State:**
+- Rust has `Generator` trait with `SequentialGenerator`, `ParallelGenerator`, `ScatterGenerator`, `FillGenerator`, `MjGenerator`
+- Lua still does actual execution via `lib/generators.lua`
+- Rust implementations are used for structure introspection only
+
+**Spec Vision:**
+```lua
+-- generators.lua now wraps Rust implementations
+generators.sequential = function(children)
+    return _G._rust_create_sequential(children)
+end
+```
+
+**Why Keep Lua Execution:**
+- Works well, users can add custom Lua logic
+- No performance issues
+- Changing would require significant refactoring
+
+**Criticality:** **Low** - Current approach works. Full Rust execution is a future optimization if needed.
+
+**When to Do:** Not recommended unless performance becomes an issue.
+
+---
+
+## Cleanup Decision Log (Updated)
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| Lua-based instead of Rust adapter (M8) | Accepted | Simpler, more flexible, follows existing patterns |
+| Generator type detection (M8) | Defer | Low criticality, complexity not worth it |
+| StepInfo extended fields (M8) | Defer | Optional fields, base functionality works |
+| MCP Error variant (P2) | Defer | Low criticality |
+| Duplicate PNG code (P2) | Defer | Legacy fallback, works fine |
+| Structure field in MCP (M8.5) | **Resolved in M8.75** | Now returns full structure tree |
+| MjModel step info emit (M8.5/M8.75) | **Defer to M9** | Medium priority - blocks visualizer for Markov |
+| Generator base class Lua-only (M8.5) | Keep | Works fine, Rust backing for structure only |
+| Full Rust generator execution (M8.75) | Defer | Low priority, Lua execution works well |
+
+---
+
+## Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 1 | MjModel step info emit (Defer to M9) |
+| Low | 4 | All Deferred |
+| Resolved | 1 | Structure field in MCP |
+
+**M8.75 Cleanup complete.** One medium-priority item (MjModel step info) deferred to M9. Ready for M9.
+
+---
+
+## M8.75 Verification Checklist (Updated)
+
+Per the spec, here's what was completed vs deferred:
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `Generator` trait exists in `generator/traits.rs` | **Done** | With `structure()`, `init()`, `step()`, etc. |
+| `GeneratorStructure` struct is serializable | **Done** | Uses serde with skip_serializing_if |
+| `SequentialGenerator` implements `Generator` | **Done** | In `generator/sequential.rs` |
+| `ParallelGenerator` implements `Generator` | **Done** | In `generator/parallel.rs` |
+| `ScatterGenerator` implements `Generator` | **Done** | In `generator/scatter.rs` |
+| `FillGenerator` implements `Generator` | **Done** | In `generator/fill.rs` |
+| `MjGenerator` implements `Generator` | **Partial** | `MjGeneratorPlaceholder` for structure only |
+| `MjGenerator` emits step info with rule names | **Deferred** | MjLuaModel::step() doesn't emit |
+| `MjGenerator` reports affected cell count | **Deferred** | Interpreter doesn't expose this |
+| `GET /mcp/generator_state` returns `structure` field | **Done** | Full tree returned |
+| All step info includes emitting generator's path | **Partial** | Scatter/Fill emit; MjModel doesn't |
+| Lua `generators.sequential()` wraps Rust | **Partial** | Lua executes, Rust for structure |
+| Lua `mj.load_model()` returns Rust-backed `MjGenerator` | **Partial** | Returns MjLuaModel, placeholder for structure |
+| 84 tests pass | **Done** | `cargo test -p studio_core map_editor::` |
+
