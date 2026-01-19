@@ -1,20 +1,27 @@
 -- Map Editor Material Definitions
--- Tags enable search by category: search "natural" finds stone, dirt, grass
+-- 
+-- Materials can bind to MarkovJunior palette characters via mj_char:
+--   mj_char = "B"  →  Use this material when MJ outputs 'B' (Black)
+--   mj_char = "W"  →  Use this material when MJ outputs 'W' (White)
 --
--- IDs 1-3 are mapped from MarkovJunior grid values (val + 1):
---   B (Black/walls)  = value 0 → material 1
---   W (White/paths)  = value 1 → material 2
---   A (Alive/growth) = value 2 → material 3
+-- If an MJ model uses a character without a binding, the system
+-- auto-creates a material using the color from MJ's palette.xml.
 --
--- Colors match MJ's palette.xml for consistency
+-- You can override MJ colors by specifying your own color with mj_char.
+-- Or omit mj_char entirely for custom materials unrelated to MJ.
+
 return {
-    -- MJ-mapped materials (match palette.xml colors)
-    { id = 1, name = "wall",   color = {0.0, 0.0, 0.0}, tags = {"mj", "structure"} },     -- B: Black
-    { id = 2, name = "floor",  color = {1.0, 0.945, 0.91}, tags = {"mj", "structure"} },  -- W: Off-white (0xFF, 0xF1, 0xE8)
-    { id = 3, name = "growth", color = {0.76, 0.765, 0.78}, tags = {"mj", "structure"} }, -- A: Light gray (0xC2, 0xC3, 0xC7)
+    -- MJ palette bindings (using MJ default colors from palette.xml)
+    { id = 1, name = "mj_black",  color = {0.0, 0.0, 0.0},       mj_char = "B", tags = {"mj"} },
+    { id = 2, name = "mj_white",  color = {1.0, 0.945, 0.910},   mj_char = "W", tags = {"mj"} },
+    { id = 3, name = "mj_gray",   color = {0.761, 0.765, 0.780}, mj_char = "A", tags = {"mj"} },
     
-    -- Additional materials for generators
-    { id = 4, name = "crystal", color = {0.0, 0.894, 0.212}, tags = {"ore", "decoration"} }, -- Bright green
-    { id = 5, name = "stone",   color = {0.5, 0.5, 0.5}, tags = {"natural", "terrain"} },
-    { id = 6, name = "dirt",    color = {0.6, 0.4, 0.2}, tags = {"natural", "terrain"} },
+    -- Custom materials (no MJ binding)
+    { id = 10, name = "crystal",  color = {0.0, 0.894, 0.212}, tags = {"decoration"} },
+    { id = 11, name = "stone",    color = {0.5, 0.5, 0.5},     tags = {"natural", "terrain"} },
+    { id = 12, name = "dirt",     color = {0.6, 0.4, 0.2},     tags = {"natural", "terrain"} },
+    
+    -- Example: Override MJ colors with custom materials
+    -- { id = 20, name = "stone_wall",  color = {0.3, 0.3, 0.35}, mj_char = "B", tags = {"custom"} },
+    -- { id = 21, name = "stone_floor", color = {0.5, 0.5, 0.5},  mj_char = "W", tags = {"custom"} },
 }

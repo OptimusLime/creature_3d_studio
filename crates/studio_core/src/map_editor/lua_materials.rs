@@ -246,7 +246,18 @@ fn parse_materials_lua(lua: &Lua, src: &str) -> LuaResult<Vec<Material>> {
             _ => Vec::new(), // No tags or invalid format - use empty vec
         };
 
-        materials.push(Material::with_tags(id, name, [r, g, b], tags));
+        // Parse optional mj_char (MarkovJunior palette character binding)
+        let mj_char: Option<char> = match entry_table.get::<String>("mj_char") {
+            Ok(s) if !s.is_empty() => s.chars().next(),
+            _ => None,
+        };
+
+        let material = if let Some(ch) = mj_char {
+            Material::with_mj_char(id, name, [r, g, b], tags, ch)
+        } else {
+            Material::with_tags(id, name, [r, g, b], tags)
+        };
+        materials.push(material);
     }
 
     // Sort by ID for consistent ordering

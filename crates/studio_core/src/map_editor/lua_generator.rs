@@ -18,6 +18,7 @@
 //! - `ctx:set_voxel(x, y, material_id)` - Write to buffer
 //! - `ctx:get_voxel(x, y) -> material_id` - Read from buffer
 
+use super::asset::AssetStore;
 use super::generator::{
     ActiveGenerator, CurrentStepInfo, FillCondition, FillGenerator, Generator, GeneratorListeners,
     GeneratorStructure, ParallelGenerator, ScatterGenerator, SequentialGenerator, StepInfo,
@@ -225,6 +226,9 @@ struct GeneratorContext {
     palette: Vec<u32>,
     /// Random seed for deterministic generation.
     seed: u64,
+    /// Map of MJ palette characters to material IDs.
+    /// Built from MaterialPalette's mj_char bindings.
+    mj_char_map: std::collections::HashMap<char, u32>,
 }
 
 impl UserData for GeneratorContext {
@@ -250,6 +254,16 @@ impl UserData for GeneratorContext {
 
         methods.add_method("get_voxel", |_, this, (x, y): (usize, usize)| {
             Ok(this.buffer.get(x, y))
+        });
+
+        // Get material ID for an MJ palette character.
+        // Returns nil if no material is bound to this character.
+        methods.add_method("get_material_for_mj_char", |_, this, ch: String| {
+            if let Some(c) = ch.chars().next() {
+                Ok(this.mj_char_map.get(&c).copied())
+            } else {
+                Ok(None)
+            }
         });
 
         // Emit step info with path for scene tree tracking
@@ -628,11 +642,15 @@ fn run_generator_step(
     // Get seed from reload flag (defaults to time-based if not set)
     let seed = reload_flag.get_seed();
 
+    // Build MJ character map from palette
+    let mj_char_map = build_mj_char_map(&palette);
+
     // Create context for Lua
     let ctx = GeneratorContext {
         buffer: gen_buffer.buffer.clone(),
         palette: palette.active.clone(),
         seed,
+        mj_char_map: mj_char_map.clone(),
     };
 
     // Initialize if needed
@@ -718,11 +736,12 @@ fn run_generator_step(
         step_registry.clear();
         listeners.notify_reset();
 
-        // Recreate context with cleared buffer
+        // Recreate context with cleared buffer (reuse mj_char_map)
         let ctx = GeneratorContext {
             buffer: gen_buffer.buffer.clone(),
             palette: palette.active.clone(),
             seed,
+            mj_char_map: mj_char_map.clone(),
         };
 
         // Run generator to completion immediately
@@ -837,6 +856,7 @@ fn call_generator_method(
         buffer: ctx.buffer.clone(),
         palette: ctx.palette.clone(),
         seed: ctx.seed,
+        mj_char_map: ctx.mj_char_map.clone(),
     })?;
     func.call::<()>((generator.clone(), ctx_ud))?;
     Ok(())
@@ -849,6 +869,7 @@ fn call_generator_step(lua: &Lua, generator: &Table, ctx: &GeneratorContext) -> 
         buffer: ctx.buffer.clone(),
         palette: ctx.palette.clone(),
         seed: ctx.seed,
+        mj_char_map: ctx.mj_char_map.clone(),
     })?;
     let result: Value = func.call((generator.clone(), ctx_ud))?;
 
@@ -861,6 +882,19 @@ fn call_generator_step(lua: &Lua, generator: &Table, ctx: &GeneratorContext) -> 
 }
 
 /// Process pending step infos from Lua and emit to registry and listeners.
+/// Build a map of MJ characters to material IDs from the MaterialPalette.
+fn build_mj_char_map(
+    palette: &super::material::MaterialPalette,
+) -> std::collections::HashMap<char, u32> {
+    let mut map = std::collections::HashMap::new();
+    for mat in palette.available.list() {
+        if let Some(ch) = mat.mj_char {
+            map.insert(ch, mat.id);
+        }
+    }
+    map
+}
+
 fn process_pending_steps(
     buffer: &SharedBuffer,
     step_registry: &mut StepInfoRegistry,
@@ -908,6 +942,8 @@ mod tests {
         let ctx = GeneratorContext {
             buffer: buffer.clone(),
             palette: vec![1, 2, 3],
+            seed: 42,
+            mj_char_map: std::collections::HashMap::new(),
         };
 
         // Test that we can create userdata

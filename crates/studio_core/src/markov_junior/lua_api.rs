@@ -387,14 +387,23 @@ impl UserData for MjLuaModel {
                     let mx = grid.mx as usize;
                     let my = grid.my as usize;
 
+                    // Build value-to-material mapping using ctx's mj_char_map
+                    // For each grid value (0, 1, 2...), find the character, then the material ID
+                    let mut value_to_mat: Vec<u32> = Vec::with_capacity(grid.characters.len());
+                    for (i, &ch) in grid.characters.iter().enumerate() {
+                        // Look up material ID for this character
+                        let mat_id: Option<u32> = ctx
+                            .call_method("get_material_for_mj_char", ch.to_string())
+                            .ok();
+                        // Fall back to val+1 if no binding exists (legacy behavior)
+                        value_to_mat.push(mat_id.unwrap_or(i as u32 + 1));
+                    }
+
                     // Call ctx:set_voxel(x, y, mat) for each cell
-                    // mlua methods receive self automatically when called via call_method
                     for y in 0..my {
                         for x in 0..mx {
-                            // Grid value (0=B, 1=W, 2=A, etc.) maps to material ID
-                            // Add 1 because material IDs are 1-indexed in the palette
-                            let val = grid.get(x, y, 0).unwrap_or(0) as u32;
-                            let mat_id = val + 1; // B(0)->1, W(1)->2, A(2)->3
+                            let val = grid.get(x, y, 0).unwrap_or(0) as usize;
+                            let mat_id = value_to_mat.get(val).copied().unwrap_or(0);
                             let _ = ctx.call_method::<()>("set_voxel", (x, y, mat_id));
                         }
                     }
@@ -409,11 +418,11 @@ impl UserData for MjLuaModel {
                     // Get the material at the changed position
                     let material_id: u32 = if change_count > 0 {
                         let (cx, cy, cz) = model.last_step_changes()[0];
-                        model
+                        let val = model
                             .grid()
                             .get(cx as usize, cy as usize, cz as usize)
-                            .unwrap_or(0) as u32
-                            + 1 // 1-indexed
+                            .unwrap_or(0) as usize;
+                        value_to_mat.get(val).copied().unwrap_or(0)
                     } else {
                         0
                     };

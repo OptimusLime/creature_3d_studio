@@ -20,8 +20,8 @@ return generators.sequential({
     
     -- Scatter crystals on floor cells
     generators.scatter({
-        material = 4,     -- Crystal (bright green)
-        target = 2,       -- Scatter on floor (W=1 → material 2)
+        material = 10,    -- Crystal (bright green)
+        target = 2,       -- Scatter on floor (W → material 2)
         density = 0.05,   -- 5% chance per cell
     })
 })
