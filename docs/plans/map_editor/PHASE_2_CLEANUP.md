@@ -267,23 +267,26 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 | Duplicate PNG code | Defer | Low criticality, works fine |
 | Lua hot reload not integrated | ✅ Done during M5 cleanup | Created `LuaRendererPlugin` with file watcher |
 | BaseRenderLayer vs LuaRenderLayer | ✅ Done during M5 cleanup | App now uses `LuaRendererPlugin` |
-| Hot-reload plugin duplication | ✅ Done during M6 cleanup | Created generic `hot_reload.rs` module |
+| Hot-reload plugin duplication | ✅→⚠️ Superseded | Created `hot_reload.rs`, now deprecated by `LuaLayerPlugin` |
 | GeneratorListener unused | ✅ Done during M6 cleanup | Generator now calls listeners, visualizer implements trait |
-| VisualizerState unused | ✅ Done during M6 cleanup | Now holds SharedVisualizer, used for reload |
+| VisualizerState unused | ✅→⚠️ Superseded | Now deprecated - `LuaLayerRegistry` manages visualizers |
 | Plugins hardcoded to 1 instance | ✅ Done after M7 | Created `LuaLayerRegistry` with multi-instance support |
 | M7 tag search | N/A | Clean implementation, no cleanup needed |
+| Deprecated plugins/hot_reload | ⚠️ Defer to Phase 3 | ~380 lines dead code: `lua_renderer.rs`, `lua_visualizer.rs`, `hot_reload.rs` |
 
 ---
 
-## Summary Statistics
+## Summary Statistics (Pre-M6 Audit)
 
 | Criticality | Count | Status |
 |-------------|-------|--------|
-| High | 1 | ⚠️ Plugins hardcoded to single instance (Deferred) |
+| High | 1 | ✅ Completed (multi-instance plugins) |
 | Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
 | Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
 
 **M6 Cleanup complete.** All M6 items resolved. M6 functionality verified with `verify_m6_visualizer.py` script.
+
+**Note:** Some M6 cleanup work was superseded by Post-M7 refactor. See Post-M7 Audit below.
 
 ---
 
@@ -339,6 +342,58 @@ No new duplication or architectural issues introduced.
 
 ---
 
+---
+
+## Post-M7 Audit: Deprecated Code from Multi-Instance Refactor
+
+### 5. Deprecated Plugins and Generic Hot-Reload Module
+
+**Milestone:** Post-M7 (Multi-Instance Refactor)
+
+**Current State:**
+
+The following files/exports are now deprecated but still exist:
+
+| File | Status | Notes |
+|------|--------|-------|
+| `lua_renderer.rs` | **Deprecated** | Replaced by `LuaLayerPlugin` |
+| `lua_visualizer.rs` | **Deprecated** | Replaced by `LuaLayerPlugin` |
+| `hot_reload.rs` | **Deprecated** | Only used by deprecated plugins |
+
+**Deprecated Exports in `mod.rs`:**
+```rust
+pub use lua_renderer::{LuaRendererPlugin, RendererReloadFlag};
+pub use lua_visualizer::{LuaVisualizerPlugin, VisualizerReloadFlag, VisualizerState};
+```
+
+**Why This Happened:**
+- M6 created `hot_reload.rs` to reduce duplication between `lua_renderer.rs` and `lua_visualizer.rs`
+- Post-M7 created `LuaLayerPlugin` with its own hot-reload logic (single recursive watcher)
+- The generic `hot_reload.rs` is now unused - `LuaLayerPlugin` handles everything
+
+**Proposed Change:**
+- Delete `lua_renderer.rs` (82 lines)
+- Delete `lua_visualizer.rs` (115 lines)
+- Delete `hot_reload.rs` (181 lines)
+- Remove deprecated exports from `mod.rs`
+- Total: ~380 lines of dead code removed
+
+**Criticality:** **Medium** - Dead code that works but adds confusion. Not blocking.
+
+**When to Do:** Beginning of Phase 3, or as quick cleanup now.
+
+---
+
+## Updated Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 1 | ✅ Completed (multi-instance plugins) |
+| Medium | 4 | ✅ 3 Completed (1 M4.5, 2 M5), 1 New (deprecated code) |
+| Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
+
+---
+
 ## Phase 2 Summary
 
 All five milestones completed:
@@ -352,19 +407,20 @@ All five milestones completed:
 1. `Asset` + `AssetStore<T>` - unified asset management with search (name + tags)
 2. `RenderLayer` trait + `RenderLayerStack` - compositable rendering
 3. `StepInfo` + `CurrentStepInfo` - observable generation progress
-4. Hot-reload pattern for Lua assets (renderers, visualizers)
+4. `LuaLayerRegistry` - multi-instance layer management with MCP API
 5. Tag-based categorization and search
 
 **Deferred Cleanup Items:**
-- 2 low-criticality items deferred to Phase 3 (MCP Error variant, Duplicate PNG code)
+- 1 medium-criticality: Deprecated plugins + hot_reload.rs (~380 lines dead code)
+- 2 low-criticality: MCP Error variant, Duplicate PNG code
 
 **Post-M7 Refactor:**
 - Created `LuaLayerPlugin` with `LuaLayerRegistry` for multi-instance support
 - Deprecated `LuaRendererPlugin` and `LuaVisualizerPlugin`
 - Added MCP endpoints for dynamic layer registration
 
-**M6 Cleanup Refactor:**
-- Created generic `hot_reload.rs` module (reduced duplication by ~70 lines per plugin)
+**M6 Cleanup Refactor (now superseded):**
+- Created generic `hot_reload.rs` module (now deprecated - superseded by `LuaLayerPlugin`)
 - Fixed GeneratorListener pattern (generator calls listeners, not render layers reading context)
 - Created `SharedVisualizer` wrapper for proper Arc<Mutex<>> sharing
 - Removed `step_info` from `RenderContext` (visualizer stores internally)
