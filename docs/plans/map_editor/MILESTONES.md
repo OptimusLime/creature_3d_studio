@@ -169,6 +169,19 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 
 *Removes the opacity of Markov Jr. models by exposing their internal structure and per-node step info.*
 
+### M10.4: Multi-Surface Rendering Foundation
+**Functionality:** I can render to multiple independent textures with separate layer stacks, composited side-by-side for screenshots and video export.
+
+**Foundation:** `RenderSurface` abstraction that decouples render targets from the layer system. Each surface has its own dimensions and layer stack. `FrameCapture` enables video export.
+
+- Create `"grid"` and `"mj_structure"` surfaces with independent layer stacks
+- Surfaces composited horizontally (grid: 100x100, mj_structure: 100x100 → 200x100 total)
+- MCP `get_output` returns composite; `?surface=grid` returns individual
+- `POST /mcp/start_recording` / `export_video` for generation playback videos
+- Implements: `RenderSurface`, `RenderSurfaceManager`, `FrameCapture`
+
+---
+
 ### M10.5: Markov Jr. Structure Introspection
 **Functionality:** I can see the internal node tree of a Markov Jr. model via MCP.
 
@@ -386,6 +399,7 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 | 8 | Load Markov Jr. model in 2D | Generation |
 | 9 | Chain generators together | Generation |
 | 10 | Save/load generation checkpoints | Generation |
+| 10.4 | Render to multiple surfaces, video export | MJ Introspection |
 | 10.5 | See internal Markov Jr. node tree via MCP | MJ Introspection |
 | 10.6 | See which Markov Jr. node made each change | MJ Introspection |
 | 10.7 | Control step budget (rules per frame) | MJ Introspection |

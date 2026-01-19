@@ -31,12 +31,16 @@ The C# Markov Jr. visualizer already does this. We need parity.
 - See which specific node (e.g., "root.markov.one[0]") made each change
 - Control exactly how many rule applications happen per frame
 - Watch a dedicated visualizer that shows the node tree and highlights active nodes
+- **Render simulation and visualizer to separate textures, composited side-by-side**
+- **Export a video of the generation process showing both grid and structure**
 
 **Phase Foundation:**
 1. `MjNode::structure()` - Every Markov node can describe its tree structure
 2. Path tracking in `ExecutionContext` - Nodes report their location when making changes
 3. Budget-aware stepping - Fine-grained control over rule applications
-4. `MjVisualizerLayer` - Dedicated visualization that understands Markov structure
+4. **`RenderSurface` abstraction** - Multiple render targets with independent layer stacks
+5. `MjVisualizerLayer` - Dedicated visualization that understands Markov structure
+6. **Video export** - Frame-by-frame PNG capture composited into video
 
 ---
 
@@ -82,6 +86,186 @@ Lua calls model:step()
 ---
 
 ## Milestone Details
+
+### M10.4: Multi-Surface Rendering Foundation
+
+**Functionality:** I can render to multiple independent textures with separate layer stacks, composited side-by-side for screenshots and video export.
+
+**Foundation:** `RenderSurface` abstraction that decouples render targets from the layer system. Each surface has its own dimensions and layer stack.
+
+#### Why First
+
+Everything else in Phase 3.5 depends on this. The MJ visualizer needs its own render target (not overlaid on the grid). Video export needs to capture both surfaces. Without this foundation, we'd be hacking around a single-texture assumption.
+
+#### Architecture
+
+```
+RenderSurfaceManager
+├── surfaces: HashMap<String, RenderSurface>
+│   ├── "grid" → RenderSurface { width: 100, height: 100, layers: [base, grid_visualizer] }
+│   └── "mj_structure" → RenderSurface { width: 100, height: 100, layers: [mj_tree, mj_highlight] }
+├── layout: SurfaceLayout  // How surfaces are composited
+└── output: CompositeBuffer  // Final combined image
+
+SurfaceLayout
+├── Horizontal([("mj_structure", 100), ("grid", 100)])  // left-to-right
+├── Vertical([...])
+└── Custom(fn compose)
+```
+
+**Example layout:**
+```
+┌─────────────┬─────────────┐
+│ mj_structure│    grid     │
+│  (100x100)  │  (100x100)  │
+│             │             │
+│ [node tree] │ [simulation]│
+│ [active hl] │ [step trail]│
+└─────────────┴─────────────┘
+      200 x 100 total
+```
+
+#### API Design
+
+```rust
+/// A render target with its own pixel buffer and layer stack.
+pub struct RenderSurface {
+    pub name: String,
+    pub width: usize,
+    pub height: usize,
+    pub buffer: PixelBuffer,
+    pub layers: Vec<Box<dyn RenderLayer>>,
+}
+
+/// Manages multiple render surfaces and composites them.
+#[derive(Resource)]
+pub struct RenderSurfaceManager {
+    surfaces: HashMap<String, RenderSurface>,
+    layout: SurfaceLayout,
+}
+
+impl RenderSurfaceManager {
+    /// Add a surface with specified dimensions.
+    pub fn add_surface(&mut self, name: &str, width: usize, height: usize);
+    
+    /// Add a layer to a specific surface.
+    pub fn add_layer(&mut self, surface: &str, layer: Box<dyn RenderLayer>);
+    
+    /// Render all surfaces and composite into final buffer.
+    pub fn render_all(&mut self, ctx: &RenderContext) -> CompositeBuffer;
+    
+    /// Get a single surface's buffer (for surface-specific export).
+    pub fn get_surface(&self, name: &str) -> Option<&RenderSurface>;
+}
+
+/// How surfaces are arranged in the final composite.
+pub enum SurfaceLayout {
+    /// Surfaces arranged left-to-right.
+    Horizontal(Vec<String>),
+    /// Surfaces arranged top-to-bottom.
+    Vertical(Vec<String>),
+    /// Grid arrangement (rows x cols).
+    Grid { columns: usize },
+}
+```
+
+**Lua API:**
+```lua
+-- Create surfaces
+surfaces:create("mj_structure", 100, 100)
+surfaces:create("grid", 100, 100)
+
+-- Add layers to surfaces
+surfaces:add_layer("grid", base_layer)
+surfaces:add_layer("grid", step_trail_visualizer)
+surfaces:add_layer("mj_structure", mj_tree_layer)
+surfaces:add_layer("mj_structure", mj_highlight_layer)
+
+-- Set layout
+surfaces:set_layout("horizontal", {"mj_structure", "grid"})
+```
+
+**MCP API:**
+```
+GET /mcp/get_output
+  → Returns composite PNG (both surfaces side-by-side)
+
+GET /mcp/get_output?surface=grid
+  → Returns only grid surface PNG
+
+GET /mcp/get_output?surface=mj_structure
+  → Returns only MJ structure surface PNG
+
+GET /mcp/surfaces
+  → Returns: {"surfaces": ["grid", "mj_structure"], "layout": "horizontal", "total_size": [200, 100]}
+```
+
+#### Video Export Foundation
+
+```rust
+/// Frame capture for video export.
+pub struct FrameCapture {
+    frames: Vec<CompositeBuffer>,
+    frame_rate: u32,
+}
+
+impl FrameCapture {
+    /// Capture current composite state as a frame.
+    pub fn capture(&mut self, manager: &RenderSurfaceManager);
+    
+    /// Export all frames to PNG sequence.
+    pub fn export_pngs(&self, dir: &Path) -> io::Result<()>;
+    
+    /// Export to video (requires ffmpeg).
+    pub fn export_video(&self, path: &Path, codec: &str) -> io::Result<()>;
+}
+```
+
+**MCP API:**
+```
+POST /mcp/start_recording
+  → Starts capturing frames each step
+
+POST /mcp/stop_recording
+  → Stops capturing, returns frame count
+
+POST /mcp/export_video
+  Body: {"path": "/tmp/gen.mp4", "fps": 30}
+  → Exports captured frames to video
+```
+
+#### Implementation Tasks
+
+1. Create `RenderSurface` struct with buffer and layer stack
+2. Create `RenderSurfaceManager` resource
+3. Refactor current single-texture rendering to use manager with "grid" surface
+4. Add `SurfaceLayout` enum and composite logic
+5. Update MCP `get_output` to support `?surface=` parameter
+6. Add `GET /mcp/surfaces` endpoint
+7. Create `FrameCapture` struct for video export
+8. Add recording MCP endpoints
+
+#### Verification
+
+```bash
+# Check surfaces exist
+curl http://127.0.0.1:8088/mcp/surfaces
+# Returns: {"surfaces":["grid"],"layout":"horizontal","total_size":[100,100]}
+
+# Get composite output
+curl http://127.0.0.1:8088/mcp/get_output -o /tmp/composite.png
+
+# Get single surface
+curl "http://127.0.0.1:8088/mcp/get_output?surface=grid" -o /tmp/grid_only.png
+
+# Video export (after recording)
+curl -X POST http://127.0.0.1:8088/mcp/start_recording
+# ... run generation ...
+curl -X POST http://127.0.0.1:8088/mcp/stop_recording
+curl -X POST http://127.0.0.1:8088/mcp/export_video -d '{"path":"/tmp/gen.mp4","fps":30}'
+```
+
+---
 
 ### M10.5: Markov Jr. Structure Introspection
 
@@ -389,17 +573,50 @@ curl -X POST http://127.0.0.1:8088/mcp/step_generator -d '{"budget":1000}'
 
 ### M10.8: Markov Jr. Visualizer Layer
 
-**Functionality:** I can see a real-time overlay showing the Markov Jr. structure and active nodes.
+**Functionality:** I can see a real-time overlay showing the Markov Jr. structure and active nodes, rendered to a separate surface alongside the grid.
 
-**Foundation:** Dedicated visualizer that renders structure tree and highlights based on step info.
+**Foundation:** Uses `RenderSurfaceManager` from M10.4. Two surfaces:
+- `"grid"` surface: Simulation output + grid visualizer (step trail)
+- `"mj_structure"` surface: Node tree + active highlighting
+
+**Depends on:** M10.4 (multi-surface), M10.5 (structure), M10.6 (step info with paths), M10.7 (budget stepping)
 
 #### Design
 
-The visualizer renders:
-1. **Structure tree** (left side): Node hierarchy from M10.5
+**Surface Layout:**
+```
+┌──────────────────┬──────────────────┐
+│  mj_structure    │      grid        │
+│    (100x100)     │    (100x100)     │
+│                  │                  │
+│ ┌─ Markov        │  [simulation     │
+│ │  ├─ One [*]    │   output with    │
+│ │  │  WB=WW ←    │   step trail     │
+│ │  └─ All        │   highlighting]  │
+│ └─ Path          │                  │
+└──────────────────┴──────────────────┘
+        200 x 100 composite
+```
+
+**Two visualizer types:**
+1. **MJ Structure Visualizer** → renders to `"mj_structure"` surface
+   - Node tree with hierarchy
+   - Active node highlighted (based on step info path)
+   - Current rule displayed
+2. **Grid Step Trail Visualizer** → renders to `"grid"` surface
+   - Overlays on grid
+   - Shows affected cells from recent steps
+   - Fades older steps (trail effect)
+
+#### Layers
+
+The visualizer renders to the `"mj_structure"` surface:
+1. **Structure tree**: Node hierarchy from M10.5
 2. **Active highlight**: Currently executing node highlighted (from M10.6 step path)
 3. **Rule display**: Current rule being applied shown next to node
-4. **Grid overlay** (main area): Cells affected by current step highlighted
+
+The grid visualizer renders to the `"grid"` surface:
+4. **Cell overlay**: Cells affected by current step highlighted
 
 #### Implementation Approach
 
@@ -468,9 +685,12 @@ Visual verification:
 
 | File | Purpose |
 |------|---------|
+| `map_editor/render/surface.rs` | `RenderSurface`, `RenderSurfaceManager` |
+| `map_editor/render/frame_capture.rs` | `FrameCapture` for video export |
 | `markov_junior/mj_structure.rs` | `MjNodeStructure` struct, `Node::structure()` implementations |
 | `markov_junior/step_info.rs` | `MjStepInfo` struct, path tracking helpers |
-| `assets/map_editor/visualizers/mj_structure.lua` | Markov Jr. structure visualizer |
+| `assets/map_editor/visualizers/mj_structure.lua` | Markov Jr. structure visualizer (renders to mj_structure surface) |
+| `assets/map_editor/visualizers/step_trail.lua` | Grid step trail visualizer (renders to grid surface) |
 
 ### Modified Files
 
@@ -495,36 +715,63 @@ Visual verification:
 
 | Milestone | Time |
 |-----------|------|
+| M10.4 (Multi-Surface Rendering) | 6-8 hours |
 | M10.5 (Structure Introspection) | 4-6 hours |
 | M10.6 (Per-Node Step Info) | 6-8 hours |
 | M10.7 (Step Budget Control) | 2-3 hours |
 | M10.8 (Visualizer Layer) | 4-6 hours |
-| **Total** | **16-23 hours** |
+| **Total** | **22-31 hours** |
 
 ---
 
 ## Dependencies
 
-**Phase 3 → Phase 3.5:**
+```
+Phase 3 (M8-M10)
+    │
+    ▼
+M10.4: Multi-Surface Rendering  ◄── FOUNDATION (everything depends on this)
+    │
+    ├───────────────────┐
+    ▼                   ▼
+M10.5: Structure    M10.7: Step Budget
+    │                   │
+    ▼                   │
+M10.6: Per-Node         │
+Step Info               │
+    │                   │
+    └───────┬───────────┘
+            ▼
+    M10.8: Visualizer Layer
+            │
+            ▼
+    Phase 4 (Unified Store)
+```
+
+**Phase 3 → M10.4:**
 - `MjLuaModel` exists and integrates with step info system
 - `StepInfoRegistry` supports path-keyed storage
 - MCP server infrastructure exists
+- Current single-texture rendering works
+
+**M10.4 → M10.5, M10.7:**
+- Multi-surface rendering works
+- Surfaces can be created/configured via Lua/MCP
+- Video export foundation in place
 
 **M10.5 → M10.6:**
 - Structure exists to define valid paths
 - Path format established (used in step info)
 
-**M10.6 → M10.7:**
-- Step info emitted per rule application
-- Budget controls how many infos per frame
-
-**M10.7 → M10.8:**
-- All step info infrastructure in place
-- Budget allows single-stepping for clear visualization
+**M10.6 + M10.7 → M10.8:**
+- All step info infrastructure in place (M10.6)
+- Budget allows single-stepping for clear visualization (M10.7)
+- Multiple surfaces available to render to (M10.4)
 
 **Phase 3.5 → Phase 4:**
 - Markov introspection complete
-- Ready for database-backed asset storage
+- Multi-surface rendering enables future UI panels
+- Video export ready for documentation/demos
 
 ---
 
