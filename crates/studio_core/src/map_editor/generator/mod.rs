@@ -49,6 +49,67 @@ pub use traits::{Generator, GeneratorContext, GeneratorStructure};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+/// Resource holding the active generator.
+///
+/// This is a non-send resource because `Generator` implementations may not be
+/// thread-safe (e.g., `MjGenerator` contains `dyn Node` which isn't Send).
+///
+/// The active generator is set via MCP `set_generator` or on startup.
+pub struct ActiveGenerator {
+    /// The current generator, if any.
+    generator: Option<Box<dyn Generator + 'static>>,
+}
+
+impl Default for ActiveGenerator {
+    fn default() -> Self {
+        Self { generator: None }
+    }
+}
+
+impl ActiveGenerator {
+    /// Create with no generator.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create with an initial generator.
+    pub fn with_generator(generator: Box<dyn Generator + 'static>) -> Self {
+        Self {
+            generator: Some(generator),
+        }
+    }
+
+    /// Set the active generator.
+    pub fn set(&mut self, generator: Box<dyn Generator + 'static>) {
+        self.generator = Some(generator);
+    }
+
+    /// Clear the active generator.
+    pub fn clear(&mut self) {
+        self.generator = None;
+    }
+
+    /// Get a reference to the generator.
+    pub fn get(&self) -> Option<&(dyn Generator + 'static)> {
+        self.generator.as_deref()
+    }
+
+    /// Get a mutable reference to the generator.
+    pub fn get_mut(&mut self) -> Option<&mut (dyn Generator + 'static)> {
+        self.generator.as_deref_mut()
+    }
+
+    /// Check if there's an active generator.
+    pub fn is_some(&self) -> bool {
+        self.generator.is_some()
+    }
+
+    /// Get the structure of the active generator.
+    pub fn structure(&self) -> Option<GeneratorStructure> {
+        self.generator.as_ref().map(|g| g.structure())
+    }
+}
+
 /// Information about a single generator step.
 ///
 /// Emitted after each cell is filled by the generator.

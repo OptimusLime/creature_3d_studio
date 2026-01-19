@@ -296,6 +296,9 @@ fn setup_generator(world: &mut World) {
     // Insert StepInfoRegistry resource
     world.insert_resource(StepInfoRegistry::default());
 
+    // Insert ActiveGenerator (non-send because Generator may not be Send)
+    world.insert_non_send_resource(super::generator::ActiveGenerator::new());
+
     // Setup file watcher
     let watch_path = Path::new(&path)
         .parent()

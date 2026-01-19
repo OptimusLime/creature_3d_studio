@@ -144,6 +144,9 @@ struct GeneratorStateJson {
     completed: bool,
     /// Grid size [width, height]
     grid_size: [usize; 2],
+    /// Generator structure (recursive tree)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structure: Option<super::generator::GeneratorStructure>,
     /// Step info for all paths in the scene tree
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     steps: HashMap<String, StepInfoJson>,
@@ -674,6 +677,7 @@ fn handle_mcp_requests(
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
     playback: Option<Res<PlaybackState>>,
     step_registry: Option<Res<StepInfoRegistry>>,
+    active_generator: Option<NonSend<super::generator::ActiveGenerator>>,
 ) {
     // Process all pending requests
     loop {
@@ -918,23 +922,34 @@ fn handle_mcp_requests(
                     })
                     .unwrap_or_default();
 
+                // Get structure from active generator (if available)
+                let structure = active_generator.as_ref().and_then(|ag| ag.structure());
+
+                // Determine generator type from structure or default to "lua"
+                let generator_type = structure
+                    .as_ref()
+                    .map(|s| s.type_name.clone())
+                    .unwrap_or_else(|| "lua".to_string());
+
                 // Get generator state from playback
                 let state = if let Some(ref pb) = playback {
                     GeneratorStateJson {
-                        generator_type: "lua".to_string(), // For now, all generators are Lua-based
+                        generator_type,
                         step: pb.step_index,
                         running: pb.playing && !pb.completed,
                         completed: pb.completed,
                         grid_size: [buffer.width, buffer.height],
+                        structure,
                         steps,
                     }
                 } else {
                     GeneratorStateJson {
-                        generator_type: "unknown".to_string(),
+                        generator_type,
                         step: 0,
                         running: false,
                         completed: false,
                         grid_size: [buffer.width, buffer.height],
+                        structure,
                         steps,
                     }
                 };
