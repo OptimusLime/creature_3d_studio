@@ -1,5 +1,8 @@
 //! Lua visualizer plugin for the map editor.
 //!
+//! **DEPRECATED**: Use `LuaLayerPlugin` instead, which manages both renderers
+//! and visualizers with multi-instance support.
+//!
 //! Manages the visualizer layer with hot-reload support.
 //! The visualizer implements `GeneratorListener` to receive step events.
 

@@ -183,6 +183,11 @@ impl RenderLayerStack {
     pub fn remove_layer(&mut self, name: &str) {
         self.layers.retain(|l| l.name() != name);
     }
+
+    /// Check if a layer with the given name exists.
+    pub fn has_layer(&self, name: &str) -> bool {
+        self.layers.iter().any(|l| l.name() == name)
+    }
 }
 
 #[cfg(test)]

@@ -27,9 +27,8 @@ use super::{
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
+    lua_layer_registry::LuaLayerPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
-    lua_renderer::LuaRendererPlugin,
-    lua_visualizer::LuaVisualizerPlugin,
     material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
@@ -257,15 +256,13 @@ impl MapEditor2DApp {
         });
         app.insert_resource(SearchState::default());
 
-        // Render layer stack (LuaRendererPlugin will add the base layer)
+        // Render layer stack (LuaLayerPlugin will add layers)
         let render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
         app.insert_resource(render_stack);
 
-        // Lua renderer plugin (hot-reload for renderers)
-        app.add_plugins(LuaRendererPlugin::default());
-
-        // Lua visualizer plugin (hot-reload for visualizers)
-        app.add_plugins(LuaVisualizerPlugin::default());
+        // Lua layer plugin (manages all render layers and visualizers with hot-reload)
+        // Replaces LuaRendererPlugin and LuaVisualizerPlugin
+        app.add_plugins(LuaLayerPlugin::default());
 
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
         // Must be added AFTER VoxelBuffer2D resource is inserted

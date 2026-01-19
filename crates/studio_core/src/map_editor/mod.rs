@@ -33,6 +33,7 @@ pub mod generator;
 pub mod hot_reload;
 pub mod imgui_screenshot;
 pub mod lua_generator;
+pub mod lua_layer_registry;
 pub mod lua_materials;
 pub mod lua_renderer;
 pub mod lua_visualizer;
@@ -48,6 +49,7 @@ pub use checkerboard::CheckerboardState;
 pub use generator::{CurrentStepInfo, GeneratorListener, GeneratorListeners, StepInfo};
 pub use imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin};
 pub use lua_generator::{GeneratorReloadFlag, LuaGeneratorPlugin, GENERATOR_LUA_PATH};
+pub use lua_layer_registry::{LuaLayerDef, LuaLayerPlugin, LuaLayerRegistry, LuaLayerType};
 pub use lua_materials::{
     LuaMaterialsPlugin, MaterialsLoadSet, MaterialsReloadFlag, MATERIALS_LUA_PATH,
 };

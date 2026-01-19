@@ -270,7 +270,7 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 | Hot-reload plugin duplication | ✅ Done during M6 cleanup | Created generic `hot_reload.rs` module |
 | GeneratorListener unused | ✅ Done during M6 cleanup | Generator now calls listeners, visualizer implements trait |
 | VisualizerState unused | ✅ Done during M6 cleanup | Now holds SharedVisualizer, used for reload |
-| Plugins hardcoded to 1 instance | ⚠️ Defer to Phase 3 | **HIGH**: Architectural mismatch, blocks multiple visualizers/renderers |
+| Plugins hardcoded to 1 instance | ✅ Done after M7 | Created `LuaLayerRegistry` with multi-instance support |
 | M7 tag search | N/A | Clean implementation, no cleanup needed |
 
 ---
@@ -289,35 +289,27 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 
 ## M6 Post-Cleanup Audit: Multiplicity Constraints
 
-### 4. Plugins Hardcoded to Single Instance
+### 4. ~~Plugins Hardcoded to Single Instance~~ ✅ COMPLETED
 
-**Milestone:** M6 (Post-Cleanup Audit)
+**Milestone:** M6 (Post-Cleanup Audit) → Resolved after M7
 
-**Current State:**
+**Resolution:** Created `LuaLayerPlugin` with `LuaLayerRegistry`:
 
-| Component | Count | Constraint |
-|-----------|-------|------------|
-| Lua Generators | 1 | `LuaGeneratorPlugin` single path, single `LuaGeneratorState` |
+| Component | Count | Implementation |
+|-----------|-------|----------------|
+| Lua Generators | 1 | (unchanged - generator is separate concern) |
 | Generator Listeners | **Many** | `GeneratorListeners` is `Vec<Box<dyn GeneratorListener>>` ✅ |
 | Render Layers | **Many** | `RenderLayerStack` is `Vec<Box<dyn RenderLayer>>` ✅ |
-| Lua Renderers | 1 | `LuaRendererPlugin` hardcoded "base" name, single config |
-| Lua Visualizers | 1 | `LuaVisualizerPlugin` hardcoded "visualizer" name, single state |
+| Lua Renderers | **Many** | `LuaLayerRegistry` + `LuaLayerPlugin` ✅ |
+| Lua Visualizers | **Many** | `LuaLayerRegistry` + `LuaLayerPlugin` ✅ |
 
-**Why This Is Bad:**
-- The **infrastructure** (listener list, layer stack) correctly supports many items
-- The **plugins** artificially limit to 1 each - this is an architectural mismatch
-- Visualizers being limited to 1 is especially problematic: we may want multiple overlays (step highlight, selection, grid lines, debug info, etc.)
-- Lua renderers should support multiple layers (base terrain, decorations, lighting, etc.)
+**New Architecture:**
+- `LuaLayerDef` - Definition of a layer (name, type, path, tags), implements `Asset`
+- `LuaLayerRegistry` - Uses `InMemoryStore<LuaLayerDef>` for definitions, tracks live instances
+- `LuaLayerPlugin` - Single plugin manages all layers with hot-reload
+- MCP endpoints: `GET /mcp/layer_registry`, `POST /mcp/register_layer`, `DELETE /mcp/layer/{name}`
 
-**Proposed Change:**
-- Plugins should support registering multiple Lua scripts
-- Each script becomes a named layer/listener
-- Hot-reload should work per-script, not globally
-- Consider a registry pattern: `LuaLayerRegistry` that manages multiple `LuaRenderLayer` instances
-
-**Criticality:** **High** - Architectural mismatch between infrastructure and plugins. Will block future features requiring multiple visualizers or render layers.
-
-**When to Do:** Phase 3, before adding more visualizer types.
+**Migration:** `LuaRendererPlugin` and `LuaVisualizerPlugin` deprecated, use `LuaLayerPlugin` instead.
 
 ---
 
@@ -325,7 +317,7 @@ Both `lua_renderer.rs` and `lua_visualizer.rs` now use this generic infrastructu
 
 | Criticality | Count | Status |
 |-------------|-------|--------|
-| High | 1 | ⚠️ Plugins hardcoded to single instance (NEW) |
+| High | 1 | ✅ Completed (multi-instance plugins) |
 | Medium | 3 | ✅ All Completed (1 M4.5, 2 M5) |
 | Low | 6 | ✅ 4 Completed (1 M4.5, 3 M6), 2 Deferred |
 
@@ -364,8 +356,12 @@ All five milestones completed:
 5. Tag-based categorization and search
 
 **Deferred Cleanup Items:**
-- 1 high-criticality item: Plugins hardcoded to single instance (blocks multiple visualizers/renderers)
 - 2 low-criticality items deferred to Phase 3 (MCP Error variant, Duplicate PNG code)
+
+**Post-M7 Refactor:**
+- Created `LuaLayerPlugin` with `LuaLayerRegistry` for multi-instance support
+- Deprecated `LuaRendererPlugin` and `LuaVisualizerPlugin`
+- Added MCP endpoints for dynamic layer registration
 
 **M6 Cleanup Refactor:**
 - Created generic `hot_reload.rs` module (reduced duplication by ~70 lines per plugin)

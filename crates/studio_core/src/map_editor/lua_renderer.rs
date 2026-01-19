@@ -1,5 +1,8 @@
 //! Lua renderer plugin for the map editor.
 //!
+//! **DEPRECATED**: Use `LuaLayerPlugin` instead, which manages both renderers
+//! and visualizers with multi-instance support.
+//!
 //! Manages the base render layer with hot-reload support.
 
 use super::hot_reload::{check_hot_reload, setup_hot_reload, HotReloadConfig, HotReloadFlag};

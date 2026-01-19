@@ -7,6 +7,7 @@
 //! - Searching assets by name
 //! - Setting generator/materials/renderer Lua source (triggers hot reload)
 //! - Listing render layers
+//! - Managing Lua layer registry (register/unregister layers)
 //!
 //! # Endpoints
 //!
@@ -20,9 +21,13 @@
 //! - `POST /mcp/set_generator` - Set generator.lua source (triggers hot reload)
 //! - `POST /mcp/set_materials` - Set materials.lua source (triggers hot reload)
 //! - `POST /mcp/set_renderer` - Set renderer Lua source (triggers hot reload)
+//! - `GET /mcp/layer_registry` - List all registered layers with details
+//! - `POST /mcp/register_layer` - Register a new layer
+//! - `DELETE /mcp/layer/{name}` - Unregister a layer by name
 
 use super::asset::{Asset, AssetStore};
 use super::lua_generator::GENERATOR_LUA_PATH;
+use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
 use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
 use super::render::{RenderContext, RenderLayerStack, RENDERER_LUA_PATH};
@@ -94,6 +99,10 @@ enum McpRequest {
     SetGenerator(String),
     SetMaterials(String),
     SetRenderer(String),
+    // Layer registry operations
+    RegisterLayer(LayerRegisterRequest),
+    UnregisterLayer(String), // layer name
+    GetLayerRegistry,
 }
 
 /// Request parameters for search.
@@ -112,6 +121,28 @@ enum McpResponse {
     SearchResults(Vec<SearchResultJson>),
     Success { success: bool },
     Error(String),
+    LayerRegistry(Vec<LayerDefJson>),
+}
+
+/// Request body for registering a layer.
+#[derive(Deserialize, Debug)]
+struct LayerRegisterRequest {
+    name: String,
+    #[serde(rename = "type")]
+    layer_type: String, // "renderer" or "visualizer"
+    lua_path: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// JSON representation of a layer definition.
+#[derive(Serialize)]
+struct LayerDefJson {
+    name: String,
+    #[serde(rename = "type")]
+    layer_type: String,
+    lua_path: String,
+    tags: Vec<String>,
 }
 
 /// JSON representation of a search result.
@@ -457,6 +488,101 @@ fn handle_http_request(
             }
         }
 
+        (Method::Get, "/mcp/layer_registry") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::GetLayerRegistry).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::LayerRegistry(layers)) => {
+                    let json = serde_json::to_string(&layers).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/register_layer") => {
+            // Read JSON from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Parse JSON
+            let layer_req: LayerRegisterRequest = match serde_json::from_str(&body) {
+                Ok(req) => req,
+                Err(e) => {
+                    let _ = request.respond(error_response(&format!("Invalid JSON: {}", e)));
+                    return;
+                }
+            };
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::RegisterLayer(layer_req))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Success { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Delete, path) if path.starts_with("/mcp/layer/") => {
+            // Extract layer name from path: /mcp/layer/{name}
+            let name = path.strip_prefix("/mcp/layer/").unwrap_or("").to_string();
+            if name.is_empty() {
+                let _ = request.respond(error_response("Missing layer name"));
+                return;
+            }
+
+            // Send request to Bevy
+            if request_tx.send(McpRequest::UnregisterLayer(name)).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Success { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -483,6 +609,7 @@ fn handle_mcp_requests(
     mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
     render_stack: Option<Res<RenderLayerStack>>,
+    mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
 ) {
     // Process all pending requests
     loop {
@@ -623,6 +750,82 @@ fn handle_mcp_requests(
                         error!("MCP: Failed to write renderer: {}", e);
                         let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
                     }
+                }
+            }
+
+            Ok(McpRequest::GetLayerRegistry) => {
+                let layers = if let Some(ref registry) = layer_registry {
+                    registry
+                        .list()
+                        .iter()
+                        .map(|def| LayerDefJson {
+                            name: def.name.clone(),
+                            layer_type: match def.layer_type {
+                                LuaLayerType::Renderer => "renderer".to_string(),
+                                LuaLayerType::Visualizer => "visualizer".to_string(),
+                            },
+                            lua_path: def.lua_path.clone(),
+                            tags: def.tags.clone(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let _ = channels
+                    .response_tx
+                    .send(McpResponse::LayerRegistry(layers));
+            }
+
+            Ok(McpRequest::RegisterLayer(req)) => {
+                if let Some(ref mut registry) = layer_registry {
+                    let layer_type = match req.layer_type.as_str() {
+                        "renderer" => LuaLayerType::Renderer,
+                        "visualizer" => LuaLayerType::Visualizer,
+                        _ => {
+                            let _ = channels.response_tx.send(McpResponse::Error(format!(
+                                "Invalid layer type: {}",
+                                req.layer_type
+                            )));
+                            continue;
+                        }
+                    };
+
+                    let def = LuaLayerDef {
+                        name: req.name.clone(),
+                        layer_type,
+                        lua_path: req.lua_path.clone(),
+                        tags: req.tags,
+                    };
+
+                    registry.register(def);
+                    registry.mark_for_reload(&req.name);
+                    info!("MCP: Registered layer '{}' ({})", req.name, req.layer_type);
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Success { success: true });
+                } else {
+                    let _ = channels.response_tx.send(McpResponse::Error(
+                        "Layer registry not available".to_string(),
+                    ));
+                }
+            }
+
+            Ok(McpRequest::UnregisterLayer(name)) => {
+                if let Some(ref mut registry) = layer_registry {
+                    if registry.unregister(&name).is_some() {
+                        info!("MCP: Unregistered layer '{}'", name);
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Success { success: true });
+                    } else {
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Error(format!("Layer '{}' not found", name)));
+                    }
+                } else {
+                    let _ = channels.response_tx.send(McpResponse::Error(
+                        "Layer registry not available".to_string(),
+                    ));
                 }
             }
 
