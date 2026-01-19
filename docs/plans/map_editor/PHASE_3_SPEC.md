@@ -238,8 +238,9 @@ These foundations enable Phase 4+ features (database-backed checkpoint sharing, 
 | M# | Functionality | Foundation |
 |----|---------------|------------|
 | M8 | I can load a Markov Jr. model and watch it generate step-by-step | `mj` module exposed to Lua generators |
-| M8.5 | I can compose generators and see step info from any node in the tree | `Generator` base class, `StepInfoRegistry`, scene tree paths |
-| M9 | I can chain generators together (base terrain + scatter crystals) | `Sequential`, `Parallel` composers using M8.5 foundation |
+| M8.5 | I can compose generators and see step info from any node in the tree | `Generator` Lua base class, `StepInfoRegistry`, scene tree paths |
+| M8.75 | I can see complete generator structure via MCP, all generators emit rich step info | `Generator` trait in Rust, `MjGenerator` with rule info |
+| M9 | I can chain generators together (base terrain + scatter crystals) | `Sequential`, `Parallel` composers using M8.75 Rust foundation |
 | M10 | I can save generation state and resume later | `Checkpoint` implements `Asset`, `CheckpointManager` |
 
 ---
@@ -584,6 +585,237 @@ Anticipated items:
 
 ---
 
+## M8.75: Generator Foundation in Rust
+
+**Functionality:** I can see the complete structure of any generator tree via MCP, and every generator (including Markov Jr.) emits detailed step info with rule names and affected cells.
+
+**Foundation:** `Generator` trait in Rust with `structure()` method. All generators implement this trait. Lua generators become thin wrappers over Rust implementations.
+
+### Why This Milestone Exists
+
+M8.5 created a Lua-only scene tree that Rust can't introspect. This blocks:
+- MCP returning structure (can't call Lua `get_structure()` from Rust easily)
+- Visualizers filtering by generator type (don't know what's in the tree)
+- Markov debugging (no step info, no rule visibility)
+- AI assistance via MCP (can't understand what the generator is doing)
+
+The most complex generator (Markov Jr.) emits zero step info. We can't see which rule fired, which cells matched, where we are in the XML sequence. Without structure visibility and step info from all generators, the scene tree is useless decoration.
+
+### Design
+
+**Rust Generator Trait:**
+```rust
+pub trait Generator: Send + Sync {
+    /// Returns the generator's type name (e.g., "Sequential", "MjModel", "Scatter")
+    fn type_name(&self) -> &str;
+    
+    /// Returns the recursive structure of this generator and children
+    fn structure(&self) -> GeneratorStructure;
+    
+    /// Initialize with context
+    fn init(&mut self, ctx: &mut GeneratorContext);
+    
+    /// Execute one step, return true if complete
+    fn step(&mut self, ctx: &mut GeneratorContext) -> bool;
+    
+    /// Reset to initial state
+    fn reset(&mut self, seed: u64);
+    
+    /// Get current step info (if any was emitted this step)
+    fn last_step_info(&self) -> Option<&StepInfo>;
+}
+
+#[derive(Clone, Serialize)]
+pub struct GeneratorStructure {
+    pub type_name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,  // For MjModel
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub children: HashMap<String, GeneratorStructure>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,  // Generator-specific config
+}
+```
+
+**Rust Generators:**
+```rust
+// Sequential composer
+pub struct SequentialGenerator {
+    children: Vec<(String, Box<dyn Generator>)>,
+    current_index: usize,
+    path: String,
+}
+
+// Markov Jr. wrapper - emits detailed step info
+pub struct MjGenerator {
+    model: Model,
+    path: String,
+    last_step_info: Option<StepInfo>,
+}
+
+impl Generator for MjGenerator {
+    fn step(&mut self, ctx: &mut GeneratorContext) -> bool {
+        let made_progress = self.model.step();
+        
+        if made_progress {
+            // Extract rule info from interpreter
+            let rule_name = self.model.interpreter.current_rule_name();
+            let changes = self.model.interpreter.last_changes();
+            
+            self.last_step_info = Some(StepInfo {
+                path: self.path.clone(),
+                step_number: self.model.counter(),
+                rule_name: Some(rule_name),
+                affected_cells: Some(changes.len()),
+                // ... copy changed cells to buffer, track position
+            });
+        }
+        
+        !self.model.is_running()
+    }
+    
+    fn structure(&self) -> GeneratorStructure {
+        GeneratorStructure {
+            type_name: "MjModel".to_string(),
+            path: self.path.clone(),
+            model_name: Some(self.model.name.clone()),
+            children: HashMap::new(),
+            config: None,
+        }
+    }
+}
+
+// Scatter, Fill, Parallel - all in Rust
+pub struct ScatterGenerator { ... }
+pub struct FillGenerator { ... }
+pub struct ParallelGenerator { ... }
+```
+
+**Lua becomes thin wrappers:**
+```lua
+-- generators.lua now wraps Rust implementations
+local generators = {}
+
+generators.sequential = function(children)
+    return _G._rust_create_sequential(children)
+end
+
+generators.scatter = function(opts)
+    return _G._rust_create_scatter(opts.material, opts.target, opts.density)
+end
+
+-- mj.load_model returns Rust-backed MjGenerator
+```
+
+**MCP endpoint now trivial:**
+```rust
+Ok(McpRequest::GetGeneratorState) => {
+    let generator = world.resource::<ActiveGenerator>();
+    let structure = generator.structure();  // Direct Rust call
+    let steps = world.resource::<StepInfoRegistry>();
+    
+    McpResponse::GeneratorState(GeneratorStateJson {
+        structure: Some(structure),  // Now we have it
+        steps: steps.all().clone(),
+        // ...
+    })
+}
+```
+
+### API Definitions
+
+**Generator Trait** (`generator/trait.rs`):
+- `type_name()` → generator type for introspection
+- `structure()` → recursive `GeneratorStructure` for MCP
+- `init()`, `step()`, `reset()` → existing generator protocol
+- `last_step_info()` → step info emitted during last step
+
+**GeneratorStructure** (serializable):
+- `type_name`: "Sequential", "MjModel", "Scatter", etc.
+- `path`: scene tree path (e.g., "root.step_1")
+- `model_name`: for MjModel, the XML file name
+- `children`: recursive map of child structures
+- `config`: generator-specific parameters (density, material, etc.)
+
+**MjGenerator** (`generator/markov.rs`):
+- Wraps existing `markov_junior::Model`
+- Extracts rule name from interpreter on each step
+- Tracks affected cells via `interpreter.last_changes()`
+- Copies grid changes to `GeneratorContext` buffer
+
+**ActiveGenerator** resource:
+- Holds `Box<dyn Generator>` for the current generator
+- Replaced on hot-reload or `set_generator` MCP call
+
+### Files Changed
+
+**New:**
+| File | Purpose |
+|------|---------|
+| `generator/trait.rs` | `Generator` trait, `GeneratorStructure` struct |
+| `generator/sequential.rs` | `SequentialGenerator` implementing `Generator` |
+| `generator/parallel.rs` | `ParallelGenerator` implementing `Generator` |
+| `generator/scatter.rs` | `ScatterGenerator` implementing `Generator` |
+| `generator/fill.rs` | `FillGenerator` implementing `Generator` |
+| `generator/markov.rs` | `MjGenerator` wrapping `Model`, emitting rich step info |
+
+**Modified:**
+| File | Change |
+|------|--------|
+| `generator/mod.rs` | Export new generators, add `ActiveGenerator` resource |
+| `lua_generator.rs` | Register Rust generator factories, Lua wrappers call Rust |
+| `markov_junior/interpreter.rs` | Add `current_rule_name()` method |
+| `markov_junior/lua_api.rs` | `mj.load_model()` returns Rust-backed `MjGenerator` |
+| `mcp_server.rs` | Return `structure` field from `generator.structure()` |
+| `assets/map_editor/lib/generators.lua` | Thin wrappers calling Rust factories |
+
+### Verification
+
+```bash
+cargo run --example p_map_editor_2d &
+sleep 5
+
+# Structure is now returned
+curl http://127.0.0.1:8088/mcp/generator_state | jq '.structure'
+# Returns: {"type_name":"Sequential","path":"root","children":{"step_1":{"type_name":"MjModel","model_name":"MazeGrowth.xml",...},...}}
+
+# Markov step info includes rule name
+curl http://127.0.0.1:8088/mcp/generator_state | jq '.steps["root.step_1"]'
+# Returns: {"step":45,"rule_name":"WB=WW","affected_cells":3,"x":12,"y":8,...}
+
+# All generators emit step info
+curl http://127.0.0.1:8088/mcp/generator_state | jq '.steps | keys'
+# Returns: ["root", "root.step_1", "root.step_2"]
+```
+
+### M8.75 Verification Checklist
+
+- [ ] `Generator` trait exists in `generator/trait.rs`
+- [ ] `GeneratorStructure` struct is serializable via serde
+- [ ] `SequentialGenerator` implements `Generator` with children
+- [ ] `ParallelGenerator` implements `Generator` with children
+- [ ] `ScatterGenerator` implements `Generator`, emits step info
+- [ ] `FillGenerator` implements `Generator`, emits step info
+- [ ] `MjGenerator` implements `Generator`, emits step info with rule names
+- [ ] `MjGenerator` reports affected cell count from interpreter
+- [ ] `GET /mcp/generator_state` returns `structure` field
+- [ ] All step info includes the emitting generator's path
+- [ ] Lua `generators.sequential()` wraps Rust `SequentialGenerator`
+- [ ] Lua `mj.load_model()` returns Rust-backed `MjGenerator`
+- [ ] Example composed generator works with Rust foundation
+- [ ] 58+ tests pass
+
+### M8.75 Cleanup Audit
+
+**To be documented in [PHASE_3_CLEANUP.md](./PHASE_3_CLEANUP.md) after milestone completion.**
+
+Anticipated items:
+- [ ] Should Lua generators be completely removed or kept as alternative?
+- [ ] How to handle custom Lua generator logic that doesn't fit Rust patterns?
+
+---
+
 ## M9: Composed Generators (Polish)
 
 **Functionality:** I can create complex multi-stage terrain with multiple generator types and see real-time progress for each stage.
@@ -851,8 +1083,9 @@ The cleanup document will track:
 | Milestone | Likely Cleanup Items | Criticality |
 |-----------|---------------------|-------------|
 | M8 | Design decision: Lua-based vs Rust adapter | N/A (documented) |
-| M8.5 | Generator base class: Lua-only vs Rust backing | Medium |
+| M8.5 | Generator base class: Lua-only vs Rust backing | **High** (addressed in M8.75) |
 | M8.5 | Path separator convention (`.` vs `/`) | Low |
+| M8.75 | Lua generator removal vs keeping as alternative | Low |
 | M9 | Predicate functions vs strings | Low |
 | M10 | Checkpoint persistence strategy | Low |
 
@@ -871,24 +1104,31 @@ At Phase 3 end, review [PHASE_3_CLEANUP.md](./PHASE_3_CLEANUP.md) and decide:
 
 | File | Purpose |
 |------|---------|
-| `assets/map_editor/lib/generator.lua` | Generator base class with scene tree support |
-| `assets/map_editor/lib/generators.lua` | Built-in composers (sequential, parallel, scatter, fill, noise) |
+| `assets/map_editor/lib/generator.lua` | Generator Lua base class (M8.5, becomes thin wrapper in M8.75) |
+| `assets/map_editor/lib/generators.lua` | Built-in composers (M8.5 Lua, M8.75 wraps Rust) |
 | `assets/map_editor/generators/dungeon_with_crystals.lua` | Example composed generator |
 | `assets/map_editor/generators/full_dungeon.lua` | Multi-stage dungeon example |
-| `generator/checkpoint.rs` | `Checkpoint` struct, `CheckpointManager` |
-| `asset/checkpoint.rs` | `Checkpoint` implements `Asset` |
-| `assets/map_editor/checkpoints/` | Directory for saved checkpoint files |
+| `generator/trait.rs` | `Generator` trait, `GeneratorStructure` struct (M8.75) |
+| `generator/sequential.rs` | `SequentialGenerator` implementing `Generator` (M8.75) |
+| `generator/parallel.rs` | `ParallelGenerator` implementing `Generator` (M8.75) |
+| `generator/scatter.rs` | `ScatterGenerator` implementing `Generator` (M8.75) |
+| `generator/fill.rs` | `FillGenerator` implementing `Generator` (M8.75) |
+| `generator/markov.rs` | `MjGenerator` wrapping `Model`, rich step info (M8.75) |
+| `generator/checkpoint.rs` | `Checkpoint` struct, `CheckpointManager` (M10) |
+| `asset/checkpoint.rs` | `Checkpoint` implements `Asset` (M10) |
+| `assets/map_editor/checkpoints/` | Directory for saved checkpoint files (M10) |
 
 ### Modified
 
 | File | Change |
 |------|--------|
-| `generator/mod.rs` | Add `StepInfoRegistry`, extend `StepInfo` with `path` field |
-| `lua_generator.rs` | Register `mj` module, load generator lib, emit path-keyed step info |
-| `markov_junior/lua_api.rs` | Add `_set_path`, `_set_context`, emit step info from `MjLuaModel` |
-| `mcp_server.rs` | Update `generator_state` to return structure + steps, add checkpoint endpoints |
+| `generator/mod.rs` | Add `StepInfoRegistry`, `StepInfo` with path, export Rust generators, `ActiveGenerator` resource |
+| `lua_generator.rs` | Register `mj` module (M8), Rust generator factories (M8.75) |
+| `markov_junior/lua_api.rs` | `mj.load_model()` returns Rust-backed `MjGenerator` (M8.75) |
+| `markov_junior/interpreter.rs` | Add `current_rule_name()` method (M8.75) |
+| `mcp_server.rs` | Return `structure` from `generator.structure()`, add checkpoint endpoints |
 | `render/visualizer.rs` | Access step info by path from `StepInfoRegistry` |
-| `app.rs` | Add `StepInfoRegistry` resource, `CheckpointManager` resource |
+| `app.rs` | Add `StepInfoRegistry`, `ActiveGenerator`, `CheckpointManager` resources |
 
 ---
 
@@ -948,10 +1188,11 @@ echo "=== Phase 3 Complete ==="
 | Milestone | Time |
 |-----------|------|
 | M8 (Markov Generator) | 2 hours |
-| M8.5 (Scene Tree & Step Registry) | 4 hours |
+| M8.5 (Scene Tree & Step Registry - Lua) | 4 hours |
+| M8.75 (Generator Foundation in Rust) | 4-6 hours |
 | M9 (Composed Generators Polish) | 2 hours |
 | M10 (Checkpointing) | 4 hours |
-| **Total** | **12 hours** |
+| **Total** | **16-18 hours** |
 
 ---
 
@@ -969,13 +1210,20 @@ echo "=== Phase 3 Complete ==="
 - `mj` module in Lua → Used by Generator base class
 - Basic `StepInfo` → Extended with path
 
-**M8.5 → M9:**
-- `Generator` Lua base class → Used by all built-in composers
+**M8.5 → M8.75:**
+- `StepInfoRegistry` → Reused, now populated by Rust generators
+- Lua Generator base class → Replaced by Rust `Generator` trait
+- Scene tree concept → Now implemented in Rust with `GeneratorStructure`
+
+**M8.75 → M9:**
+- `Generator` trait in Rust → All composers implement this
+- `MjGenerator` → Emits rich step info with rule names
+- `structure()` method → Returned by `/mcp/generator_state`
 - `StepInfoRegistry` → Visualizer accesses path-keyed steps
-- Scene tree structure → Returned by `/mcp/generator_state`
 
 **M9 → M10:**
 - Composed generators → Checkpoints save entire tree state
+- Rust `Generator` trait → Enables clean serialization
 
 **Phase 3 → Phase 4:**
 - `Checkpoint` implements `Asset` → Ready for `DatabaseStore<Checkpoint>`

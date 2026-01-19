@@ -88,6 +88,8 @@ pub fn register_markov_junior_api(lua: &Lua) -> LuaResult<()> {
 
             Ok(MjLuaModel {
                 inner: Rc::new(RefCell::new(model)),
+                path: Rc::new(RefCell::new("root".to_string())),
+                ctx: Rc::new(RefCell::new(None)),
             })
         })?,
     )?;
@@ -228,6 +230,8 @@ pub fn register_markov_junior_api(lua: &Lua) -> LuaResult<()> {
 
             Ok(MjLuaModel {
                 inner: Rc::new(RefCell::new(model)),
+                path: Rc::new(RefCell::new("root".to_string())),
+                ctx: Rc::new(RefCell::new(None)),
             })
         })?,
     )?;
@@ -293,13 +297,56 @@ fn parse_models_xml(path: &PathBuf) -> std::collections::HashMap<String, (usize,
 /// Wrapper around Model for Lua userdata.
 ///
 /// Uses Rc<RefCell<>> to allow shared ownership between Lua values.
+/// Supports scene tree integration via _path and _type fields.
 #[derive(Clone)]
 struct MjLuaModel {
     inner: Rc<RefCell<Model>>,
+    /// Scene tree path (e.g., "root.step_1")
+    path: Rc<RefCell<String>>,
+    /// Generator context for emitting step info (optional)
+    ctx: Rc<RefCell<Option<mlua::RegistryKey>>>,
 }
 
 impl UserData for MjLuaModel {
+    fn add_fields<F: mlua::UserDataFields<Self>>(fields: &mut F) {
+        // _type field for scene tree integration
+        fields.add_field_method_get("_type", |_, _| Ok("MjModel"));
+
+        // _path field for scene tree integration
+        fields.add_field_method_get("_path", |_, this| Ok(this.path.borrow().clone()));
+    }
+
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        // _set_path(path) - Set scene tree path (called by parent generator)
+        methods.add_method("_set_path", |_, this, path: String| {
+            *this.path.borrow_mut() = path;
+            Ok(())
+        });
+
+        // _set_context(ctx) - Set generator context for emitting step info
+        methods.add_method("_set_context", |lua, this, ctx: mlua::AnyUserData| {
+            // Store a registry key to the context
+            let key = lua.create_registry_value(ctx)?;
+            *this.ctx.borrow_mut() = Some(key);
+            Ok(())
+        });
+
+        // is_done() -> bool - For scene tree compatibility
+        methods.add_method("is_done", |_, this, ()| {
+            Ok(!this.inner.borrow().is_running())
+        });
+
+        // get_structure() -> table - For scene tree introspection
+        methods.add_method("get_structure", |lua, this, ()| {
+            let table = lua.create_table()?;
+            table.set("type", "MjModel")?;
+            table.set("path", this.path.borrow().clone())?;
+            table.set("model", this.inner.borrow().name.clone())?;
+            table.set("step", this.inner.borrow().counter())?;
+            table.set("running", this.inner.borrow().is_running())?;
+            Ok(table)
+        });
+
         // model:run(seed, [max_steps]) -> steps
         methods.add_method("run", |_, this, args: (u64, Option<usize>)| {
             let (seed, max_steps) = args;
@@ -706,6 +753,8 @@ impl UserData for MjLuaModelBuilder {
             let model = build_model_from_builder(this)?;
             Ok(MjLuaModel {
                 inner: Rc::new(RefCell::new(model)),
+                path: Rc::new(RefCell::new("root".to_string())),
+                ctx: Rc::new(RefCell::new(None)),
             })
         });
 

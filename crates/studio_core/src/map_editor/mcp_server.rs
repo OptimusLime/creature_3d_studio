@@ -28,6 +28,7 @@
 //! - `GET /mcp/generator_state` - Get current generator state (type, step, running)
 
 use super::asset::{Asset, AssetStore};
+use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
 use super::lua_materials::MATERIALS_LUA_PATH;
@@ -143,6 +144,23 @@ struct GeneratorStateJson {
     completed: bool,
     /// Grid size [width, height]
     grid_size: [usize; 2],
+    /// Step info for all paths in the scene tree
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    steps: HashMap<String, StepInfoJson>,
+}
+
+/// JSON representation of step info for a specific path.
+#[derive(Serialize)]
+struct StepInfoJson {
+    step: usize,
+    x: usize,
+    y: usize,
+    material_id: u32,
+    completed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    affected_cells: Option<usize>,
 }
 
 /// Request body for registering a layer.
@@ -655,6 +673,7 @@ fn handle_mcp_requests(
     render_stack: Option<Res<RenderLayerStack>>,
     mut layer_registry: Option<ResMut<LuaLayerRegistry>>,
     playback: Option<Res<PlaybackState>>,
+    step_registry: Option<Res<StepInfoRegistry>>,
 ) {
     // Process all pending requests
     loop {
@@ -875,6 +894,30 @@ fn handle_mcp_requests(
             }
 
             Ok(McpRequest::GetGeneratorState) => {
+                // Build step info map from registry
+                let steps: HashMap<String, StepInfoJson> = step_registry
+                    .as_ref()
+                    .map(|reg| {
+                        reg.all()
+                            .iter()
+                            .map(|(path, info)| {
+                                (
+                                    path.clone(),
+                                    StepInfoJson {
+                                        step: info.step_number,
+                                        x: info.x,
+                                        y: info.y,
+                                        material_id: info.material_id,
+                                        completed: info.completed,
+                                        rule_name: info.rule_name.clone(),
+                                        affected_cells: info.affected_cells,
+                                    },
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 // Get generator state from playback
                 let state = if let Some(ref pb) = playback {
                     GeneratorStateJson {
@@ -883,6 +926,7 @@ fn handle_mcp_requests(
                         running: pb.playing && !pb.completed,
                         completed: pb.completed,
                         grid_size: [buffer.width, buffer.height],
+                        steps,
                     }
                 } else {
                     GeneratorStateJson {
@@ -891,6 +935,7 @@ fn handle_mcp_requests(
                         running: false,
                         completed: false,
                         grid_size: [buffer.width, buffer.height],
+                        steps,
                     }
                 };
                 let _ = channels

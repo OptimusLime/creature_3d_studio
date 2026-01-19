@@ -18,7 +18,7 @@
 //! - `ctx:set_voxel(x, y, material_id)` - Write to buffer
 //! - `ctx:get_voxel(x, y) -> material_id` - Read from buffer
 
-use super::generator::{CurrentStepInfo, GeneratorListeners, StepInfo};
+use super::generator::{CurrentStepInfo, GeneratorListeners, StepInfo, StepInfoRegistry};
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
 use super::voxel_buffer_2d::VoxelBuffer2D;
@@ -93,6 +93,19 @@ struct LastWrite {
     written: bool,
 }
 
+/// Step info emitted from Lua, pending collection by Rust.
+#[derive(Clone, Default)]
+struct PendingStepInfo {
+    path: String,
+    step_number: usize,
+    x: usize,
+    y: usize,
+    material_id: u32,
+    completed: bool,
+    rule_name: Option<String>,
+    affected_cells: Option<usize>,
+}
+
 /// Shared buffer for Lua to write to.
 /// We use Arc<Mutex> so the UserData can access it.
 /// Also tracks the last write for step info generation.
@@ -100,6 +113,7 @@ struct LastWrite {
 struct SharedBuffer {
     data: Arc<Mutex<Vec<u32>>>,
     last_write: Arc<Mutex<LastWrite>>,
+    pending_steps: Arc<Mutex<Vec<PendingStepInfo>>>,
     width: usize,
     height: usize,
 }
@@ -109,6 +123,7 @@ impl SharedBuffer {
         Self {
             data: Arc::new(Mutex::new(vec![0; width * height])),
             last_write: Arc::new(Mutex::new(LastWrite::default())),
+            pending_steps: Arc::new(Mutex::new(Vec::new())),
             width,
             height,
         }
@@ -151,6 +166,8 @@ impl SharedBuffer {
         data.fill(0);
         let mut last = self.last_write.lock().unwrap();
         *last = LastWrite::default();
+        let mut pending = self.pending_steps.lock().unwrap();
+        pending.clear();
     }
 
     /// Take the last write info, clearing the written flag.
@@ -162,6 +179,18 @@ impl SharedBuffer {
         } else {
             None
         }
+    }
+
+    /// Emit a step info (called from Lua via GeneratorContext).
+    fn emit_step(&self, info: PendingStepInfo) {
+        let mut pending = self.pending_steps.lock().unwrap();
+        pending.push(info);
+    }
+
+    /// Take all pending step infos.
+    fn take_pending_steps(&self) -> Vec<PendingStepInfo> {
+        let mut pending = self.pending_steps.lock().unwrap();
+        std::mem::take(&mut *pending)
     }
 }
 
@@ -194,6 +223,22 @@ impl UserData for GeneratorContext {
         methods.add_method("get_voxel", |_, this, (x, y): (usize, usize)| {
             Ok(this.buffer.get(x, y))
         });
+
+        // Emit step info with path for scene tree tracking
+        methods.add_method("emit_step", |_, this, (path, info): (String, Table)| {
+            let pending = PendingStepInfo {
+                path,
+                step_number: info.get("step_number").unwrap_or(0),
+                x: info.get("x").unwrap_or(0),
+                y: info.get("y").unwrap_or(0),
+                material_id: info.get("material_id").unwrap_or(0),
+                completed: info.get("completed").unwrap_or(false),
+                rule_name: info.get("rule_name").ok(),
+                affected_cells: info.get("affected_cells").ok(),
+            };
+            this.buffer.emit_step(pending);
+            Ok(())
+        });
     }
 }
 
@@ -224,6 +269,19 @@ fn setup_generator(world: &mut World) {
 
     // Create Lua state and register MarkovJunior API
     let lua = Lua::new();
+
+    // Set up package path to find lib modules
+    if let Err(e) = lua
+        .load(
+            r#"
+        package.path = package.path .. ";assets/map_editor/?.lua"
+    "#,
+        )
+        .exec()
+    {
+        error!("Failed to set Lua package path: {:?}", e);
+    }
+
     if let Err(e) = register_markov_junior_api(&lua) {
         error!("Failed to register MarkovJunior API: {:?}", e);
     } else {
@@ -234,6 +292,9 @@ fn setup_generator(world: &mut World) {
         generator: None,
         initialized: false,
     });
+
+    // Insert StepInfoRegistry resource
+    world.insert_resource(StepInfoRegistry::default());
 
     // Setup file watcher
     let watch_path = Path::new(&path)
@@ -341,6 +402,7 @@ fn run_generator_step(
     mut voxel_buffer: ResMut<VoxelBuffer2D>,
     mut current_step: ResMut<CurrentStepInfo>,
     mut listeners: ResMut<GeneratorListeners>,
+    mut step_registry: ResMut<StepInfoRegistry>,
     time: Res<Time>,
 ) {
     // Check if generator is loaded
@@ -374,7 +436,16 @@ fn run_generator_step(
             let generator = state.generator.as_ref().unwrap();
             match call_generator_step(&state.lua, generator, &ctx) {
                 Ok(done) => {
-                    // Emit step info to current_step and listeners
+                    // Process any pending step infos from Lua
+                    process_pending_steps(
+                        &gen_buffer.buffer,
+                        &mut step_registry,
+                        &mut current_step,
+                        &mut listeners,
+                        playback.step_index,
+                    );
+
+                    // Also handle legacy last_write for backwards compatibility
                     if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
                         let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                         current_step.update(info.clone());
@@ -413,6 +484,7 @@ fn run_generator_step(
         playback.reset();
         gen_buffer.buffer.clear();
         current_step.clear();
+        step_registry.clear();
         listeners.notify_reset();
 
         // Recreate context with cleared buffer
@@ -427,7 +499,16 @@ fn run_generator_step(
             let generator = state.generator.as_ref().unwrap();
             match call_generator_step(&state.lua, generator, &ctx) {
                 Ok(done) => {
-                    // Emit step info to current_step and listeners
+                    // Process any pending step infos from Lua
+                    process_pending_steps(
+                        &gen_buffer.buffer,
+                        &mut step_registry,
+                        &mut current_step,
+                        &mut listeners,
+                        playback.step_index,
+                    );
+
+                    // Also handle legacy last_write for backwards compatibility
                     if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
                         let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                         current_step.update(info.clone());
@@ -469,7 +550,16 @@ fn run_generator_step(
         let generator = state.generator.as_ref().unwrap();
         match call_generator_step(&state.lua, generator, &ctx) {
             Ok(done) => {
-                // Emit step info to current_step and listeners
+                // Process any pending step infos from Lua
+                process_pending_steps(
+                    &gen_buffer.buffer,
+                    &mut step_registry,
+                    &mut current_step,
+                    &mut listeners,
+                    playback.step_index,
+                );
+
+                // Also handle legacy last_write for backwards compatibility
                 if let Some((x, y, material_id)) = gen_buffer.buffer.take_last_write() {
                     let info = StepInfo::new(playback.step_index, x, y, material_id, done);
                     current_step.update(info.clone());
@@ -524,6 +614,35 @@ fn call_generator_step(lua: &Lua, generator: &Table, ctx: &GeneratorContext) -> 
         Value::Boolean(b) => Ok(b),
         Value::Nil => Ok(false),
         _ => Ok(false),
+    }
+}
+
+/// Process pending step infos from Lua and emit to registry and listeners.
+fn process_pending_steps(
+    buffer: &SharedBuffer,
+    step_registry: &mut StepInfoRegistry,
+    current_step: &mut CurrentStepInfo,
+    listeners: &mut GeneratorListeners,
+    base_step: usize,
+) {
+    for pending in buffer.take_pending_steps() {
+        let info = StepInfo {
+            path: pending.path.clone(),
+            step_number: base_step + pending.step_number,
+            x: pending.x,
+            y: pending.y,
+            material_id: pending.material_id,
+            completed: pending.completed,
+            rule_name: pending.rule_name,
+            affected_cells: pending.affected_cells,
+        };
+
+        // Emit to registry (keyed by path)
+        step_registry.emit(&pending.path, info.clone());
+
+        // Also update current step and notify listeners
+        current_step.update(info.clone());
+        listeners.notify_step(&info);
     }
 }
 
