@@ -434,4 +434,55 @@ mod tests {
         listener.on_reset();
         assert!(listener.steps.is_empty());
     }
+
+    #[test]
+    fn test_active_generator() {
+        let mut ag = ActiveGenerator::new();
+        assert!(!ag.is_some());
+        assert!(ag.structure().is_none());
+
+        // Create a sequential generator with children
+        let gen = SequentialGenerator::new(vec![
+            (
+                "fill".to_string(),
+                Box::new(FillGenerator::new(1, FillCondition::All)),
+            ),
+            (
+                "scatter".to_string(),
+                Box::new(ScatterGenerator::new(2, 1, 0.1)),
+            ),
+        ]);
+
+        ag.set(Box::new(gen));
+        assert!(ag.is_some());
+
+        // Check structure
+        let structure = ag.structure().expect("should have structure");
+        assert_eq!(structure.type_name, "Sequential");
+        assert_eq!(structure.path, "root");
+        assert_eq!(structure.children.len(), 2);
+        assert!(structure.children.contains_key("fill"));
+        assert!(structure.children.contains_key("scatter"));
+
+        // Check child paths
+        assert_eq!(structure.children["fill"].path, "root.fill");
+        assert_eq!(structure.children["scatter"].path, "root.scatter");
+    }
+
+    #[test]
+    fn test_active_generator_structure_serializes() {
+        let gen = SequentialGenerator::new(vec![(
+            "step_1".to_string(),
+            Box::new(FillGenerator::new(1, FillCondition::Border)),
+        )]);
+
+        let ag = ActiveGenerator::with_generator(Box::new(gen));
+        let structure = ag.structure().unwrap();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&structure).unwrap();
+        assert!(json.contains("Sequential"));
+        assert!(json.contains("root.step_1"));
+        assert!(json.contains("Fill"));
+    }
 }
