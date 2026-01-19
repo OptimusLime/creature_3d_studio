@@ -533,6 +533,75 @@ Phase 3.5 adds:
 
 ---
 
+## M10.5 Audit: Markov Jr. Structure Introspection
+
+### 1. Structure Introspection - IMPLEMENTED
+
+**Milestone:** M10.5 (Markov Jr. Structure Introspection)
+
+**Implementation:**
+1. Added `MjNodeStructure` struct to represent MJ node tree
+2. Added `structure()` method to `Node` trait with implementations for all node types:
+   - `MarkovNode`, `SequenceNode`: Return children structures
+   - `OneNode`, `AllNode`, `ParallelNode`: Return rules as human-readable strings
+   - `PathNode`, `MapNode`, `ConvChainNode`, `ConvolutionNode`: Return config JSON
+   - WFC nodes: Return pattern counts and state
+3. Added `MjRule::to_display_string()` for human-readable rule format (e.g., "BW=WW")
+4. Added `characters` field to `RuleNodeData` for rule display
+5. Exposed via `Model::structure()` -> `Interpreter::structure()` -> `root.structure()`
+6. Added `mj_structure()` method to MjLuaModel (returns JSON string)
+7. Added `mj_structure` field to `GeneratorStructure` for MCP response
+8. `MjGeneratorPlaceholder` now extracts MJ structure from Lua userdata
+
+**Criticality:** **N/A** - New feature, not cleanup item.
+
+---
+
+### 2. MCP Response Now Includes mj_structure
+
+**Milestone:** M10.5 (Markov Jr. Structure Introspection)
+
+**Example MCP Response:**
+```json
+{
+  "structure": {
+    "type": "Sequential",
+    "path": "root",
+    "children": {
+      "step_1": {
+        "type": "MjModel",
+        "path": "root.step_1",
+        "model_name": "MazeGrowth",
+        "mj_structure": {
+          "node_type": "Markov",
+          "children": [
+            {
+              "node_type": "One",
+              "rules": ["WBB=WAW", "WAW=WAA"]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Summary Statistics (Phase 3.5 - Updated)
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 0 | - |
+| Low | 5 | Deferred (generator type detection, MCP error variant, duplicate PNG, surface/stack unify, auto-capture) |
+| Resolved | 4 | Structure field, MjModel step info, StepInfo extended fields, **MJ Structure Introspection (M10.5)** |
+
+**M10.5 Complete.** Structure introspection in place. Ready for M10.6 (Per-Node Step Info).
+
+---
+
 ## M10.4 Post-Mortem: Critical Bug Fix & Proposed Tests
 
 ### Bug Summary
