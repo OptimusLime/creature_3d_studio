@@ -18,13 +18,19 @@
 //! - `ctx:set_voxel(x, y, material_id)` - Write to buffer
 //! - `ctx:get_voxel(x, y) -> material_id` - Read from buffer
 
-use super::generator::{CurrentStepInfo, GeneratorListeners, StepInfo, StepInfoRegistry};
+use super::generator::{
+    ActiveGenerator, CurrentStepInfo, FillCondition, FillGenerator, Generator, GeneratorListeners,
+    GeneratorStructure, ParallelGenerator, ScatterGenerator, SequentialGenerator, StepInfo,
+    StepInfoRegistry,
+};
 use super::material::MaterialPalette;
 use super::playback::PlaybackState;
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use crate::markov_junior::register_markov_junior_api;
 use bevy::prelude::*;
-use mlua::{Function, Lua, Result as LuaResult, Table, UserData, UserDataMethods, Value};
+use mlua::{
+    Function, Lua, ObjectLike, Result as LuaResult, Table, UserData, UserDataMethods, Value,
+};
 use notify::{recommended_watcher, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
@@ -332,6 +338,177 @@ fn setup_generator(world: &mut World) {
     });
 }
 
+/// Convert a Lua generator table to a Rust Generator for structure introspection.
+///
+/// This recursively converts composed generators (Sequential, Parallel) and their
+/// children into Rust Generator implementations. The Rust generators mirror the
+/// Lua structure purely for MCP introspection - the actual generation still uses Lua.
+fn lua_table_to_rust_generator(lua: &Lua, table: &Table) -> Option<Box<dyn Generator>> {
+    // Get the _type field to determine generator type
+    let gen_type: String = match table.get("_type") {
+        Ok(t) => t,
+        Err(_) => {
+            // Check if this is a userdata (like MjLuaModel)
+            // For simple Lua generators without _type, create a placeholder
+            return None;
+        }
+    };
+
+    match gen_type.as_str() {
+        "Sequential" => {
+            let children = extract_children(lua, table);
+            Some(Box::new(SequentialGenerator::new(children)))
+        }
+        "Parallel" => {
+            let children = extract_children(lua, table);
+            Some(Box::new(ParallelGenerator::new(children)))
+        }
+        "Scatter" => {
+            let material: u32 = table.get("_material").unwrap_or(1);
+            let target: u32 = table.get("_target").unwrap_or(0);
+            let density: f64 = table.get("_density").unwrap_or(0.1);
+            Some(Box::new(ScatterGenerator::new(material, target, density)))
+        }
+        "Fill" => {
+            let material: u32 = table.get("_material").unwrap_or(1);
+            let where_str: String = table.get("_where").unwrap_or_else(|_| "all".to_string());
+            let condition = match where_str.as_str() {
+                "empty" => FillCondition::Empty,
+                "border" => FillCondition::Border,
+                _ => FillCondition::All,
+            };
+            Some(Box::new(FillGenerator::new(material, condition)))
+        }
+        "MjModel" => {
+            // MjModel is a Rust userdata, we need to create MjGenerator from it
+            // For now, create a placeholder structure since we can't extract the Model
+            // The actual Model is inside the Lua userdata
+            None // TODO: Extract Model from MjLuaModel userdata
+        }
+        _ => {
+            warn!("Unknown generator type: {}", gen_type);
+            None
+        }
+    }
+}
+
+/// Extract children from a Lua generator table.
+fn extract_children(lua: &Lua, table: &Table) -> Vec<(String, Box<dyn Generator>)> {
+    let mut children = Vec::new();
+
+    // Get _children table
+    let children_table: Table = match table.get("_children") {
+        Ok(t) => t,
+        Err(_) => return children,
+    };
+
+    // Get _child_names for ordering (if available)
+    let child_names: Vec<String> = table
+        .get::<Table>("_child_names")
+        .ok()
+        .and_then(|t| {
+            t.sequence_values::<String>()
+                .filter_map(|r| r.ok())
+                .collect::<Vec<_>>()
+                .into()
+        })
+        .unwrap_or_default();
+
+    // If we have ordered names, use them
+    if !child_names.is_empty() {
+        for name in child_names {
+            if let Ok(child_value) = children_table.get::<Value>(name.clone()) {
+                if let Some(child_gen) = value_to_generator(lua, &child_value) {
+                    children.push((name, child_gen));
+                }
+            }
+        }
+    } else {
+        // Fall back to iterating the table (unordered)
+        for (name, value) in children_table.pairs::<String, Value>().flatten() {
+            if let Some(child_gen) = value_to_generator(lua, &value) {
+                children.push((name, child_gen));
+            }
+        }
+    }
+
+    children
+}
+
+/// Convert a Lua Value to a Rust Generator.
+fn value_to_generator(_lua: &Lua, value: &Value) -> Option<Box<dyn Generator>> {
+    match value {
+        Value::Table(t) => lua_table_to_rust_generator(_lua, t),
+        Value::UserData(ud) => {
+            // Check if this is an MjLuaModel userdata
+            // MjLuaModel has a _type field that returns "MjModel"
+            if let Ok(type_name) = ud.get::<String>("_type") {
+                if type_name == "MjModel" {
+                    // Get the model name via the _path field (which contains model info)
+                    let path: String = ud.get("_path").unwrap_or_else(|_| "root".to_string());
+                    // For model name, we'd need to call a method, but fields are easier
+                    // Just use "MjModel" as placeholder - the path will show location
+                    return Some(Box::new(MjGeneratorPlaceholder::new(
+                        path.split('.').last().unwrap_or("model").to_string(),
+                    )));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Placeholder for MjGenerator when we can't extract the actual Model.
+/// Used purely for structure introspection via MCP.
+struct MjGeneratorPlaceholder {
+    model_name: String,
+    path: String,
+}
+
+impl MjGeneratorPlaceholder {
+    fn new(model_name: String) -> Self {
+        Self {
+            model_name,
+            path: "root".to_string(),
+        }
+    }
+}
+
+impl Generator for MjGeneratorPlaceholder {
+    fn type_name(&self) -> &str {
+        "MjModel"
+    }
+
+    fn path(&self) -> &str {
+        &self.path
+    }
+
+    fn structure(&self) -> GeneratorStructure {
+        GeneratorStructure::mj_model(&self.path, &self.model_name)
+    }
+
+    fn init(&mut self, _ctx: &mut super::generator::GeneratorContext) {}
+
+    fn step(&mut self, _ctx: &mut super::generator::GeneratorContext) -> bool {
+        true // Placeholder always "done"
+    }
+
+    fn reset(&mut self, _seed: u64) {}
+
+    fn last_step_info(&self) -> Option<&StepInfo> {
+        None
+    }
+
+    fn is_done(&self) -> bool {
+        true
+    }
+
+    fn set_path(&mut self, path: String) {
+        self.path = path;
+    }
+}
+
 /// Check for file changes and set reload flag.
 fn check_generator_reload(
     watcher: Option<NonSend<GeneratorWatcher>>,
@@ -362,6 +539,7 @@ fn reload_generator(
     mut state: NonSendMut<LuaGeneratorState>,
     mut playback: ResMut<PlaybackState>,
     gen_buffer: Res<GeneratorBuffer>,
+    mut active_generator: NonSendMut<ActiveGenerator>,
 ) {
     if !reload_flag.needs_reload {
         return;
@@ -385,6 +563,15 @@ fn reload_generator(
             return;
         }
     };
+
+    // Convert Lua generator to Rust generator for structure introspection
+    if let Some(rust_gen) = lua_table_to_rust_generator(&state.lua, &generator) {
+        active_generator.set(rust_gen);
+        info!("Generator structure extracted for MCP introspection");
+    } else {
+        // Clear active generator if we couldn't convert
+        active_generator.clear();
+    }
 
     state.generator = Some(generator);
     state.initialized = false;
