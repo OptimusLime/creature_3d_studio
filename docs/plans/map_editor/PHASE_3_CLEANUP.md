@@ -906,5 +906,325 @@ pkill -f p_map_editor_2d
 
 ### Decision
 
-**DO NOW** - This is HIGH criticality cleanup that removes confusion and dead code.
+**SUPERSEDED** - See new cleanup spec below for VoxelGrid trait approach.
+
+---
+
+## M10.5 Cleanup Spec v2: VoxelGrid Trait (Zero-Copy Architecture)
+
+**Date:** 2026-01-19  
+**Status:** PROPOSED - Awaiting approval  
+**Supersedes:** MjGenerator/MjGeneratorPlaceholder unification spec above
+
+### Problem Statement
+
+The current architecture has THREE buffer copies:
+
+```
+MjGrid (MJ internal) → SharedBuffer (Lua intermediate) → VoxelBuffer2D (Bevy resource)
+```
+
+The previous "fix" (MjLuaModel wrapping MjGenerator) would reduce to TWO copies but misses the deeper issue: **why copy at all?**
+
+The grid→buffer copy does a **semantic translation**: MJ grid values (0,1,2...) map to material IDs via character lookup. This translation must happen, but it doesn't need to be a copy.
+
+### Core Insight
+
+**Translation can happen on read, not on copy.**
+
+If we define a trait for "something you can read voxels from," then:
+- `VoxelBuffer2D` implements it directly
+- `MjGrid` implements it with translation-on-read
+- Renderers read from the trait, not concrete types
+- Zero copies. Translation happens lazily.
+
+### The VoxelGrid Trait
+
+```rust
+/// Trait for anything that provides voxel/material data.
+/// 
+/// Both VoxelBuffer2D and MJ grids implement this.
+/// Renderers and MCP endpoints read from this trait.
+pub trait VoxelGrid2D {
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+    /// Get material ID at position. Returns 0 if out of bounds.
+    fn get(&self, x: usize, y: usize) -> u32;
+}
+
+/// For 3D (Phase 5):
+pub trait VoxelGrid3D {
+    fn size(&self) -> (usize, usize, usize);
+    fn get(&self, x: usize, y: usize, z: usize) -> u32;
+}
+```
+
+### Implementation for VoxelBuffer2D
+
+```rust
+impl VoxelGrid2D for VoxelBuffer2D {
+    fn width(&self) -> usize { self.width }
+    fn height(&self) -> usize { self.height }
+    fn get(&self, x: usize, y: usize) -> u32 {
+        if x < self.width && y < self.height {
+            self.data[y * self.width + x]
+        } else {
+            0
+        }
+    }
+}
+```
+
+### Implementation for MjGrid (with translation)
+
+```rust
+/// View into MjGrid that translates values to material IDs.
+pub struct MjGridView<'a> {
+    grid: &'a MjGrid,
+    /// Maps MJ grid values (0,1,2...) to material IDs
+    value_to_material: Vec<u32>,
+}
+
+impl<'a> MjGridView<'a> {
+    pub fn new(grid: &'a MjGrid, char_to_material: &HashMap<char, u32>) -> Self {
+        // Pre-compute value→material mapping from grid.characters
+        let value_to_material: Vec<u32> = grid.characters
+            .iter()
+            .enumerate()
+            .map(|(i, &ch)| {
+                char_to_material.get(&ch).copied().unwrap_or(i as u32 + 1)
+            })
+            .collect();
+        
+        Self { grid, value_to_material }
+    }
+}
+
+impl VoxelGrid2D for MjGridView<'_> {
+    fn width(&self) -> usize { self.grid.mx }
+    fn height(&self) -> usize { self.grid.my }
+    
+    fn get(&self, x: usize, y: usize) -> u32 {
+        let val = self.grid.get(x, y, 0).unwrap_or(0) as usize;
+        self.value_to_material.get(val).copied().unwrap_or(0)
+    }
+}
+```
+
+### Updated Architecture
+
+```
+BEFORE (3 copies):
+┌────────┐    ┌──────────────┐    ┌──────────────┐
+│MjGrid  │───►│SharedBuffer  │───►│VoxelBuffer2D │
+│        │copy│(Arc<Mutex>)  │copy│(Bevy)        │
+└────────┘    └──────────────┘    └──────────────┘
+
+AFTER (0 copies, translation on read):
+┌────────────────────────────────────────────────┐
+│              trait VoxelGrid2D                 │
+│  fn width(), fn height(), fn get(x,y) -> u32  │
+└────────────────────┬───────────────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        │                         │
+        ▼                         ▼
+┌──────────────────┐     ┌──────────────────┐
+│  VoxelBuffer2D   │     │   MjGridView     │
+│                  │     │                  │
+│  impl VoxelGrid  │     │  impl VoxelGrid  │
+│  (direct)        │     │  (translates on  │
+│                  │     │   read)          │
+└──────────────────┘     └────────┬─────────┘
+                                  │ holds ref
+                                  ▼
+                         ┌──────────────────┐
+                         │     MjGrid       │
+                         │  + char mapping  │
+                         └──────────────────┘
+```
+
+### What Uses VoxelGrid2D
+
+| Consumer | Current | After |
+|----------|---------|-------|
+| `RenderContext` | `buffer: &VoxelBuffer2D` | `grid: &dyn VoxelGrid2D` |
+| `RenderLayer::render()` | reads from buffer | reads from trait |
+| MCP `get_output` | reads from buffer | reads from trait |
+| MCP `generator_state` | reads step info | unchanged |
+
+### Generator Changes
+
+**Option C from discussion: All generators produce `Box<dyn VoxelGrid2D>`**
+
+```rust
+pub trait Generator {
+    // ... existing methods ...
+    
+    /// Get the current grid state for rendering.
+    /// Returns None if generator hasn't produced output yet.
+    fn grid(&self) -> Option<&dyn VoxelGrid2D>;
+}
+```
+
+For generators:
+
+| Generator | `grid()` returns |
+|-----------|------------------|
+| `MjGenerator` | `Some(&MjGridView)` |
+| `ScatterGenerator` | `None` (writes to shared buffer) |
+| `FillGenerator` | `None` (writes to shared buffer) |
+| `SequentialGenerator` | Delegates to active child |
+
+**Key insight:** MJ generators own their grid. Lua generators (Scatter, Fill) write to a shared buffer. Both work through the same trait.
+
+### SharedBuffer Still Needed (For Lua Generators)
+
+Pure Lua generators call `ctx:set_voxel()`. They need a buffer to write to. But:
+- `SharedBuffer` implements `VoxelGrid2D`
+- When active generator is Lua-based, render from `SharedBuffer`
+- When active generator is MJ-based, render from `MjGridView`
+- Renderer doesn't care which
+
+### ActiveGenerator Changes
+
+```rust
+pub struct ActiveGenerator {
+    /// Structure for MCP introspection
+    structure: Option<GeneratorStructure>,
+    /// Current grid for rendering (trait object)
+    grid: Option<Box<dyn VoxelGrid2D>>,
+}
+```
+
+Or simpler: just track which generator is active, call `generator.grid()` when rendering.
+
+### Bevy Integration
+
+The tricky part: `RenderContext` is created per-frame with a reference to the grid. Who owns the grid?
+
+**Current:** `VoxelBuffer2D` is a Bevy `Resource`.
+
+**After:** Need to handle two cases:
+1. Lua generators → `SharedBuffer` (or keep `VoxelBuffer2D`) as resource
+2. MJ generators → `MjGridView` created on-demand from `MjGenerator`
+
+**Solution:** `RenderContext` takes `&dyn VoxelGrid2D`:
+
+```rust
+pub struct RenderContext<'a> {
+    pub grid: &'a dyn VoxelGrid2D,
+    pub palette: &'a MaterialPalette,
+}
+
+// In render system:
+fn render_system(
+    buffer: Res<VoxelBuffer2D>,
+    active_gen: Option<NonSend<ActiveGenerator>>,
+    // ...
+) {
+    // Get grid from active generator if it has one, else use buffer
+    let grid: &dyn VoxelGrid2D = active_gen
+        .and_then(|g| g.grid())
+        .unwrap_or(&*buffer);
+    
+    let ctx = RenderContext::new(grid, &palette);
+    // ... render
+}
+```
+
+### Implementation Tasks
+
+| # | Task | File | Verification |
+|---|------|------|--------------|
+| 1 | Create `VoxelGrid2D` trait | `map_editor/voxel_buffer_2d.rs` or new file | Compiles |
+| 2 | Impl `VoxelGrid2D` for `VoxelBuffer2D` | `voxel_buffer_2d.rs` | Tests pass |
+| 3 | Create `MjGridView` struct | `markov_junior/grid_view.rs` | Compiles |
+| 4 | Impl `VoxelGrid2D` for `MjGridView` | `grid_view.rs` | Tests pass |
+| 5 | Update `RenderContext` to use trait | `render/mod.rs` | Compiles |
+| 6 | Update all `RenderLayer` impls | Various | Compiles |
+| 7 | Add `grid()` method to `Generator` trait | `generator/traits.rs` | Compiles |
+| 8 | Impl `grid()` for `MjGenerator` | `generator/markov.rs` | Returns view |
+| 9 | Update render system to get grid from generator | `lua_generator.rs` or `app.rs` | Renders |
+| 10 | Update MCP `get_output` to use trait | `mcp_server.rs` | PNG works |
+| 11 | Delete `SharedBuffer` copy-to-buffer code | `lua_generator.rs` | Compiles |
+| 12 | Run full test suite | - | All pass |
+
+### Verification
+
+```bash
+# 1. Build succeeds
+cargo build --example p_map_editor_2d
+
+# 2. Tests pass  
+cargo test -p studio_core
+
+# 3. MJ generator renders correctly
+cargo run --example p_map_editor_2d &
+sleep 6
+curl -s http://127.0.0.1:8088/mcp/get_output -o /tmp/output.png
+# Verify PNG shows maze pattern
+
+# 4. Lua generator still works
+# Edit generator.lua to use Scatter, verify it renders
+
+# 5. MCP structure still works
+curl -s http://127.0.0.1:8088/mcp/generator_state | jq '.structure'
+
+pkill -f p_map_editor_2d
+```
+
+### What Gets Deleted
+
+- `SharedBuffer::copy_to_buffer()` - no longer needed
+- `MjLuaModel` grid copying in `step()` - replaced by view
+- `MjStructureHolder` - can use real generator
+- Possibly `MjGeneratorPlaceholder` - depends on final design
+
+### What Gets Kept
+
+- `SharedBuffer` - still needed for Lua generators that call `ctx:set_voxel()`
+- `VoxelBuffer2D` - backward compatibility, implements trait
+- `MjGenerator` - now actually used, provides `grid()` via view
+
+### Future-Proofing for 3D (Phase 5)
+
+The pattern extends naturally:
+
+```rust
+pub trait VoxelGrid3D {
+    fn size(&self) -> (usize, usize, usize);
+    fn get(&self, x: usize, y: usize, z: usize) -> u32;
+}
+
+impl VoxelGrid3D for VoxelBuffer3D { ... }
+impl VoxelGrid3D for MjGridView3D { ... }
+```
+
+Same zero-copy architecture. Same trait-based rendering. The API doesn't change.
+
+### Risk Assessment
+
+**Risk:** Breaking existing Lua generators  
+**Mitigation:** `SharedBuffer` still exists, Lua still writes to it, but now it implements `VoxelGrid2D`
+
+**Risk:** Performance regression from virtual dispatch  
+**Mitigation:** One virtual call per pixel read. Profile if concerned, but unlikely to matter.
+
+**Risk:** Lifetime complexity with `MjGridView`  
+**Mitigation:** View is created on-demand in render system, lives for duration of render call only
+
+### Estimated Time
+
+4-6 hours
+
+### Decision
+
+**PROPOSED** - This is the correct abstraction that:
+1. Eliminates buffer copies (0 instead of 2-3)
+2. Creates reusable `VoxelGrid2D` trait for Phase 5
+3. Makes MjGenerator the single source of truth
+4. Keeps Lua generators working unchanged
+
+Awaiting approval before implementation.
 
