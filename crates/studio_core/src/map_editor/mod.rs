@@ -35,6 +35,7 @@ pub mod lua_materials;
 pub mod material;
 pub mod mcp_server;
 pub mod playback;
+pub mod render;
 pub mod voxel_buffer_2d;
 
 pub use app::MapEditor2DApp;
@@ -48,4 +49,8 @@ pub use lua_materials::{
 pub use material::{Material, MaterialPalette};
 pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
+pub use render::{
+    BaseRenderLayer, LuaRenderLayer, PixelBuffer, RenderContext, RenderLayer, RenderLayerStack,
+    RENDERER_LUA_PATH,
+};
 pub use voxel_buffer_2d::VoxelBuffer2D;

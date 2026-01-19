@@ -31,6 +31,7 @@ use super::{
     material::{Material, MaterialPalette},
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
+    render::{BaseRenderLayer, RenderLayerStack},
     voxel_buffer_2d::VoxelBuffer2D,
 };
 use bevy::asset::RenderAssetUsages;
@@ -253,6 +254,11 @@ impl MapEditor2DApp {
             height: grid_size.1,
         });
         app.insert_resource(SearchState::default());
+
+        // Render layer stack with base layer
+        let mut render_stack = RenderLayerStack::new(grid_size.0, grid_size.1);
+        render_stack.add_layer(Box::new(BaseRenderLayer::new()));
+        app.insert_resource(render_stack);
 
         // Lua generator plugin (loads generator from assets/map_editor/generator.lua)
         // Must be added AFTER VoxelBuffer2D resource is inserted

@@ -3,9 +3,10 @@
 //! Provides a simple REST API on port 8088 for:
 //! - Listing materials
 //! - Creating new materials  
-//! - Getting PNG output
+//! - Getting PNG output (with optional layer filtering)
 //! - Searching assets by name
-//! - Setting generator/materials Lua source (triggers hot reload)
+//! - Setting generator/materials/renderer Lua source (triggers hot reload)
+//! - Listing render layers
 //!
 //! # Endpoints
 //!
@@ -13,14 +14,18 @@
 //! - `GET /mcp/list_materials` - Get all materials as JSON
 //! - `POST /mcp/create_material` - Add new material
 //! - `GET /mcp/get_output` - Get current render as PNG
+//! - `GET /mcp/get_output?layers=base,visualizer` - Get filtered render as PNG
+//! - `GET /mcp/list_layers` - List available render layers
 //! - `GET /mcp/search?q=<query>&type=<type>` - Search assets by name
 //! - `POST /mcp/set_generator` - Set generator.lua source (triggers hot reload)
 //! - `POST /mcp/set_materials` - Set materials.lua source (triggers hot reload)
+//! - `POST /mcp/set_renderer` - Set renderer Lua source (triggers hot reload)
 
 use super::asset::{Asset, AssetStore};
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
+use super::render::{RenderContext, RenderLayerStack, RENDERER_LUA_PATH};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
 use image::ImageEncoder;
@@ -83,10 +88,12 @@ struct McpChannels {
 enum McpRequest {
     ListMaterials,
     CreateMaterial(MaterialCreateRequest),
-    GetOutput,
+    GetOutput(Option<Vec<String>>), // Optional layer filter
+    ListLayers,
     Search(SearchRequest),
     SetGenerator(String),
     SetMaterials(String),
+    SetRenderer(String),
 }
 
 /// Request parameters for search.
@@ -101,6 +108,7 @@ enum McpResponse {
     Materials(Vec<MaterialJson>),
     MaterialCreated { success: bool, id: u32 },
     Output(Vec<u8>),
+    Layers(Vec<String>),
     SearchResults(Vec<SearchResultJson>),
     Success { success: bool },
     Error(String),
@@ -266,8 +274,16 @@ fn handle_http_request(
         }
 
         (Method::Get, "/mcp/get_output") => {
+            // Parse optional layers parameter
+            let params = parse_query_string(&url);
+            let layers = params.get("layers").map(|s| {
+                s.split(',')
+                    .map(|l| l.trim().to_string())
+                    .collect::<Vec<_>>()
+            });
+
             // Send request to Bevy
-            if request_tx.send(McpRequest::GetOutput).is_err() {
+            if request_tx.send(McpRequest::GetOutput(layers)).is_err() {
                 let _ = request.respond(error_response("Server shutting down"));
                 return;
             }
@@ -277,6 +293,29 @@ fn handle_http_request(
                 Ok(McpResponse::Output(png_data)) => {
                     let response = Response::from_data(png_data)
                         .with_header(Header::from_bytes("Content-Type", "image/png").unwrap());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Get, "/mcp/list_layers") => {
+            // Send request to Bevy
+            if request_tx.send(McpRequest::ListLayers).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Layers(layers)) => {
+                    let json = serde_json::to_string(&layers).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
                     let _ = request.respond(response);
                 }
                 Ok(McpResponse::Error(e)) => {
@@ -386,6 +425,36 @@ fn handle_http_request(
             }
         }
 
+        (Method::Post, "/mcp/set_renderer") => {
+            // Read Lua source from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Send request to Bevy
+            if request_tx.send(McpRequest::SetRenderer(body)).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Success { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -411,6 +480,7 @@ fn handle_mcp_requests(
     channels: NonSend<McpChannels>,
     mut palette: ResMut<MaterialPalette>,
     buffer: Res<VoxelBuffer2D>,
+    render_stack: Option<Res<RenderLayerStack>>,
 ) {
     // Process all pending requests
     loop {
@@ -444,10 +514,36 @@ fn handle_mcp_requests(
                 });
             }
 
-            Ok(McpRequest::GetOutput) => {
-                // Generate PNG from current buffer state
-                let png_data = generate_png_from_buffer(&buffer, &palette);
+            Ok(McpRequest::GetOutput(layers)) => {
+                // Use render stack if available, otherwise fall back to legacy rendering
+                let png_data = if let Some(ref stack) = render_stack {
+                    let ctx = RenderContext::new(&buffer, &palette);
+                    let pixels = match layers {
+                        Some(layer_names) => {
+                            let names: Vec<&str> = layer_names.iter().map(|s| s.as_str()).collect();
+                            stack.render_filtered(&ctx, &names)
+                        }
+                        None => stack.render_all(&ctx),
+                    };
+                    encode_png(&pixels)
+                } else {
+                    // Legacy fallback
+                    generate_png_from_buffer(&buffer, &palette)
+                };
                 let _ = channels.response_tx.send(McpResponse::Output(png_data));
+            }
+
+            Ok(McpRequest::ListLayers) => {
+                let layers = if let Some(ref stack) = render_stack {
+                    stack
+                        .list_layers()
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                } else {
+                    vec!["base".to_string()] // Default when no stack
+                };
+                let _ = channels.response_tx.send(McpResponse::Layers(layers));
             }
 
             Ok(McpRequest::Search(req)) => {
@@ -510,13 +606,30 @@ fn handle_mcp_requests(
                 }
             }
 
+            Ok(McpRequest::SetRenderer(lua_source)) => {
+                // Write Lua source to renderer file
+                // Note: Hot reload for renderer would need to be implemented separately
+                match fs::write(RENDERER_LUA_PATH, &lua_source) {
+                    Ok(_) => {
+                        info!("MCP: Wrote renderer ({} bytes)", lua_source.len());
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Success { success: true });
+                    }
+                    Err(e) => {
+                        error!("MCP: Failed to write renderer: {}", e);
+                        let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                    }
+                }
+            }
+
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => break,
         }
     }
 }
 
-/// Generate a PNG image from the voxel buffer.
+/// Generate a PNG image from the voxel buffer (legacy fallback).
 fn generate_png_from_buffer(buffer: &VoxelBuffer2D, palette: &MaterialPalette) -> Vec<u8> {
     let width = buffer.width as u32;
     let height = buffer.height as u32;
@@ -554,5 +667,22 @@ fn generate_png_from_buffer(buffer: &VoxelBuffer2D, palette: &MaterialPalette) -
             .expect("PNG encoding failed");
     }
 
+    png_bytes
+}
+
+/// Encode a PixelBuffer as PNG.
+fn encode_png(pixels: &super::render::PixelBuffer) -> Vec<u8> {
+    let mut png_bytes = Vec::new();
+    {
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+        encoder
+            .write_image(
+                pixels.as_bytes(),
+                pixels.width as u32,
+                pixels.height as u32,
+                image::ExtendedColorType::Rgba8,
+            )
+            .expect("PNG encoding failed");
+    }
     png_bytes
 }

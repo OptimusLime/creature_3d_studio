@@ -139,3 +139,81 @@ No new abstractions were introduced that could be applied to existing code. The 
 | Low | 2 | ✅ 1 Completed (M4.5), 1 Deferred (M4.75) |
 
 **M4.75 Cleanup complete.** No blocking items. Proceed to M5.
+
+---
+
+## M5 Audit: Lua Renderer with Layer System
+
+### 1. Duplicate PNG Rendering Code
+
+**Milestone:** M5 (Render Layer System)
+
+**Current State:**
+```rust
+// mcp_server.rs has two rendering paths:
+fn generate_png_from_buffer(...) -> Vec<u8>  // Legacy, duplicates BaseRenderLayer logic
+fn encode_png(pixels: &PixelBuffer) -> Vec<u8>  // New, uses render stack
+```
+
+**Why:** `generate_png_from_buffer()` was the original rendering code. Now that we have `RenderLayerStack` with `BaseRenderLayer`, this is duplication.
+
+**Proposed Change:** Remove `generate_png_from_buffer()` and always use the render stack.
+
+**Criticality:** **Low** - Code works, just has two paths doing same thing.
+
+**When to Do:** Can be done when we're confident the render stack is solid.
+
+---
+
+### 2. LuaRenderLayer Hot Reload Not Integrated
+
+**Milestone:** M5 (Render Layer System)
+
+**Current State:** `LuaRenderLayer` has `reload()` method but no file watcher integration. The `POST /mcp/set_renderer` writes the file but doesn't trigger reload.
+
+**Why:** We built the infrastructure but didn't wire up hot reload (file watcher pattern from lua_generator).
+
+**Proposed Change:** Add file watcher for renderer Lua files, similar to `lua_generator.rs`.
+
+**Criticality:** **Medium** - The Lua renderer exists but can't hot reload, which was the M5 goal.
+
+**When to Do:** Should be addressed before M5 is considered fully complete.
+
+---
+
+### 3. Render Stack Uses Rust BaseRenderLayer, Not Lua
+
+**Milestone:** M5 (Render Layer System)
+
+**Current State:** App initializes with `BaseRenderLayer::new()` (Rust), not `LuaRenderLayer` loading `grid_2d.lua`.
+
+**Why:** We created `LuaRenderLayer` but didn't integrate it into the app startup.
+
+**Proposed Change:** Replace `BaseRenderLayer` with `LuaRenderLayer` loading `renderers/grid_2d.lua`.
+
+**Criticality:** **Medium** - The M5 goal is "I can edit a Lua renderer file and see changes". Currently that's not possible.
+
+---
+
+## Cleanup Decision Log
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| MaterialPalette → InMemoryStore | ✅ Done during M4.5 | Consistency with Asset trait pattern |
+| Search inconsistency | ✅ Done during M4.5 | Naturally resolved by item #1 |
+| MCP Error variant | Defer | Low criticality |
+| Duplicate PNG code | Defer | Low criticality, works fine |
+| Lua hot reload not integrated | **TODO** | Medium - needed for M5 to be complete |
+| BaseRenderLayer vs LuaRenderLayer | **TODO** | Medium - needed for M5 to be complete |
+
+---
+
+## Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 3 | 1 Completed (M4.5), 2 TODO (M5) |
+| Low | 3 | 1 Completed (M4.5), 2 Deferred |
+
+**M5 Foundation complete.** Core abstractions work. Two medium items remain to fully deliver M5 functionality (Lua hot reload integration).
