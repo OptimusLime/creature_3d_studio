@@ -284,8 +284,8 @@ fn reload_generator(
     state.generator = Some(generator);
     state.initialized = false;
 
-    // Reset playback and buffer
-    playback.reset();
+    // Restart playback and clear buffer (keeps playing if it was playing)
+    playback.restart();
     gen_buffer.buffer.clear();
 
     info!("Generator reloaded from {}", config.path);

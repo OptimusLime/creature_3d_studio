@@ -385,14 +385,14 @@ curl http://127.0.0.1:8088/mcp/get_output -o /tmp/stripes.png
 
 ### M4.75 Verification Checklist
 
-- [ ] App launches with generation in progress (not completed)
-- [ ] `POST /mcp/set_generator` accepts Lua source and triggers hot reload
-- [ ] `POST /mcp/set_materials` accepts Lua source and triggers hot reload
-- [ ] Generation restarts when generator is hot-reloaded
+- [x] App launches with generation in progress (not completed)
+- [x] `POST /mcp/set_generator` accepts Lua source and triggers hot reload
+- [x] `POST /mcp/set_materials` accepts Lua source and triggers hot reload
+- [x] Generation restarts when generator is hot-reloaded
 
 ### M4.75 Cleanup Audit
 
-**To be documented in [PHASE_2_CLEANUP.md](./PHASE_2_CLEANUP.md) after milestone completion.**
+**Documented in [PHASE_2_CLEANUP.md](./PHASE_2_CLEANUP.md).** No blocking cleanup items.
 
 ---
 

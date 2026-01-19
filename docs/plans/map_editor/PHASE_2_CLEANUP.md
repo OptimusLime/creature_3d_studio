@@ -82,3 +82,60 @@ These aren't cleanup items yet—the code doesn't exist. But knowing that these 
 | Low | 1 | ✅ Completed |
 
 **M4.5 Cleanup complete.** All identified items resolved. Proceed to M4.75.
+
+---
+
+## M4.75 Audit: Generator on Launch + MCP Set Endpoints
+
+### 1. MCP Error Response Variant Unused
+
+**Milestone:** M4.75 (Generator on Launch + MCP Set)
+
+**Current State:**
+```rust
+enum McpResponse {
+    // ... other variants
+    Error(String),  // Never constructed - errors returned via error_response()
+}
+```
+
+**Why:** The `Error` variant was added during initial MCP design but is never used. Error responses are handled by the HTTP layer via `error_response()` helper.
+
+**Proposed Change:** Remove the unused variant, or use it consistently for error handling.
+
+**Criticality:** **Low** - Generates compiler warning but doesn't affect functionality.
+
+**When to Do:** Can be addressed when adding more MCP error handling in future milestones.
+
+---
+
+### 2. No Cleanup Items Identified
+
+M4.75 was a small, focused milestone:
+- Changed `PlaybackState` default to `playing: true`
+- Added `PlaybackState::restart()` method
+- Added two MCP endpoints that write files
+
+No new abstractions were introduced that could be applied to existing code. The file-writing pattern is straightforward and doesn't warrant abstraction yet (only two similar endpoints).
+
+---
+
+## Cleanup Decision Log
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| MaterialPalette → InMemoryStore | ✅ Done during M4.5 | Consistency with Asset trait pattern; enables unified search |
+| Search inconsistency | ✅ Done during M4.5 | Naturally resolved by item #1 |
+| MCP Error variant | Defer | Low criticality, may be useful in future |
+
+---
+
+## Summary Statistics
+
+| Criticality | Count | Status |
+|-------------|-------|--------|
+| High | 0 | - |
+| Medium | 1 | ✅ Completed (M4.5) |
+| Low | 2 | ✅ 1 Completed (M4.5), 1 Deferred (M4.75) |
+
+**M4.75 Cleanup complete.** No blocking items. Proceed to M5.

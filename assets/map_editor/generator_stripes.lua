@@ -1,5 +1,5 @@
--- Map Editor Generator Script - Vertical Stripes
--- Used for testing hot reload
+-- Stripes Generator Script (for testing hot reload)
+-- Creates horizontal stripes pattern
 
 local Generator = {}
 
@@ -17,8 +17,8 @@ function Generator:step(ctx)
     local mat_a = ctx.palette[1] or 1
     local mat_b = ctx.palette[2] or mat_a
     
-    -- VERTICAL STRIPES pattern: alternate based on x only
-    local mat = (self.x % 2 == 0) and mat_a or mat_b
+    -- Horizontal stripes: alternate by row
+    local mat = (self.y % 2 == 0) and mat_a or mat_b
     ctx:set_voxel(self.x, self.y, mat)
     
     -- Advance to next cell

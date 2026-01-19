@@ -5,6 +5,7 @@
 //! - Creating new materials  
 //! - Getting PNG output
 //! - Searching assets by name
+//! - Setting generator/materials Lua source (triggers hot reload)
 //!
 //! # Endpoints
 //!
@@ -13,14 +14,19 @@
 //! - `POST /mcp/create_material` - Add new material
 //! - `GET /mcp/get_output` - Get current render as PNG
 //! - `GET /mcp/search?q=<query>&type=<type>` - Search assets by name
+//! - `POST /mcp/set_generator` - Set generator.lua source (triggers hot reload)
+//! - `POST /mcp/set_materials` - Set materials.lua source (triggers hot reload)
 
 use super::asset::{Asset, AssetStore};
+use super::lua_generator::GENERATOR_LUA_PATH;
+use super::lua_materials::MATERIALS_LUA_PATH;
 use super::material::{Material, MaterialPalette};
 use super::voxel_buffer_2d::VoxelBuffer2D;
 use bevy::prelude::*;
 use image::ImageEncoder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::io::Cursor;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
@@ -79,6 +85,8 @@ enum McpRequest {
     CreateMaterial(MaterialCreateRequest),
     GetOutput,
     Search(SearchRequest),
+    SetGenerator(String),
+    SetMaterials(String),
 }
 
 /// Request parameters for search.
@@ -94,6 +102,7 @@ enum McpResponse {
     MaterialCreated { success: bool, id: u32 },
     Output(Vec<u8>),
     SearchResults(Vec<SearchResultJson>),
+    Success { success: bool },
     Error(String),
 }
 
@@ -317,6 +326,66 @@ fn handle_http_request(
             }
         }
 
+        (Method::Post, "/mcp/set_generator") => {
+            // Read Lua source from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Send request to Bevy
+            if request_tx.send(McpRequest::SetGenerator(body)).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Success { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/set_materials") => {
+            // Read Lua source from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Send request to Bevy
+            if request_tx.send(McpRequest::SetMaterials(body)).is_err() {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Success { success }) => {
+                    let json = format!(r#"{{"success":{}}}"#, success);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -405,6 +474,40 @@ fn handle_mcp_requests(
                 let _ = channels
                     .response_tx
                     .send(McpResponse::SearchResults(results));
+            }
+
+            Ok(McpRequest::SetGenerator(lua_source)) => {
+                // Write Lua source to generator.lua file
+                // File watcher will trigger hot reload automatically
+                match fs::write(GENERATOR_LUA_PATH, &lua_source) {
+                    Ok(_) => {
+                        info!("MCP: Wrote generator.lua ({} bytes)", lua_source.len());
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Success { success: true });
+                    }
+                    Err(e) => {
+                        error!("MCP: Failed to write generator.lua: {}", e);
+                        let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                    }
+                }
+            }
+
+            Ok(McpRequest::SetMaterials(lua_source)) => {
+                // Write Lua source to materials.lua file
+                // File watcher will trigger hot reload automatically
+                match fs::write(MATERIALS_LUA_PATH, &lua_source) {
+                    Ok(_) => {
+                        info!("MCP: Wrote materials.lua ({} bytes)", lua_source.len());
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Success { success: true });
+                    }
+                    Err(e) => {
+                        error!("MCP: Failed to write materials.lua: {}", e);
+                        let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                    }
+                }
             }
 
             Err(TryRecvError::Empty) => break,

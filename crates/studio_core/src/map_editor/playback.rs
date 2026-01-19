@@ -22,7 +22,7 @@ pub struct PlaybackState {
 impl Default for PlaybackState {
     fn default() -> Self {
         Self {
-            playing: false,
+            playing: true, // Start playing so generation runs on launch
             speed: 100.0,
             step_index: 0,
             accumulator: 0.0,
@@ -55,12 +55,21 @@ impl PlaybackState {
         self.playing = true;
     }
 
-    /// Reset to initial state.
+    /// Reset to initial state (paused).
     pub fn reset(&mut self) {
         self.playing = false;
         self.step_index = 0;
         self.accumulator = 0.0;
         self.completed = false;
+    }
+
+    /// Restart generation (keeps playing state, resets progress).
+    /// Use this when hot-reloading a generator to continue running.
+    pub fn restart(&mut self) {
+        self.step_index = 0;
+        self.accumulator = 0.0;
+        self.completed = false;
+        // Keep playing state so generation continues
     }
 
     /// Mark as completed.
@@ -89,7 +98,7 @@ mod tests {
     #[test]
     fn test_default() {
         let state = PlaybackState::default();
-        assert!(!state.playing);
+        assert!(state.playing); // Starts playing so generation runs on launch
         assert_eq!(state.speed, 100.0);
         assert_eq!(state.step_index, 0);
         assert!(!state.completed);
@@ -98,10 +107,11 @@ mod tests {
     #[test]
     fn test_toggle_play() {
         let mut state = PlaybackState::default();
+        assert!(state.playing); // Starts playing
         state.toggle_play();
-        assert!(state.playing);
+        assert!(!state.playing); // Toggle to paused
         state.toggle_play();
-        assert!(!state.playing);
+        assert!(state.playing); // Toggle back to playing
     }
 
     #[test]
