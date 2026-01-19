@@ -30,13 +30,10 @@ pub mod app;
 pub mod asset;
 pub mod checkerboard;
 pub mod generator;
-pub mod hot_reload;
 pub mod imgui_screenshot;
 pub mod lua_generator;
 pub mod lua_layer_registry;
 pub mod lua_materials;
-pub mod lua_renderer;
-pub mod lua_visualizer;
 pub mod material;
 pub mod mcp_server;
 pub mod playback;
@@ -53,8 +50,6 @@ pub use lua_layer_registry::{LuaLayerDef, LuaLayerPlugin, LuaLayerRegistry, LuaL
 pub use lua_materials::{
     LuaMaterialsPlugin, MaterialsLoadSet, MaterialsReloadFlag, MATERIALS_LUA_PATH,
 };
-pub use lua_renderer::{LuaRendererPlugin, RendererReloadFlag};
-pub use lua_visualizer::{LuaVisualizerPlugin, VisualizerReloadFlag, VisualizerState};
 pub use material::{Material, MaterialPalette};
 pub use mcp_server::{McpServerPlugin, MCP_SERVER_PORT};
 pub use playback::PlaybackState;
