@@ -4,37 +4,54 @@
 //! - Listing materials
 //! - Creating new materials  
 //! - Getting PNG output (with optional layer/surface filtering)
-//! - Searching assets by name
 //! - Setting generator/materials/renderer Lua source (triggers hot reload)
 //! - Listing render layers
 //! - Managing Lua layer registry (register/unregister layers)
 //! - Querying generator state
 //! - Managing render surfaces
 //! - Recording generation for video export
+//! - Asset store operations (list, create, search)
 //!
 //! # Endpoints
 //!
-//! - `GET /health` - Health check
+//! ## Materials
 //! - `GET /mcp/list_materials` - Get all materials as JSON
 //! - `POST /mcp/create_material` - Add new material
+//!
+//! ## Rendering
 //! - `GET /mcp/get_output` - Get current render as PNG (composite of all surfaces)
 //! - `GET /mcp/get_output?layers=base,visualizer` - Get filtered render as PNG
 //! - `GET /mcp/get_output?surface=grid` - Get specific surface as PNG
 //! - `GET /mcp/list_layers` - List available render layers
-//! - `GET /mcp/search?q=<query>&type=<type>` - Search assets by name
+//! - `GET /mcp/surfaces` - List all render surfaces and layout
+//!
+//! ## Lua Hot Reload
 //! - `POST /mcp/set_generator` - Set generator.lua source (triggers hot reload)
 //! - `POST /mcp/set_materials` - Set materials.lua source (triggers hot reload)
 //! - `POST /mcp/set_renderer` - Set renderer Lua source (triggers hot reload)
+//!
+//! ## Layer Registry
 //! - `GET /mcp/layer_registry` - List all registered layers with details
 //! - `POST /mcp/register_layer` - Register a new layer
 //! - `DELETE /mcp/layer/{name}` - Unregister a layer by name
+//!
+//! ## Generator
 //! - `GET /mcp/generator_state` - Get current generator state (type, step, running)
-//! - `GET /mcp/surfaces` - List all render surfaces and layout
+//!
+//! ## Recording
 //! - `POST /mcp/start_recording` - Start recording frames
 //! - `POST /mcp/stop_recording` - Stop recording frames
 //! - `POST /mcp/export_video` - Export recorded frames to video
+//!
+//! ## Asset Store (Database-Backed)
+//! - `GET /mcp/assets?namespace=X&pattern=Y&type=Z` - List assets
+//! - `POST /mcp/assets` - Create/update asset
+//! - `GET /mcp/assets/search?q=X&type=Y` - Search assets (FTS5 full-text search)
+//!
+//! ## Health
+//! - `GET /health` - Health check
 
-use super::asset::{Asset, AssetKey, AssetMetadata, AssetStore, DatabaseStore};
+use super::asset::{AssetKey, AssetMetadata, AssetStore, DatabaseStore};
 use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
@@ -108,7 +125,6 @@ enum McpRequest {
     CreateMaterial(MaterialCreateRequest),
     GetOutput(GetOutputRequest), // Layer/surface filter options
     ListLayers,
-    Search(SearchRequest),
     SetGenerator(String),
     SetMaterials(String),
     GetGeneratorState,
@@ -156,13 +172,6 @@ fn default_codec() -> String {
     "libx264".to_string()
 }
 
-/// Request parameters for search.
-#[derive(Debug)]
-struct SearchRequest {
-    query: String,
-    asset_type: Option<String>,
-}
-
 /// Request parameters for asset list.
 #[derive(Debug)]
 struct AssetListRequest {
@@ -205,7 +214,6 @@ enum McpResponse {
     MaterialCreated { success: bool, id: u32 },
     Output(Vec<u8>),
     Layers(Vec<String>),
-    SearchResults(Vec<SearchResultJson>),
     Success { success: bool },
     Error(String),
     LayerRegistry(Vec<LayerDefJson>),
@@ -293,17 +301,6 @@ struct LayerDefJson {
     #[serde(rename = "type")]
     layer_type: String,
     lua_path: String,
-    tags: Vec<String>,
-}
-
-/// JSON representation of a search result.
-#[derive(Serialize)]
-struct SearchResultJson {
-    #[serde(rename = "type")]
-    asset_type: String,
-    name: String,
-    id: u32,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
 }
 
@@ -503,44 +500,6 @@ fn handle_http_request(
             match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Ok(McpResponse::Layers(layers)) => {
                     let json = serde_json::to_string(&layers).unwrap_or_default();
-                    let response = Response::from_string(json).with_header(content_type_json());
-                    let _ = request.respond(response);
-                }
-                Ok(McpResponse::Error(e)) => {
-                    let _ = request.respond(error_response(&e));
-                }
-                _ => {
-                    let _ = request.respond(error_response("Unexpected response"));
-                }
-            }
-        }
-
-        (Method::Get, "/mcp/search") => {
-            let params = parse_query_string(&url);
-
-            let query = match params.get("q") {
-                Some(q) => q.clone(),
-                None => {
-                    let _ = request.respond(error_response("Missing 'q' parameter"));
-                    return;
-                }
-            };
-
-            let asset_type = params.get("type").cloned();
-
-            // Send request to Bevy
-            if request_tx
-                .send(McpRequest::Search(SearchRequest { query, asset_type }))
-                .is_err()
-            {
-                let _ = request.respond(error_response("Server shutting down"));
-                return;
-            }
-
-            // Wait for response
-            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-                Ok(McpResponse::SearchResults(results)) => {
-                    let json = serde_json::to_string(&results).unwrap_or_default();
                     let response = Response::from_string(json).with_header(content_type_json());
                     let _ = request.respond(response);
                 }
@@ -1131,33 +1090,6 @@ fn handle_mcp_requests(
                     vec!["base".to_string()] // Default when no stack
                 };
                 let _ = channels.response_tx.send(McpResponse::Layers(layers));
-            }
-
-            Ok(McpRequest::Search(req)) => {
-                // Search materials using MaterialPalette::search
-                // In future, this can search across all asset types
-                let results: Vec<SearchResultJson> = if let Some(ref t) = req.asset_type {
-                    // Filter by type - only search if type matches
-                    if t == Material::asset_type() {
-                        palette.search(&req.query)
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    palette.search(&req.query)
-                }
-                .into_iter()
-                .map(|mat| SearchResultJson {
-                    asset_type: Material::asset_type().to_string(),
-                    name: mat.name.clone(),
-                    id: mat.id,
-                    tags: mat.tags.clone(),
-                })
-                .collect();
-
-                let _ = channels
-                    .response_tx
-                    .send(McpResponse::SearchResults(results));
             }
 
             Ok(McpRequest::SetGenerator(lua_source)) => {

@@ -73,6 +73,8 @@ pub struct MapEditor2DConfig {
     pub exit_frame: Option<u32>,
     /// Grid dimensions.
     pub grid_size: (usize, usize),
+    /// Path to asset database (default: "assets.db").
+    pub asset_db_path: Option<String>,
 }
 
 /// Fluent builder for Map Editor 2D applications.
@@ -105,6 +107,7 @@ impl MapEditor2DApp {
                 capture_frame: DEFAULT_CAPTURE_FRAME,
                 exit_frame: None,
                 grid_size: (DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT),
+                asset_db_path: None,
             },
         }
     }
@@ -146,6 +149,7 @@ impl MapEditor2DApp {
     /// - `--screenshot <path>` - Take a screenshot and save to path
     /// - `--capture-frame <N>` - Frame number to capture screenshot (default: 30)
     /// - `--exit-frame <N>` - Exit after N frames
+    /// - `--asset-db <path>` - Path to asset database (default: "assets.db")
     pub fn with_cli_args(mut self) -> Self {
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1; // Skip program name
@@ -187,12 +191,27 @@ impl MapEditor2DApp {
                         i += 1;
                     }
                 }
+                "--asset-db" => {
+                    if i + 1 < args.len() {
+                        self.config.asset_db_path = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        eprintln!("Warning: --asset-db requires a path argument");
+                        i += 1;
+                    }
+                }
                 _ => {
                     i += 1; // Skip unknown args
                 }
             }
         }
 
+        self
+    }
+
+    /// Set the asset database path programmatically.
+    pub fn with_asset_db(mut self, path: impl Into<String>) -> Self {
+        self.config.asset_db_path = Some(path.into());
         self
     }
 
@@ -209,6 +228,10 @@ impl MapEditor2DApp {
         let resolution = self.config.resolution;
         let clear_color = self.config.clear_color;
         let grid_size = self.config.grid_size;
+        let asset_db_path = self
+            .config
+            .asset_db_path
+            .unwrap_or_else(|| "assets.db".to_string());
 
         let mut app = App::new();
 
@@ -273,11 +296,11 @@ impl MapEditor2DApp {
         });
 
         // Database-backed asset store (SQLite)
-        // Path relative to working directory; creates if not exists
-        let asset_db_path = std::path::Path::new("assets.db");
-        match DatabaseStore::open(asset_db_path) {
+        // Path from CLI --asset-db or default "assets.db"
+        let db_path = std::path::Path::new(&asset_db_path);
+        match DatabaseStore::open(db_path) {
             Ok(store) => {
-                info!("Opened asset database at {:?}", asset_db_path);
+                info!("Opened asset database at {:?}", db_path);
                 app.insert_resource(store);
             }
             Err(e) => {

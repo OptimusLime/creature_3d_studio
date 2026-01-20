@@ -731,7 +731,7 @@ impl DatabaseStore {
     }
 
     /// Count assets in namespace (optionally filtered by type).
-    pub fn count(
+    pub fn count_all(
         &self,
         namespace: Option<&str>,
         asset_type: Option<&str>,
@@ -758,6 +758,58 @@ impl DatabaseStore {
         };
 
         Ok(count as usize)
+    }
+}
+
+use super::BlobStore;
+
+impl BlobStore for DatabaseStore {
+    fn get(&self, key: &AssetKey) -> Result<Option<Vec<u8>>, AssetError> {
+        DatabaseStore::get(self, key)
+    }
+
+    fn get_metadata(&self, key: &AssetKey) -> Result<Option<AssetMetadata>, AssetError> {
+        DatabaseStore::get_metadata(self, key)
+    }
+
+    fn get_full(&self, key: &AssetKey) -> Result<Option<(Vec<u8>, AssetMetadata)>, AssetError> {
+        DatabaseStore::get_full(self, key)
+    }
+
+    fn set(
+        &self,
+        key: &AssetKey,
+        content: &[u8],
+        metadata: AssetMetadata,
+    ) -> Result<(), AssetError> {
+        DatabaseStore::set(self, key, content, metadata)
+    }
+
+    fn delete(&self, key: &AssetKey) -> Result<bool, AssetError> {
+        DatabaseStore::delete(self, key)
+    }
+
+    fn list(
+        &self,
+        namespace: &str,
+        pattern: &str,
+        asset_type: Option<&str>,
+    ) -> Result<Vec<AssetRef>, AssetError> {
+        DatabaseStore::list(self, namespace, pattern, asset_type)
+    }
+
+    fn search(&self, query: &str, asset_type: Option<&str>) -> Result<Vec<AssetRef>, AssetError> {
+        // Try FTS first, fall back to simple search
+        DatabaseStore::search(self, query, asset_type)
+            .or_else(|_| DatabaseStore::search_simple(self, query, asset_type))
+    }
+
+    fn exists(&self, key: &AssetKey) -> Result<bool, AssetError> {
+        DatabaseStore::exists(self, key)
+    }
+
+    fn count(&self, namespace: &str, asset_type: Option<&str>) -> Result<usize, AssetError> {
+        DatabaseStore::count_all(self, Some(namespace), asset_type)
     }
 }
 
@@ -1041,10 +1093,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(store.count(None, None).unwrap(), 3);
-        assert_eq!(store.count(Some("paul"), None).unwrap(), 2);
-        assert_eq!(store.count(None, Some("material")).unwrap(), 2);
-        assert_eq!(store.count(Some("paul"), Some("material")).unwrap(), 1);
+        assert_eq!(store.count_all(None, None).unwrap(), 3);
+        assert_eq!(store.count_all(Some("paul"), None).unwrap(), 2);
+        assert_eq!(store.count_all(None, Some("material")).unwrap(), 2);
+        assert_eq!(store.count_all(Some("paul"), Some("material")).unwrap(), 1);
     }
 
     #[test]
@@ -1091,5 +1143,129 @@ mod tests {
         assert_eq!(glob_to_like("*"), "%");
         assert_eq!(glob_to_like("file?.txt"), "file_.txt");
         assert_eq!(glob_to_like("a/*/b"), "a/%/b");
+    }
+
+    // =========================================================================
+    // MCP Integration Tests
+    // =========================================================================
+    // These test the BlobStore trait operations as used by MCP endpoints,
+    // without needing to run the full HTTP server or Bevy app.
+
+    use super::super::BlobStore;
+
+    #[test]
+    fn test_blobstore_create_and_list() {
+        let store = DatabaseStore::open_in_memory().unwrap();
+
+        // Create assets via BlobStore trait
+        let key1 = AssetKey::new("test", "materials/crystal");
+        let meta1 = AssetMetadata::new("Crystal", "material");
+        BlobStore::set(&store, &key1, b"return {}", meta1).unwrap();
+
+        let key2 = AssetKey::new("test", "generators/cave");
+        let meta2 = AssetMetadata::new("Cave Gen", "generator");
+        BlobStore::set(&store, &key2, b"-- cave", meta2).unwrap();
+
+        // List all in namespace
+        let results = BlobStore::list(&store, "test", "%", None).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // List filtered by type
+        let materials = BlobStore::list(&store, "test", "%", Some("material")).unwrap();
+        assert_eq!(materials.len(), 1);
+        assert_eq!(materials[0].key.path, "materials/crystal");
+    }
+
+    #[test]
+    fn test_blobstore_search() {
+        let store = DatabaseStore::open_in_memory().unwrap();
+
+        // Create searchable assets
+        let key1 = AssetKey::new("user", "materials/crystal");
+        let meta1 = AssetMetadata::new("Crystal Material", "material")
+            .with_description("A glowing blue gemstone");
+        BlobStore::set(&store, &key1, b"return {}", meta1).unwrap();
+
+        let key2 = AssetKey::new("user", "generators/maze");
+        let meta2 = AssetMetadata::new("Maze Generator", "generator");
+        BlobStore::set(&store, &key2, b"-- maze", meta2).unwrap();
+
+        // Search by name
+        let results = BlobStore::search(&store, "crystal", None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].metadata.name, "Crystal Material");
+
+        // Search with type filter
+        let gen_results = BlobStore::search(&store, "maze", Some("generator")).unwrap();
+        assert_eq!(gen_results.len(), 1);
+
+        // Search that matches nothing
+        let empty = BlobStore::search(&store, "nonexistent", None).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_blobstore_get_operations() {
+        let store = DatabaseStore::open_in_memory().unwrap();
+
+        let key = AssetKey::new("ns", "path/to/asset");
+        let content = b"content here";
+        let meta = AssetMetadata::new("Test Asset", "test")
+            .with_description("A test")
+            .with_tags(vec!["tag1".into(), "tag2".into()]);
+
+        // Set
+        BlobStore::set(&store, &key, content, meta.clone()).unwrap();
+
+        // Get content
+        let retrieved = BlobStore::get(&store, &key).unwrap().unwrap();
+        assert_eq!(retrieved, content);
+
+        // Get metadata
+        let meta_out = BlobStore::get_metadata(&store, &key).unwrap().unwrap();
+        assert_eq!(meta_out.name, "Test Asset");
+        assert_eq!(meta_out.tags.len(), 2);
+
+        // Get full
+        let (content_out, meta_full) = BlobStore::get_full(&store, &key).unwrap().unwrap();
+        assert_eq!(content_out, content);
+        assert_eq!(meta_full.description, Some("A test".to_string()));
+
+        // Exists
+        assert!(BlobStore::exists(&store, &key).unwrap());
+        assert!(!BlobStore::exists(&store, &AssetKey::new("ns", "other")).unwrap());
+
+        // Count
+        assert_eq!(BlobStore::count(&store, "ns", None).unwrap(), 1);
+        assert_eq!(BlobStore::count(&store, "ns", Some("test")).unwrap(), 1);
+        assert_eq!(BlobStore::count(&store, "ns", Some("other")).unwrap(), 0);
+
+        // Delete
+        assert!(BlobStore::delete(&store, &key).unwrap());
+        assert!(!BlobStore::exists(&store, &key).unwrap());
+        assert!(!BlobStore::delete(&store, &key).unwrap()); // Already deleted
+    }
+
+    #[test]
+    fn test_blobstore_upsert() {
+        let store = DatabaseStore::open_in_memory().unwrap();
+
+        let key = AssetKey::new("test", "item");
+
+        // Create
+        let meta1 = AssetMetadata::new("Version 1", "type");
+        BlobStore::set(&store, &key, b"v1", meta1).unwrap();
+        assert_eq!(BlobStore::get(&store, &key).unwrap().unwrap(), b"v1");
+
+        // Update (upsert)
+        let meta2 = AssetMetadata::new("Version 2", "type");
+        BlobStore::set(&store, &key, b"v2", meta2).unwrap();
+        assert_eq!(BlobStore::get(&store, &key).unwrap().unwrap(), b"v2");
+
+        let meta = BlobStore::get_metadata(&store, &key).unwrap().unwrap();
+        assert_eq!(meta.name, "Version 2");
+
+        // Still only 1 asset
+        assert_eq!(BlobStore::count(&store, "test", None).unwrap(), 1);
     }
 }
