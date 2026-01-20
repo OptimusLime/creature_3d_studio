@@ -23,7 +23,7 @@
 //! ```
 
 use super::{
-    asset::{Asset, AssetStore, DatabaseStore},
+    asset::{Asset, AssetStore, AssetStoreResource, DatabaseStore, InMemoryBlobStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
@@ -56,6 +56,16 @@ const CANVAS_SCALE: f32 = 10.0;
 /// Cell size for ImGui display.
 const CELL_SIZE: f32 = 16.0;
 
+/// Asset storage backend mode.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum AssetBackend {
+    /// Use SQLite database (default). Path can be configured.
+    #[default]
+    Database,
+    /// Use in-memory storage (no persistence, useful for testing).
+    InMemory,
+}
+
 /// Configuration for the Map Editor 2D application.
 #[derive(Default)]
 pub struct MapEditor2DConfig {
@@ -73,7 +83,9 @@ pub struct MapEditor2DConfig {
     pub exit_frame: Option<u32>,
     /// Grid dimensions.
     pub grid_size: (usize, usize),
-    /// Path to asset database (default: "assets.db").
+    /// Asset storage backend mode.
+    pub asset_backend: AssetBackend,
+    /// Path to asset database (only used when backend is Database).
     pub asset_db_path: Option<String>,
 }
 
@@ -107,6 +119,7 @@ impl MapEditor2DApp {
                 capture_frame: DEFAULT_CAPTURE_FRAME,
                 exit_frame: None,
                 grid_size: (DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT),
+                asset_backend: AssetBackend::Database,
                 asset_db_path: None,
             },
         }
@@ -150,6 +163,7 @@ impl MapEditor2DApp {
     /// - `--capture-frame <N>` - Frame number to capture screenshot (default: 30)
     /// - `--exit-frame <N>` - Exit after N frames
     /// - `--asset-db <path>` - Path to asset database (default: "assets.db")
+    /// - `--no-persist` - Use in-memory storage (assets lost on restart)
     pub fn with_cli_args(mut self) -> Self {
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1; // Skip program name
@@ -200,6 +214,10 @@ impl MapEditor2DApp {
                         i += 1;
                     }
                 }
+                "--no-persist" => {
+                    self.config.asset_backend = AssetBackend::InMemory;
+                    i += 1;
+                }
                 _ => {
                     i += 1; // Skip unknown args
                 }
@@ -212,6 +230,12 @@ impl MapEditor2DApp {
     /// Set the asset database path programmatically.
     pub fn with_asset_db(mut self, path: impl Into<String>) -> Self {
         self.config.asset_db_path = Some(path.into());
+        self
+    }
+
+    /// Use in-memory asset storage (no persistence).
+    pub fn with_no_persist(mut self) -> Self {
+        self.config.asset_backend = AssetBackend::InMemory;
         self
     }
 
@@ -228,6 +252,7 @@ impl MapEditor2DApp {
         let resolution = self.config.resolution;
         let clear_color = self.config.clear_color;
         let grid_size = self.config.grid_size;
+        let asset_backend = self.config.asset_backend.clone();
         let asset_db_path = self
             .config
             .asset_db_path
@@ -295,19 +320,27 @@ impl MapEditor2DApp {
             last_result: String::new(),
         });
 
-        // Database-backed asset store (SQLite)
-        // Path from CLI --asset-db or default "assets.db"
-        let db_path = std::path::Path::new(&asset_db_path);
-        match DatabaseStore::open(db_path) {
-            Ok(store) => {
-                info!("Opened asset database at {:?}", db_path);
-                app.insert_resource(store);
+        // Asset store - switchable backend via config
+        match asset_backend {
+            AssetBackend::Database => {
+                let db_path = std::path::Path::new(&asset_db_path);
+                match DatabaseStore::open(db_path) {
+                    Ok(store) => {
+                        info!("Opened asset database at {:?}", db_path);
+                        app.insert_resource(AssetStoreResource::new(store));
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to open asset database: {}. Using in-memory fallback.",
+                            e
+                        );
+                        app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
+                    }
+                }
             }
-            Err(e) => {
-                error!(
-                    "Failed to open asset database: {}. Asset endpoints will be unavailable.",
-                    e
-                );
+            AssetBackend::InMemory => {
+                info!("Using in-memory asset store (no persistence)");
+                app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
             }
         }
 

@@ -42,7 +42,8 @@ pub mod voxel_buffer;
 
 pub use app::MapEditor2DApp;
 pub use asset::{
-    Asset, AssetError, AssetKey, AssetMetadata, AssetRef, AssetStore, DatabaseStore, InMemoryStore,
+    Asset, AssetError, AssetKey, AssetMetadata, AssetRef, AssetStore, AssetStoreResource,
+    BlobStore, DatabaseStore, InMemoryBlobStore, InMemoryStore,
 };
 pub use checkerboard::CheckerboardState;
 pub use generator::{CurrentStepInfo, GeneratorListener, GeneratorListeners, StepInfo};

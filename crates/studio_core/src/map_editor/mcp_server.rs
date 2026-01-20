@@ -51,7 +51,7 @@
 //! ## Health
 //! - `GET /health` - Health check
 
-use super::asset::{AssetKey, AssetMetadata, AssetStore, DatabaseStore};
+use super::asset::{AssetKey, AssetMetadata, AssetStore, AssetStoreResource};
 use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
@@ -994,7 +994,7 @@ fn handle_mcp_requests(
     step_registry: Option<Res<StepInfoRegistry>>,
     active_generator: Option<NonSend<super::generator::ActiveGenerator>>,
     mut reload_flag: Option<ResMut<super::lua_generator::GeneratorReloadFlag>>,
-    asset_store: Option<Res<DatabaseStore>>,
+    asset_store: Option<Res<AssetStoreResource>>,
 ) {
     // Process all pending requests
     loop {
@@ -1426,10 +1426,8 @@ fn handle_mcp_requests(
 
             Ok(McpRequest::SearchAssets(req)) => {
                 if let Some(ref store) = asset_store {
-                    // Try FTS search first, fall back to simple search
-                    let results = store
-                        .search(&req.query, req.asset_type.as_deref())
-                        .or_else(|_| store.search_simple(&req.query, req.asset_type.as_deref()));
+                    // Search via BlobStore trait (handles fallback internally)
+                    let results = store.search(&req.query, req.asset_type.as_deref());
 
                     match results {
                         Ok(assets) => {

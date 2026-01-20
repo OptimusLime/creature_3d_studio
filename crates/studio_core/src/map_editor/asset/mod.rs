@@ -1,35 +1,41 @@
 //! Generic asset system for the map editor.
 //!
-//! Provides a unified interface for all storable things: materials, generators,
-//! renderers, visualizers, etc.
-//!
 //! # Architecture
 //!
-//! Two storage patterns:
+//! Two distinct storage patterns serve different needs:
 //!
-//! ## In-Memory Typed Storage (Phase 1-3)
-//! - `Asset` trait: Implemented by typed things (Material, etc.)
+//! ## 1. Typed Runtime Storage (`AssetStore<T>`)
+//!
+//! For in-memory collections of typed Rust objects with search:
+//! - `Asset` trait: Implemented by typed things (Material, LuaLayerDef)
 //! - `AssetStore<T>` trait: Generic storage with get/list/set/search
 //! - `InMemoryStore<T>`: Simple in-memory implementation
 //!
-//! ## Database Blob Storage (Phase 4+)
+//! Used by `MaterialPalette` and `LuaLayerRegistry` for runtime registries.
+//!
+//! ## 2. Blob Storage (`BlobStore`)
+//!
+//! For persisted serialized content (Lua source code):
 //! - `BlobStore` trait: Storage for raw bytes with metadata
 //! - `DatabaseStore`: SQLite-backed implementation with FTS5 search
-//! - `AssetKey`: Namespace/path key (e.g., "paul/materials/crystal")
-//! - `AssetMetadata`: Name, description, tags, asset_type
+//! - `InMemoryBlobStore`: In-memory implementation (no persistence, for testing)
+//! - `AssetStoreResource`: Bevy resource wrapping any `BlobStore` implementation
 //!
-//! # Example (In-Memory)
+//! Backends are swappable via configuration:
+//! - `--asset-db <path>` - Use SQLite database at path (default: assets.db)
+//! - `--no-persist` - Use in-memory storage (assets lost on restart)
+//!
+//! # Example (Typed Storage)
 //!
 //! ```ignore
 //! use studio_core::map_editor::asset::{Asset, AssetStore, InMemoryStore};
 //!
-//! // Material already implements Asset
 //! let mut store: InMemoryStore<Material> = InMemoryStore::new();
 //! store.set(material);
 //! let results = store.search("stone");
 //! ```
 //!
-//! # Example (Database)
+//! # Example (Blob Storage)
 //!
 //! ```ignore
 //! use studio_core::map_editor::asset::{BlobStore, DatabaseStore, AssetKey, AssetMetadata};
@@ -40,12 +46,28 @@
 //!     .with_description("A glowing blue gemstone");
 //! store.set(&key, b"return { name = 'Crystal' }", metadata)?;
 //! ```
+//!
+//! # Example (Backend Swapping)
+//!
+//! ```ignore
+//! use studio_core::map_editor::asset::{AssetStoreResource, DatabaseStore, InMemoryBlobStore};
+//!
+//! // Use database backend
+//! let resource = AssetStoreResource::new(DatabaseStore::open(path)?);
+//!
+//! // Or use in-memory backend
+//! let resource = AssetStoreResource::new(InMemoryBlobStore::new());
+//!
+//! // Both work through the same BlobStore trait
+//! resource.set(&key, content, metadata)?;
+//! ```
 
 mod database;
 mod store;
 
 pub use database::{AssetError, AssetKey, AssetMetadata, AssetRef, DatabaseStore};
-pub use store::InMemoryStore;
+pub use store::{InMemoryBlobStore, InMemoryStore};
+// Note: AssetStoreResource is defined in this file and automatically exported
 
 /// Trait for anything that can be stored in an AssetStore.
 ///
@@ -129,7 +151,7 @@ pub trait AssetStore<T: Asset>: Send + Sync {
 /// raw bytes with associated metadata. This is used for database-backed storage
 /// where assets are serialized (e.g., Lua source code).
 ///
-/// Implementations: `DatabaseStore`
+/// Implementations: `DatabaseStore`, `InMemoryBlobStore`
 pub trait BlobStore: Send + Sync {
     /// Get asset content by key.
     fn get(&self, key: &AssetKey) -> Result<Option<Vec<u8>>, AssetError>;
@@ -167,4 +189,50 @@ pub trait BlobStore: Send + Sync {
 
     /// Count assets in namespace (optionally filtered by type).
     fn count(&self, namespace: &str, asset_type: Option<&str>) -> Result<usize, AssetError>;
+}
+
+use bevy::prelude::Resource;
+use std::sync::Arc;
+
+/// Bevy resource wrapping a `BlobStore` implementation.
+///
+/// Allows switching between `DatabaseStore` and `InMemoryBlobStore` at runtime
+/// via configuration.
+///
+/// # Example
+///
+/// ```ignore
+/// // Use database backend
+/// let db = DatabaseStore::open(Path::new("assets.db"))?;
+/// app.insert_resource(AssetStoreResource::new(db));
+///
+/// // Or use in-memory backend (no persistence)
+/// let mem = InMemoryBlobStore::new();
+/// app.insert_resource(AssetStoreResource::new(mem));
+/// ```
+#[derive(Resource, Clone)]
+pub struct AssetStoreResource {
+    inner: Arc<dyn BlobStore>,
+}
+
+impl AssetStoreResource {
+    /// Create from any `BlobStore` implementation.
+    pub fn new<T: BlobStore + 'static>(store: T) -> Self {
+        Self {
+            inner: Arc::new(store),
+        }
+    }
+
+    /// Get reference to the underlying store.
+    pub fn store(&self) -> &dyn BlobStore {
+        self.inner.as_ref()
+    }
+}
+
+impl std::ops::Deref for AssetStoreResource {
+    type Target = dyn BlobStore;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref()
+    }
 }
