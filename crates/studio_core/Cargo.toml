@@ -28,5 +28,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 glob = "0.3"
 
+# Semantic search / embeddings (M12)
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = "0.21"
+hf-hub = "0.4"
+
 [dev-dependencies]
 tempfile = "3.10"

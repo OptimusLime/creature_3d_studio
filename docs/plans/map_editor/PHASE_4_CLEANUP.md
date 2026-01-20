@@ -180,4 +180,134 @@ Future backends (FileStore, RemoteStore) can implement this trait.
 
 ## M11 Complete
 
-All cleanup items resolved. 14 tests pass. Ready for M12 (Semantic Search).
+All cleanup items resolved. 14 tests pass. Ready for M11.5 (MCP Universal Asset CRUD).
+
+---
+
+## M11.5 Audit: MCP Universal Asset CRUD
+
+### 1. Unused BlobStore Import Warning
+
+**Milestone:** M11.5 (MCP Universal Asset CRUD)
+
+**Current State:** The `BlobStore` trait is imported but not used directly in `mcp_server.rs` - we use `AssetStoreResource` which wraps it.
+
+**Status:** **DEFERRED** - This is a compile warning only, not a functional issue. The import documents intent.
+
+**Criticality:** Low
+
+---
+
+### 2. API Consistency - Singular vs Plural Endpoints
+
+**Milestone:** M11.5 (MCP Universal Asset CRUD)
+
+**Current State:** We now have both:
+- `POST /mcp/assets` - Collection endpoint (create via JSON body with namespace/path)
+- `PUT /mcp/asset/{namespace}/{path}` - Singular endpoint (create via URL path)
+
+Both create assets, which could be confusing.
+
+**Proposed Change:** Could deprecate `POST /mcp/assets` in favor of `PUT /mcp/asset/...` since the singular endpoint is more RESTful and explicit.
+
+**Status:** **DEFERRED** - Both endpoints work, leave for now. Can deprecate POST later if it causes confusion.
+
+**Criticality:** Low
+
+---
+
+### 3. No Rate Limiting or Auth on MCP Endpoints
+
+**Milestone:** M11.5 (MCP Universal Asset CRUD)
+
+**Current State:** All MCP endpoints are unauthenticated and have no rate limiting.
+
+**Status:** N/A - This is for local development only. Auth would be a future feature if we add remote access.
+
+---
+
+## M11.5 Verification Checklist
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `PUT /mcp/asset/{namespace}/{path}` | **Done** | Create/update works |
+| `GET /mcp/asset/{namespace}/{path}` | **Done** | Returns raw Lua (text/x-lua) |
+| `GET /mcp/asset/...?include_metadata=true` | **Done** | Returns JSON with content + metadata |
+| `DELETE /mcp/asset/{namespace}/{path}` | **Done** | Deletes asset, 404 if not found |
+| Module docs updated | **Done** | All endpoints documented |
+| curl verification | **Done** | All 9 test cases pass |
+| Unit tests pass | **Done** | 25 asset tests pass |
+
+---
+
+## M11.5 Complete
+
+All tasks done. Universal CRUD endpoints working. Ready for M12 (Semantic Search).
+
+---
+
+## M12 Audit: Semantic Search Across All Assets
+
+### 1. Model Download Size
+
+**Milestone:** M12 (Semantic Search)
+
+**Current State:** First semantic search or asset creation downloads the MiniLM model (~22MB) from HuggingFace.
+
+**Status:** **ACCEPTABLE** - One-time download, model is cached at `~/.cache/huggingface/hub/`.
+
+**Criticality:** Low
+
+---
+
+### 2. Lazy Model Loading
+
+**Milestone:** M12 (Semantic Search)
+
+**Current State:** The embedding model is lazy-loaded on first use (first asset create or first semantic search). This adds a few seconds delay on first request.
+
+**Status:** **ACCEPTABLE** - Better than loading at startup. Users who don't use semantic search pay no cost.
+
+**Criticality:** Low
+
+---
+
+### 3. No Semantic Search for In-Memory Backend
+
+**Milestone:** M12 (Semantic Search)
+
+**Current State:** When using `--no-persist`, there's no `EmbeddingService` and semantic search returns empty results.
+
+**Status:** **ACCEPTABLE** - In-memory mode is for testing. Semantic search requires persistent storage.
+
+**Criticality:** Low
+
+---
+
+## M12 Verification Checklist
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Add candle-core, candle-nn, candle-transformers, tokenizers, hf-hub | **Done** | All deps compile |
+| `EmbeddingProvider` trait | **Done** | Abstract embedding generation |
+| `CandleEmbedding` implementation | **Done** | Uses MiniLM-L6-v2 (384d) |
+| `LazyEmbedding` thread-safe wrapper | **Done** | Loads model on first use |
+| `EmbeddingService` resource | **Done** | Background embedding queue |
+| Auto-embed on asset creation | **Done** | Both PUT and POST trigger embedding |
+| `search_semantic` in BlobStore trait | **Done** | Default returns empty |
+| `search_semantic` in DatabaseStore | **Done** | Cosine similarity search |
+| MCP endpoint `/mcp/assets/search_semantic` | **Done** | Returns ranked results with scores |
+| Module docs updated | **Done** | All endpoints documented |
+| Unit tests for embedding | **Done** | 3 tests (require model download) |
+| Manual verification | **Done** | All 3 queries return correct top result |
+
+**Test Results:**
+- "something shiny for a cave" → Crystal (0.525) > Lava (0.276) > Grass (0.188)
+- "volcanic material" → Lava (0.517) > Crystal (0.312) > Grass (0.073)
+- "natural ground cover" → Grass (0.289) > Crystal (0.105) > Lava (0.048)
+
+---
+
+## M12 Complete
+
+Semantic search working. Model downloads from HuggingFace on first use, embeddings generated in background on asset creation. Ready for M13 (Generator Library).

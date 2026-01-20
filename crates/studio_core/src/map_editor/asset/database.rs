@@ -811,6 +811,14 @@ impl BlobStore for DatabaseStore {
     fn count(&self, namespace: &str, asset_type: Option<&str>) -> Result<usize, AssetError> {
         DatabaseStore::count_all(self, Some(namespace), asset_type)
     }
+
+    fn search_semantic(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<(AssetRef, f32)>, AssetError> {
+        DatabaseStore::search_semantic(self, query_embedding, limit)
+    }
 }
 
 /// Convert glob pattern to SQL LIKE pattern.

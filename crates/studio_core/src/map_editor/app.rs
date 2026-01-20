@@ -23,13 +23,13 @@
 //! ```
 
 use super::{
-    asset::{AssetStoreResource, DatabaseStore, InMemoryBlobStore},
+    asset::{AssetStoreResource, DatabaseStore, EmbeddingService, InMemoryBlobStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
     lua_layer_registry::LuaLayerPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
-    material::{Material, MaterialPalette},
+    material::MaterialPalette,
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
     render::{FrameCapture, RenderSurfaceManager, SurfaceLayout},
@@ -42,6 +42,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use bevy_mod_imgui::prelude::{Condition, ImguiContext};
 use std::path::Path;
+use std::sync::Arc;
 
 /// Default grid dimensions.
 pub const DEFAULT_GRID_WIDTH: usize = 32;
@@ -327,7 +328,11 @@ impl MapEditor2DApp {
                 match DatabaseStore::open(db_path) {
                     Ok(store) => {
                         info!("Opened asset database at {:?}", db_path);
-                        app.insert_resource(AssetStoreResource::new(store));
+                        let store = Arc::new(store);
+                        // Create embedding service with shared store reference
+                        let embedding_service = EmbeddingService::new(Arc::clone(&store));
+                        app.insert_resource(AssetStoreResource::from_arc(store));
+                        app.insert_resource(embedding_service);
                     }
                     Err(e) => {
                         error!(
@@ -335,12 +340,14 @@ impl MapEditor2DApp {
                             e
                         );
                         app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
+                        // No embedding service for in-memory fallback
                     }
                 }
             }
             AssetBackend::InMemory => {
                 info!("Using in-memory asset store (no persistence)");
                 app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
+                // No embedding service for in-memory backend
             }
         }
 

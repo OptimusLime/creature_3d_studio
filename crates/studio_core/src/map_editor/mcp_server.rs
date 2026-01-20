@@ -45,13 +45,25 @@
 //!
 //! ## Asset Store (Database-Backed)
 //! - `GET /mcp/assets?namespace=X&pattern=Y&type=Z` - List assets
-//! - `POST /mcp/assets` - Create/update asset
+//! - `POST /mcp/assets` - Create/update asset (collection endpoint)
 //! - `GET /mcp/assets/search?q=X&type=Y` - Search assets (FTS5 full-text search)
+//!
+//! ## Universal Asset CRUD (M11.5)
+//! Direct path-based access to individual assets:
+//! - `PUT /mcp/asset/{namespace}/{path}` - Create or update asset
+//! - `GET /mcp/asset/{namespace}/{path}` - Get raw Lua content (text/x-lua)
+//! - `GET /mcp/asset/{namespace}/{path}?include_metadata=true` - Get content + metadata as JSON
+//! - `DELETE /mcp/asset/{namespace}/{path}` - Delete asset
+//!
+//! ## Semantic Search (M12)
+//! - `GET /mcp/assets/search_semantic?q=X&limit=N` - Search using vector similarity
+//!   Returns results ranked by cosine similarity with scores.
+//!   Requires assets to have embeddings (generated automatically on create).
 //!
 //! ## Health
 //! - `GET /health` - Health check
 
-use super::asset::{AssetKey, AssetMetadata, AssetStoreResource, BlobStore};
+use super::asset::{AssetKey, AssetMetadata, AssetStoreResource};
 use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
@@ -143,6 +155,16 @@ enum McpRequest {
     ListAssets(AssetListRequest),
     CreateAsset(AssetCreateRequest),
     SearchAssets(AssetSearchRequest),
+    // M11.5: Universal Asset CRUD (singular endpoints)
+    PutAsset {
+        namespace: String,
+        path: String,
+        request: PutAssetRequest,
+    },
+    GetAsset(GetAssetRequest),
+    DeleteAsset(DeleteAssetRequest),
+    // M12: Semantic search
+    SemanticSearch(SemanticSearchRequest),
 }
 
 /// Request parameters for get_output.
@@ -208,24 +230,86 @@ struct AssetSearchRequest {
     asset_type: Option<String>,
 }
 
+/// Request for PUT /mcp/asset/{namespace}/{path} - create or update asset.
+#[derive(Debug, Deserialize)]
+struct PutAssetRequest {
+    asset_type: String,
+    content: String,
+    #[serde(default)]
+    metadata: AssetCreateMetadata,
+}
+
+/// Request for GET /mcp/asset/{namespace}/{path}.
+#[derive(Debug)]
+struct GetAssetRequest {
+    namespace: String,
+    path: String,
+    include_metadata: bool,
+}
+
+/// Request for DELETE /mcp/asset/{namespace}/{path}.
+#[derive(Debug)]
+struct DeleteAssetRequest {
+    namespace: String,
+    path: String,
+}
+
+/// Request for semantic search.
+#[derive(Debug)]
+struct SemanticSearchRequest {
+    query: String,
+    limit: usize,
+}
+
 /// Response types from Bevy to HTTP server.
 enum McpResponse {
     Materials(Vec<MaterialJson>),
-    MaterialCreated { success: bool, id: u32 },
+    MaterialCreated {
+        success: bool,
+        id: u32,
+    },
     Output(Vec<u8>),
     Layers(Vec<String>),
-    Success { success: bool },
+    Success {
+        success: bool,
+    },
     Error(String),
     LayerRegistry(Vec<LayerDefJson>),
     GeneratorState(GeneratorStateJson),
     Surfaces(SurfaceInfo),
-    RecordingStarted { success: bool },
-    RecordingStopped { success: bool, frame_count: usize },
-    VideoExported { success: bool, path: String },
+    RecordingStarted {
+        success: bool,
+    },
+    RecordingStopped {
+        success: bool,
+        frame_count: usize,
+    },
+    VideoExported {
+        success: bool,
+        path: String,
+    },
     // Asset store responses
     Assets(Vec<AssetRefJson>),
-    AssetCreated { ok: bool, key: String },
+    AssetCreated {
+        ok: bool,
+        key: String,
+    },
     AssetSearchResults(Vec<AssetRefJson>),
+    // M11.5: Universal Asset CRUD responses
+    AssetContent {
+        content: Vec<u8>,
+        content_type: String,
+    },
+    AssetWithMetadata {
+        content: String,
+        metadata: AssetMetadata,
+    },
+    AssetDeleted {
+        deleted: bool,
+    },
+    AssetNotFound,
+    // M12: Semantic search responses
+    SemanticSearchResults(Vec<SemanticSearchResultJson>),
 }
 
 /// JSON representation of an asset reference.
@@ -238,6 +322,20 @@ struct AssetRefJson {
     description: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+}
+
+/// JSON representation of a semantic search result (includes similarity score).
+#[derive(Serialize)]
+struct SemanticSearchResultJson {
+    key: String,
+    name: String,
+    asset_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    /// Cosine similarity score (0.0 to 1.0)
+    score: f32,
 }
 
 /// JSON representation of generator state.
@@ -370,6 +468,22 @@ fn parse_query_string(url: &str) -> HashMap<String, String> {
 /// Get the path portion of a URL (before the query string).
 fn url_path(url: &str) -> &str {
     url.split('?').next().unwrap_or(url)
+}
+
+/// Parse asset path from URL segment: "{namespace}/{path...}" -> (namespace, path).
+/// Handles paths like "test/materials/crystal" -> ("test", "materials/crystal").
+fn parse_asset_path(path: &str) -> Option<(&str, &str)> {
+    // Find the first slash to split namespace from path
+    let slash_idx = path.find('/')?;
+    let namespace = &path[..slash_idx];
+    let asset_path = &path[slash_idx + 1..];
+
+    // Both must be non-empty
+    if namespace.is_empty() || asset_path.is_empty() {
+        return None;
+    }
+
+    Some((namespace, asset_path))
 }
 
 /// Handle a single HTTP request.
@@ -962,6 +1076,232 @@ fn handle_http_request(
             }
         }
 
+        // M12: Semantic search endpoint
+        (Method::Get, "/mcp/assets/search_semantic") => {
+            let params = parse_query_string(&url);
+
+            let query = match params.get("q") {
+                Some(q) => q.clone(),
+                None => {
+                    let _ = request.respond(error_response("Missing 'q' parameter"));
+                    return;
+                }
+            };
+
+            let limit = params
+                .get("limit")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10);
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::SemanticSearch(SemanticSearchRequest {
+                    query,
+                    limit,
+                }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response (longer timeout for first-time model loading)
+            match response_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(McpResponse::SemanticSearchResults(results)) => {
+                    let json = serde_json::to_string(&results).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        // M11.5: Universal Asset CRUD - PUT /mcp/asset/{namespace}/{path}
+        (Method::Put, path) if path.starts_with("/mcp/asset/") => {
+            // Parse namespace and path from URL: /mcp/asset/{namespace}/{path...}
+            let asset_path = path.strip_prefix("/mcp/asset/").unwrap_or("");
+            let (namespace, asset_subpath) = match parse_asset_path(asset_path) {
+                Some((ns, p)) => (ns, p),
+                None => {
+                    let _ = request.respond(error_response(
+                        "Invalid asset path. Expected /mcp/asset/{namespace}/{path}",
+                    ));
+                    return;
+                }
+            };
+
+            // Read JSON from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Parse JSON
+            let put_req: PutAssetRequest = match serde_json::from_str(&body) {
+                Ok(req) => req,
+                Err(e) => {
+                    let _ = request.respond(error_response(&format!("Invalid JSON: {}", e)));
+                    return;
+                }
+            };
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::PutAsset {
+                    namespace: namespace.to_string(),
+                    path: asset_subpath.to_string(),
+                    request: put_req,
+                })
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::AssetCreated { ok, key }) => {
+                    let json = format!(r#"{{"ok":{},"key":"{}"}}"#, ok, key);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        // M11.5: Universal Asset CRUD - GET /mcp/asset/{namespace}/{path}
+        (Method::Get, path) if path.starts_with("/mcp/asset/") => {
+            // Parse namespace and path from URL
+            let asset_path = url_path(path).strip_prefix("/mcp/asset/").unwrap_or("");
+            let (namespace, asset_subpath) = match parse_asset_path(asset_path) {
+                Some((ns, p)) => (ns, p),
+                None => {
+                    let _ = request.respond(error_response(
+                        "Invalid asset path. Expected /mcp/asset/{namespace}/{path}",
+                    ));
+                    return;
+                }
+            };
+
+            // Parse query params
+            let params = parse_query_string(&url);
+            let include_metadata = params
+                .get("include_metadata")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false);
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::GetAsset(GetAssetRequest {
+                    namespace: namespace.to_string(),
+                    path: asset_subpath.to_string(),
+                    include_metadata,
+                }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::AssetContent {
+                    content,
+                    content_type,
+                }) => {
+                    let header = Header::from_bytes("Content-Type", content_type.as_bytes())
+                        .unwrap_or_else(|_| content_type_json());
+                    let response = Response::from_data(content).with_header(header);
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::AssetWithMetadata { content, metadata }) => {
+                    let json = serde_json::json!({
+                        "content": content,
+                        "metadata": {
+                            "name": metadata.name,
+                            "asset_type": metadata.asset_type,
+                            "description": metadata.description,
+                            "tags": metadata.tags,
+                        }
+                    });
+                    let response =
+                        Response::from_string(json.to_string()).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::AssetNotFound) => {
+                    let response = Response::from_string(r#"{"error":"Asset not found"}"#)
+                        .with_status_code(404)
+                        .with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        // M11.5: Universal Asset CRUD - DELETE /mcp/asset/{namespace}/{path}
+        (Method::Delete, path) if path.starts_with("/mcp/asset/") => {
+            // Parse namespace and path from URL
+            let asset_path = path.strip_prefix("/mcp/asset/").unwrap_or("");
+            let (namespace, asset_subpath) = match parse_asset_path(asset_path) {
+                Some((ns, p)) => (ns, p),
+                None => {
+                    let _ = request.respond(error_response(
+                        "Invalid asset path. Expected /mcp/asset/{namespace}/{path}",
+                    ));
+                    return;
+                }
+            };
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::DeleteAsset(DeleteAssetRequest {
+                    namespace: namespace.to_string(),
+                    path: asset_subpath.to_string(),
+                }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::AssetDeleted { deleted }) => {
+                    let json = format!(r#"{{"deleted":{}}}"#, deleted);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::AssetNotFound) => {
+                    let response = Response::from_string(r#"{"error":"Asset not found"}"#)
+                        .with_status_code(404)
+                        .with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -995,6 +1335,7 @@ fn handle_mcp_requests(
     active_generator: Option<NonSend<super::generator::ActiveGenerator>>,
     mut reload_flag: Option<ResMut<super::lua_generator::GeneratorReloadFlag>>,
     asset_store: Option<Res<AssetStoreResource>>,
+    embedding_service: Option<Res<super::asset::EmbeddingService>>,
 ) {
     // Process all pending requests
     loop {
@@ -1398,15 +1739,19 @@ fn handle_mcp_requests(
                         req.path.rsplit('/').next().unwrap_or(&req.path).to_string()
                     });
                     let mut metadata = AssetMetadata::new(name, &req.asset_type);
-                    if let Some(desc) = req.metadata.description {
+                    if let Some(desc) = req.metadata.description.clone() {
                         metadata = metadata.with_description(desc);
                     }
                     if !req.metadata.tags.is_empty() {
                         metadata = metadata.with_tags(req.metadata.tags.clone());
                     }
-                    match store.set(&key, req.content.as_bytes(), metadata) {
+                    match store.set(&key, req.content.as_bytes(), metadata.clone()) {
                         Ok(_) => {
                             info!("MCP: Created asset {}", key);
+                            // Queue background embedding
+                            if let Some(ref emb_svc) = embedding_service {
+                                emb_svc.queue_asset(key.clone(), &metadata);
+                            }
                             let _ = channels.response_tx.send(McpResponse::AssetCreated {
                                 ok: true,
                                 key: key.to_key_string(),
@@ -1453,6 +1798,186 @@ fn handle_mcp_requests(
                     let _ = channels
                         .response_tx
                         .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            // M11.5: Universal Asset CRUD - PUT (create/update)
+            Ok(McpRequest::PutAsset {
+                namespace,
+                path,
+                request: req,
+            }) => {
+                if let Some(ref store) = asset_store {
+                    let key = AssetKey::new(&namespace, &path);
+                    let name = req.metadata.name.unwrap_or_else(|| {
+                        // Use last path segment as name if not provided
+                        path.rsplit('/').next().unwrap_or(&path).to_string()
+                    });
+                    let mut metadata = AssetMetadata::new(name, &req.asset_type);
+                    if let Some(desc) = req.metadata.description.clone() {
+                        metadata = metadata.with_description(desc);
+                    }
+                    if !req.metadata.tags.is_empty() {
+                        metadata = metadata.with_tags(req.metadata.tags.clone());
+                    }
+                    match store.set(&key, req.content.as_bytes(), metadata.clone()) {
+                        Ok(_) => {
+                            info!("MCP: PUT asset {}", key);
+                            // Queue background embedding
+                            if let Some(ref emb_svc) = embedding_service {
+                                emb_svc.queue_asset(key.clone(), &metadata);
+                            }
+                            let _ = channels.response_tx.send(McpResponse::AssetCreated {
+                                ok: true,
+                                key: key.to_key_string(),
+                            });
+                        }
+                        Err(e) => {
+                            error!("MCP: Failed to PUT asset: {}", e);
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            // M11.5: Universal Asset CRUD - GET
+            Ok(McpRequest::GetAsset(req)) => {
+                if let Some(ref store) = asset_store {
+                    let key = AssetKey::new(&req.namespace, &req.path);
+
+                    if req.include_metadata {
+                        // Return content + metadata as JSON
+                        match store.get_full(&key) {
+                            Ok(Some((content, metadata))) => {
+                                let content_str = String::from_utf8_lossy(&content).to_string();
+                                let _ = channels.response_tx.send(McpResponse::AssetWithMetadata {
+                                    content: content_str,
+                                    metadata,
+                                });
+                            }
+                            Ok(None) => {
+                                let _ = channels.response_tx.send(McpResponse::AssetNotFound);
+                            }
+                            Err(e) => {
+                                let _ =
+                                    channels.response_tx.send(McpResponse::Error(e.to_string()));
+                            }
+                        }
+                    } else {
+                        // Return raw content with appropriate content-type
+                        match store.get(&key) {
+                            Ok(Some(content)) => {
+                                // Determine content-type based on asset type or default to Lua
+                                let content_type = "text/x-lua".to_string();
+                                let _ = channels.response_tx.send(McpResponse::AssetContent {
+                                    content,
+                                    content_type,
+                                });
+                            }
+                            Ok(None) => {
+                                let _ = channels.response_tx.send(McpResponse::AssetNotFound);
+                            }
+                            Err(e) => {
+                                let _ =
+                                    channels.response_tx.send(McpResponse::Error(e.to_string()));
+                            }
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            // M11.5: Universal Asset CRUD - DELETE
+            Ok(McpRequest::DeleteAsset(req)) => {
+                if let Some(ref store) = asset_store {
+                    let key = AssetKey::new(&req.namespace, &req.path);
+
+                    // Check if asset exists first
+                    match store.exists(&key) {
+                        Ok(true) => match store.delete(&key) {
+                            Ok(deleted) => {
+                                info!("MCP: DELETE asset {} (deleted={})", key, deleted);
+                                let _ = channels
+                                    .response_tx
+                                    .send(McpResponse::AssetDeleted { deleted });
+                            }
+                            Err(e) => {
+                                error!("MCP: Failed to DELETE asset: {}", e);
+                                let _ =
+                                    channels.response_tx.send(McpResponse::Error(e.to_string()));
+                            }
+                        },
+                        Ok(false) => {
+                            let _ = channels.response_tx.send(McpResponse::AssetNotFound);
+                        }
+                        Err(e) => {
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            // M12: Semantic search
+            Ok(McpRequest::SemanticSearch(req)) => {
+                match (&asset_store, &embedding_service) {
+                    (Some(ref store), Some(ref emb_svc)) => {
+                        // Embed the query
+                        match emb_svc.embed_query(&req.query) {
+                            Ok(query_embedding) => {
+                                // Search using vector similarity via BlobStore trait
+                                match store.search_semantic(&query_embedding, req.limit) {
+                                    Ok(results) => {
+                                        let json_results: Vec<SemanticSearchResultJson> = results
+                                            .into_iter()
+                                            .map(|(asset, score)| SemanticSearchResultJson {
+                                                key: asset.key.to_key_string(),
+                                                name: asset.metadata.name,
+                                                asset_type: asset.metadata.asset_type,
+                                                description: asset.metadata.description,
+                                                tags: asset.metadata.tags,
+                                                score,
+                                            })
+                                            .collect();
+                                        let _ = channels
+                                            .response_tx
+                                            .send(McpResponse::SemanticSearchResults(json_results));
+                                    }
+                                    Err(e) => {
+                                        let _ = channels.response_tx.send(McpResponse::Error(
+                                            format!("Semantic search failed: {}", e),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = channels.response_tx.send(McpResponse::Error(format!(
+                                    "Failed to embed query: {}",
+                                    e
+                                )));
+                            }
+                        }
+                    }
+                    (None, _) => {
+                        let _ = channels
+                            .response_tx
+                            .send(McpResponse::Error("Asset store not available".to_string()));
+                    }
+                    (_, None) => {
+                        let _ = channels.response_tx.send(McpResponse::Error(
+                            "Embedding service not available".to_string(),
+                        ));
+                    }
                 }
             }
 

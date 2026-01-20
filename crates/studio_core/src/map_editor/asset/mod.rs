@@ -62,9 +62,13 @@
 //! ```
 
 mod database;
+pub mod embedding;
 mod store;
 
 pub use database::{AssetError, AssetKey, AssetMetadata, AssetRef, DatabaseStore};
+pub use embedding::{
+    CandleEmbedding, EmbedError, EmbedRequest, EmbeddingProvider, EmbeddingService, SharedEmbedding,
+};
 pub use store::{InMemoryBlobStore, InMemoryStore};
 // Note: AssetStoreResource is defined in this file and automatically exported
 
@@ -126,6 +130,17 @@ pub trait BlobStore: Send + Sync {
 
     /// Count assets in namespace (optionally filtered by type).
     fn count(&self, namespace: &str, asset_type: Option<&str>) -> Result<usize, AssetError>;
+
+    /// Semantic search using vector similarity.
+    /// Returns assets sorted by similarity (highest first) with scores.
+    /// Default implementation returns empty (not supported).
+    fn search_semantic(
+        &self,
+        _query_embedding: &[f32],
+        _limit: usize,
+    ) -> Result<Vec<(AssetRef, f32)>, AssetError> {
+        Ok(Vec::new())
+    }
 }
 
 use bevy::prelude::Resource;
@@ -158,6 +173,12 @@ impl AssetStoreResource {
         Self {
             inner: Arc::new(store),
         }
+    }
+
+    /// Create from an `Arc` to a `BlobStore` implementation.
+    /// Use this when you need to share the store with other services.
+    pub fn from_arc<T: BlobStore + 'static>(store: Arc<T>) -> Self {
+        Self { inner: store }
     }
 
     /// Get reference to the underlying store.
