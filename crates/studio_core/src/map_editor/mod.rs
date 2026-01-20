@@ -38,6 +38,7 @@ pub mod material;
 pub mod mcp_server;
 pub mod playback;
 pub mod render;
+pub mod ui;
 pub mod voxel_buffer;
 
 pub use app::MapEditor2DApp;
@@ -61,4 +62,5 @@ pub use render::{
     RenderLayer, RenderSurface, RenderSurfaceManager, SharedVisualizer, SurfaceInfo, SurfaceLayout,
     RENDERER_LUA_PATH, VISUALIZER_LUA_PATH,
 };
+pub use ui::{AssetBrowser, AssetTree, AssetTreeNode, BrowserAction};
 pub use voxel_buffer::{VoxelBuffer, VoxelGrid};

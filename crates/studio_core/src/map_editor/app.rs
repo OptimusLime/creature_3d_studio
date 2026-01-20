@@ -33,6 +33,7 @@ use super::{
     mcp_server::McpServerPlugin,
     playback::PlaybackState,
     render::{FrameCapture, RenderSurfaceManager, SurfaceLayout},
+    ui::{AssetBrowser, BrowserAction},
     voxel_buffer::VoxelBuffer,
 };
 use bevy::asset::RenderAssetUsages;
@@ -304,6 +305,7 @@ impl MapEditor2DApp {
             height: grid_size.1,
         });
         app.insert_resource(SearchState::default());
+        app.insert_resource(AssetBrowserState::default());
 
         // Render surface manager - single source of truth for all render surfaces
         // M10.4: Foundation for multi-surface rendering
@@ -439,6 +441,15 @@ struct SearchResult {
     name: String,
     id: u32,
     tags: Vec<String>,
+}
+
+/// Asset browser state for the database-backed asset panel.
+#[derive(Resource, Default)]
+struct AssetBrowserState {
+    /// The browser UI state.
+    browser: AssetBrowser,
+    /// Whether the browser window is open.
+    is_open: bool,
 }
 
 // =============================================================================
@@ -617,6 +628,8 @@ fn render_ui_system(
     mut frame_capture: ResMut<FrameCapture>,
     _surface_manager: Res<RenderSurfaceManager>,
     mut recording_state: ResMut<RecordingState>,
+    mut browser_state: ResMut<AssetBrowserState>,
+    asset_store: Res<AssetStoreResource>,
 ) {
     // NOTE: The canvas is displayed as a Bevy Sprite, not an ImGui Image.
     // ImGui's Image widget doesn't update when texture data changes.
@@ -917,6 +930,56 @@ fn render_ui_system(
                 ui.text_colored([0.7, 0.7, 1.0, 1.0], &recording_state.last_result);
             }
         });
+
+    // === Asset Browser Panel ===
+    // Toggle button in main menu area
+    ui.window("Browser Toggle")
+        .size([120.0, 40.0], Condition::FirstUseEver)
+        .position([450.0, 20.0], Condition::FirstUseEver)
+        .build(|| {
+            let label = if browser_state.is_open {
+                "Hide Browser"
+            } else {
+                "Show Browser"
+            };
+            if ui.button(label) {
+                browser_state.is_open = !browser_state.is_open;
+            }
+        });
+
+    // Browser window
+    if browser_state.is_open {
+        let mut opened = browser_state.is_open;
+        ui.window("Asset Browser")
+            .size([400.0, 500.0], Condition::FirstUseEver)
+            .position([600.0, 20.0], Condition::FirstUseEver)
+            .opened(&mut opened)
+            .build(|| {
+                // Render browser and handle actions
+                if let Some(action) = browser_state.browser.render(ui, asset_store.store()) {
+                    match action {
+                        BrowserAction::Load(key) => {
+                            info!("Browser: Load asset {:?}", key);
+                            // TODO: Implement loading asset into editor
+                        }
+                        BrowserAction::Edit(key) => {
+                            info!("Browser: Edit asset {:?}", key);
+                            // TODO: Implement editing asset
+                        }
+                        BrowserAction::Delete(key) => {
+                            info!("Browser: Delete asset {:?}", key);
+                            // TODO: Implement deleting asset
+                            if let Err(e) = asset_store.delete(&key) {
+                                error!("Failed to delete asset: {}", e);
+                            } else {
+                                browser_state.browser.mark_dirty();
+                            }
+                        }
+                    }
+                }
+            });
+        browser_state.is_open = opened;
+    }
 }
 
 /// System to handle screenshots and auto-exit using Bevy's native screenshot.

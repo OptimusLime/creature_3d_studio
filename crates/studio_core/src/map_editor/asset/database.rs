@@ -819,6 +819,10 @@ impl BlobStore for DatabaseStore {
     ) -> Result<Vec<(AssetRef, f32)>, AssetError> {
         DatabaseStore::search_semantic(self, query_embedding, limit)
     }
+
+    fn list_namespaces(&self) -> Result<Vec<String>, AssetError> {
+        DatabaseStore::list_namespaces(self)
+    }
 }
 
 /// Convert glob pattern to SQL LIKE pattern.
@@ -1275,5 +1279,49 @@ mod tests {
 
         // Still only 1 asset
         assert_eq!(BlobStore::count(&store, "test", None).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_blobstore_list_namespaces() {
+        let store = DatabaseStore::open_in_memory().unwrap();
+
+        // Empty store has no namespaces
+        let namespaces = BlobStore::list_namespaces(&store).unwrap();
+        assert!(namespaces.is_empty());
+
+        // Add assets in different namespaces
+        BlobStore::set(
+            &store,
+            &AssetKey::new("paul", "materials/stone"),
+            b"stone",
+            AssetMetadata::new("Stone", "material"),
+        )
+        .unwrap();
+        BlobStore::set(
+            &store,
+            &AssetKey::new("shared", "materials/water"),
+            b"water",
+            AssetMetadata::new("Water", "material"),
+        )
+        .unwrap();
+        BlobStore::set(
+            &store,
+            &AssetKey::new("paul", "generators/maze"),
+            b"maze",
+            AssetMetadata::new("Maze", "generator"),
+        )
+        .unwrap();
+        BlobStore::set(
+            &store,
+            &AssetKey::new("alice", "visualizers/heat"),
+            b"heat",
+            AssetMetadata::new("Heat", "visualizer"),
+        )
+        .unwrap();
+
+        // Should have 3 namespaces, sorted alphabetically
+        let namespaces = BlobStore::list_namespaces(&store).unwrap();
+        assert_eq!(namespaces.len(), 3);
+        assert_eq!(namespaces, vec!["alice", "paul", "shared"]);
     }
 }

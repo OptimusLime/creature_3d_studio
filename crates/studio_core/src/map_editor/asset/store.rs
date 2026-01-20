@@ -345,6 +345,22 @@ impl BlobStore for InMemoryBlobStore {
 
         Ok(count)
     }
+
+    fn list_namespaces(&self) -> Result<Vec<String>, AssetError> {
+        let assets = self.assets.read().unwrap();
+        let mut namespaces: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for key in assets.keys() {
+            // Key format is "namespace/path", extract namespace
+            if let Some(slash_pos) = key.find('/') {
+                namespaces.insert(key[..slash_pos].to_string());
+            }
+        }
+
+        let mut result: Vec<String> = namespaces.into_iter().collect();
+        result.sort();
+        Ok(result)
+    }
 }
 
 // Helper trait for accessing tags from metadata
@@ -627,5 +643,40 @@ mod tests {
 
         // Still only 1 asset
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_inmemory_blob_store_list_namespaces() {
+        let store = InMemoryBlobStore::new();
+
+        // Empty store has no namespaces
+        assert!(store.list_namespaces().unwrap().is_empty());
+
+        // Add assets in different namespaces
+        store
+            .set(
+                &AssetKey::new("paul", "materials/stone"),
+                b"lua",
+                AssetMetadata::new("Stone", "material"),
+            )
+            .unwrap();
+        store
+            .set(
+                &AssetKey::new("shared", "materials/water"),
+                b"lua",
+                AssetMetadata::new("Water", "material"),
+            )
+            .unwrap();
+        store
+            .set(
+                &AssetKey::new("paul", "generators/maze"),
+                b"lua",
+                AssetMetadata::new("Maze", "generator"),
+            )
+            .unwrap();
+
+        // Should have 2 namespaces, sorted
+        let namespaces = store.list_namespaces().unwrap();
+        assert_eq!(namespaces, vec!["paul", "shared"]);
     }
 }

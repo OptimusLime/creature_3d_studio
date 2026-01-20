@@ -141,6 +141,10 @@ pub trait BlobStore: Send + Sync {
     ) -> Result<Vec<(AssetRef, f32)>, AssetError> {
         Ok(Vec::new())
     }
+
+    /// List all namespaces that contain assets.
+    /// Used by AssetBrowser to discover available namespaces.
+    fn list_namespaces(&self) -> Result<Vec<String>, AssetError>;
 }
 
 use bevy::prelude::Resource;
