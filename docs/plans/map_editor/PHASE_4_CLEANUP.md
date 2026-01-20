@@ -425,15 +425,15 @@ Asset Browser Panel working. Tree view shows all assets grouped by namespace/fol
 
 ---
 
-### 3. EmbeddingService Requires Arc<DatabaseStore>
+### 3. EmbeddingService Requires Arc<DatabaseStore> - RESOLVED
 
 **Milestone:** M14 (File Watcher Auto-Import)
 
-**Current State:** `EmbeddingService::new()` takes `Arc<DatabaseStore>` specifically, not `Arc<dyn BlobStore>`. This is because `set_embedding()` is on `DatabaseStore` directly, not the trait.
+**Previous State:** `EmbeddingService::new()` took `Arc<DatabaseStore>` specifically, not `Arc<dyn BlobStore>`. This was because `set_embedding()` was on `DatabaseStore` directly, not the trait.
 
-**Proposed Change:** Add `set_embedding()` and `get_embedding()` to `BlobStore` trait with default implementations that return "not supported" for non-database backends.
+**Resolution:** Added `set_embedding()` and `get_embedding()` to `BlobStore` trait with default no-op implementations. `EmbeddingService` now accepts `Arc<dyn BlobStore>`.
 
-**Status:** **DEFERRED** - Works fine for current use case. Refactor if we need embedding with other backends.
+**Status:** **RESOLVED**
 
 **Criticality:** Low
 
@@ -503,7 +503,7 @@ None identified - all high-priority items were resolved during milestones.
 
 ### Should Fix (Medium Priority)
 
-1. **EmbeddingService tied to DatabaseStore** (M14.3) - Add `set_embedding` to BlobStore trait
+1. ~~**EmbeddingService tied to DatabaseStore** (M14.3)~~ - **RESOLVED**: Added `set_embedding`/`get_embedding` to BlobStore trait
 2. **Duplicate search endpoints** - Already resolved in M11 cleanup
 
 ### Nice to Have (Low Priority)
