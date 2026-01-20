@@ -25,7 +25,7 @@
 use super::{
     asset::{AssetStoreResource, DatabaseStore, EmbeddingService, InMemoryBlobStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
-    imgui_screenshot::AutoExitConfig,
+    imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin},
     lua_generator::LuaGeneratorPlugin,
     lua_layer_registry::LuaLayerPlugin,
     lua_materials::{LuaMaterialsPlugin, MaterialsLoadSet},
@@ -40,7 +40,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+
 use bevy_mod_imgui::prelude::{Condition, ImguiContext};
 use std::path::Path;
 use std::sync::Arc;
@@ -275,21 +275,21 @@ impl MapEditor2DApp {
         // ImGui plugin
         app.add_plugins(bevy_mod_imgui::ImguiPlugin::default());
 
-        // Screenshot config (if path specified) - uses Bevy's native screenshot
+        // ImGui screenshot plugin (captures imgui panels in screenshots)
+        app.add_plugins(ImguiScreenshotPlugin);
+
+        // Screenshot config (if path specified) - uses ImGui-aware screenshot
         if let Some(ref path) = self.config.screenshot_path {
-            app.insert_resource(ScreenshotConfig {
-                path: path.clone(),
-                capture_frame: self.config.capture_frame,
-            });
+            app.insert_resource(ImguiScreenshotConfig::new(
+                path.clone(),
+                self.config.capture_frame,
+            ));
         }
 
         // Auto-exit config (if exit frame specified)
         if let Some(exit_frame) = self.config.exit_frame {
             app.insert_resource(AutoExitConfig::new(exit_frame));
         }
-
-        // Frame counter for screenshot timing
-        app.insert_resource(FrameCounter(0));
 
         // Lua materials plugin (loads materials from assets/map_editor/materials.lua)
         app.add_plugins(LuaMaterialsPlugin::default());
@@ -370,13 +370,10 @@ impl MapEditor2DApp {
         // Map editor systems run AFTER materials are loaded (MaterialsLoadSet)
         // Note: LuaGeneratorPlugin handles generation internally, so we just need
         // to update the canvas texture and render UI
+        // ImguiScreenshotPlugin handles screenshot capture and auto-exit internally
         app.add_systems(
             Update,
-            (
-                update_canvas_texture_system,
-                render_ui_system,
-                screenshot_system,
-            )
+            (update_canvas_texture_system, render_ui_system)
                 .chain()
                 .after(MaterialsLoadSet),
         );
@@ -414,17 +411,6 @@ struct CanvasTexture {
 /// Marker for the canvas sprite entity.
 #[derive(Component)]
 struct CanvasSprite;
-
-/// Screenshot configuration.
-#[derive(Resource)]
-struct ScreenshotConfig {
-    path: String,
-    capture_frame: u32,
-}
-
-/// Frame counter for screenshot timing.
-#[derive(Resource)]
-struct FrameCounter(u32);
 
 /// Search state for the UI.
 #[derive(Resource, Default)]
@@ -988,40 +974,5 @@ fn render_ui_system(
                 }
             });
         browser_state.is_open = opened;
-    }
-}
-
-/// System to handle screenshots and auto-exit using Bevy's native screenshot.
-#[allow(deprecated)]
-fn screenshot_system(
-    mut frame_counter: ResMut<FrameCounter>,
-    screenshot_config: Option<Res<ScreenshotConfig>>,
-    exit_config: Option<Res<AutoExitConfig>>,
-    mut commands: Commands,
-    mut exit: EventWriter<bevy::app::AppExit>,
-) {
-    frame_counter.0 += 1;
-
-    // Take screenshot at configured frame
-    if let Some(ref config) = screenshot_config {
-        if frame_counter.0 == config.capture_frame {
-            println!(
-                "Capturing screenshot at frame {} to {}...",
-                frame_counter.0, config.path
-            );
-            // Clone path to avoid lifetime issues
-            let path = config.path.clone();
-            commands
-                .spawn(Screenshot::primary_window())
-                .observe(save_to_disk(std::path::PathBuf::from(path)));
-        }
-    }
-
-    // Handle auto-exit
-    if let Some(ref config) = exit_config {
-        if frame_counter.0 >= config.exit_frame {
-            println!("Exiting after {} frames", frame_counter.0);
-            exit.write(bevy::app::AppExit::Success);
-        }
     }
 }
