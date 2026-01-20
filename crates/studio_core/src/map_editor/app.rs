@@ -444,12 +444,21 @@ struct SearchResult {
 }
 
 /// Asset browser state for the database-backed asset panel.
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct AssetBrowserState {
     /// The browser UI state.
     browser: AssetBrowser,
     /// Whether the browser window is open.
     is_open: bool,
+}
+
+impl Default for AssetBrowserState {
+    fn default() -> Self {
+        Self {
+            browser: AssetBrowser::new(),
+            is_open: true, // Open by default so it's visible in screenshots
+        }
+    }
 }
 
 // =============================================================================
