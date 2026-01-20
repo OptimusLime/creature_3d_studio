@@ -396,3 +396,122 @@ Semantic search working. Model downloads from HuggingFace on first use, embeddin
 ## M13 Complete
 
 Asset Browser Panel working. Tree view shows all assets grouped by namespace/folder, with search and type filtering. Detail panel shows metadata and action buttons. Delete action works, Load/Edit are stubs for future. 16 tests pass.
+
+---
+
+## M14 Audit: File Watcher Auto-Import
+
+### 1. Multiple Import Events for Same File
+
+**Milestone:** M14 (File Watcher Auto-Import)
+
+**Current State:** When a file is created, notify sometimes sends multiple events (Create + Modify). This causes the same asset to be imported multiple times (visible in logs: "Auto-imported" appears 2-3 times for one file).
+
+**Status:** **ACCEPTABLE** - The import is idempotent (upsert), so duplicates are harmless. Just extra log noise.
+
+**Criticality:** Low
+
+---
+
+### 2. No Debouncing for Rapid File Changes
+
+**Milestone:** M14 (File Watcher Auto-Import)
+
+**Current State:** Every file change triggers an immediate import. If an editor saves multiple times rapidly, we import each time.
+
+**Status:** **ACCEPTABLE** - Imports are fast and idempotent. Could add debouncing in future if needed.
+
+**Criticality:** Low
+
+---
+
+### 3. EmbeddingService Requires Arc<DatabaseStore>
+
+**Milestone:** M14 (File Watcher Auto-Import)
+
+**Current State:** `EmbeddingService::new()` takes `Arc<DatabaseStore>` specifically, not `Arc<dyn BlobStore>`. This is because `set_embedding()` is on `DatabaseStore` directly, not the trait.
+
+**Proposed Change:** Add `set_embedding()` and `get_embedding()` to `BlobStore` trait with default implementations that return "not supported" for non-database backends.
+
+**Status:** **DEFERRED** - Works fine for current use case. Refactor if we need embedding with other backends.
+
+**Criticality:** Low
+
+---
+
+### 4. Watch Directory Created on Startup
+
+**Milestone:** M14 (File Watcher Auto-Import)
+
+**Current State:** If `assets/incoming/` doesn't exist, the watcher creates it. This is convenient but could be surprising.
+
+**Status:** **ACCEPTABLE** - Expected behavior for a watch directory. Alternative would be to fail on missing directory.
+
+**Criticality:** Low
+
+---
+
+## M14 Verification Checklist
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `ImportHandler` trait | **Done** | Extensible file type handling |
+| `LuaAssetHandler` implementation | **Done** | Detects material/generator/renderer/visualizer |
+| Metadata extraction from Lua | **Done** | name, description, tags |
+| `AssetFileWatcher` | **Done** | Uses notify crate |
+| Watch directory canonicalization | **Done** | Handles relative paths |
+| File create/modify → import | **Done** | Auto-imports to database |
+| File delete → remove | **Done** | Removes from database |
+| Embedding queue integration | **Done** | Queues for semantic search |
+| CLI `--watch-dir` option | **Done** | Custom watch directory |
+| CLI `--no-watch` option | **Done** | Disable watching |
+| App integration | **Done** | Starts watcher on launch |
+| Unit tests | **Done** | 12 tests (8 import + 4 watcher) |
+| Manual verification | **Done** | File drop → appears in MCP API |
+
+---
+
+## M14 Complete
+
+File Watcher Auto-Import working. Files dropped in `assets/incoming/{namespace}/` auto-import to database with metadata extracted from Lua. Embeddings generated in background for semantic search. 12 tests pass.
+
+---
+
+## Phase 4 Summary
+
+All milestones complete:
+
+| Milestone | Status | Tests |
+|-----------|--------|-------|
+| M11: Database-Backed Asset Store | **Done** | 14 |
+| M11.5: MCP Universal Asset CRUD | **Done** | 25 |
+| M12: Semantic Search | **Done** | 3 (requires model) |
+| M13: Asset Browser Panel | **Done** | 16 |
+| M14: File Watcher Auto-Import | **Done** | 12 |
+
+**Total Tests:** 70+
+
+---
+
+## Phase 4 Tech Debt Review
+
+Items to address before Phase 5:
+
+### Must Fix (High Priority)
+
+None identified - all high-priority items were resolved during milestones.
+
+### Should Fix (Medium Priority)
+
+1. **EmbeddingService tied to DatabaseStore** (M14.3) - Add `set_embedding` to BlobStore trait
+2. **Duplicate search endpoints** - Already resolved in M11 cleanup
+
+### Nice to Have (Low Priority)
+
+1. **Multiple import events** (M14.1) - Add debouncing
+2. **Material preview placeholder** (M13.2) - Parse Lua for color swatch
+3. **Load/Edit actions stub** (M13.3) - Implement full functionality
+
+### Decision
+
+All items are Low priority. **Proceed to Phase 5** without additional cleanup. Tech debt can be addressed opportunistically or in a dedicated cleanup sprint.
