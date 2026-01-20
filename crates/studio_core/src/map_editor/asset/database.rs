@@ -151,6 +151,12 @@ impl AssetMetadata {
         self
     }
 
+    /// Set description from Option.
+    pub fn with_description_opt(mut self, desc: Option<String>) -> Self {
+        self.description = desc;
+        self
+    }
+
     /// Set tags.
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;

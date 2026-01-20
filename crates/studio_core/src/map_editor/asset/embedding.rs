@@ -369,7 +369,7 @@ impl Default for LazyEmbedding {
 /// Assets are queued for embedding and processed asynchronously.
 ///
 /// Also provides synchronous embedding for search queries via `embed_query()`.
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct EmbeddingService {
     tx: Sender<EmbedRequest>,
     _handle: Arc<JoinHandle<()>>,

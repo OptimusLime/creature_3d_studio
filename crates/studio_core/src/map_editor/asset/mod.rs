@@ -63,13 +63,17 @@
 
 mod database;
 pub mod embedding;
+pub mod import;
 mod store;
+pub mod watcher;
 
 pub use database::{AssetError, AssetKey, AssetMetadata, AssetRef, DatabaseStore};
 pub use embedding::{
     CandleEmbedding, EmbedError, EmbedRequest, EmbeddingProvider, EmbeddingService, SharedEmbedding,
 };
+pub use import::{ImportError, ImportHandler, ImportHandlerRegistry, LuaAssetHandler};
 pub use store::{InMemoryBlobStore, InMemoryStore};
+pub use watcher::{AssetFileWatcher, WatchError};
 // Note: AssetStoreResource is defined in this file and automatically exported
 
 /// Trait for anything that can be stored in an `InMemoryStore`.
@@ -182,6 +186,11 @@ impl AssetStoreResource {
     /// Create from an `Arc` to a `BlobStore` implementation.
     /// Use this when you need to share the store with other services.
     pub fn from_arc<T: BlobStore + 'static>(store: Arc<T>) -> Self {
+        Self { inner: store }
+    }
+
+    /// Create from a pre-coerced `Arc<dyn BlobStore>`.
+    pub fn from_dyn(store: Arc<dyn BlobStore>) -> Self {
         Self { inner: store }
     }
 

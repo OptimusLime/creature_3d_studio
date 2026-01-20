@@ -23,7 +23,10 @@
 //! ```
 
 use super::{
-    asset::{AssetStoreResource, DatabaseStore, EmbeddingService, InMemoryBlobStore},
+    asset::{
+        AssetFileWatcher, AssetStoreResource, BlobStore, DatabaseStore, EmbeddingService,
+        InMemoryBlobStore,
+    },
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin},
     lua_generator::LuaGeneratorPlugin,
@@ -68,6 +71,9 @@ pub enum AssetBackend {
     InMemory,
 }
 
+/// Default watch directory for auto-import.
+pub const DEFAULT_WATCH_DIR: &str = "assets/incoming";
+
 /// Configuration for the Map Editor 2D application.
 #[derive(Default)]
 pub struct MapEditor2DConfig {
@@ -89,6 +95,8 @@ pub struct MapEditor2DConfig {
     pub asset_backend: AssetBackend,
     /// Path to asset database (only used when backend is Database).
     pub asset_db_path: Option<String>,
+    /// Directory to watch for auto-import (None = no watching).
+    pub watch_dir: Option<String>,
 }
 
 /// Fluent builder for Map Editor 2D applications.
@@ -123,6 +131,7 @@ impl MapEditor2DApp {
                 grid_size: (DEFAULT_GRID_WIDTH, DEFAULT_GRID_HEIGHT),
                 asset_backend: AssetBackend::Database,
                 asset_db_path: None,
+                watch_dir: Some(DEFAULT_WATCH_DIR.to_string()),
             },
         }
     }
@@ -166,6 +175,8 @@ impl MapEditor2DApp {
     /// - `--exit-frame <N>` - Exit after N frames
     /// - `--asset-db <path>` - Path to asset database (default: "assets.db")
     /// - `--no-persist` - Use in-memory storage (assets lost on restart)
+    /// - `--watch-dir <path>` - Watch directory for auto-import (default: "assets/incoming")
+    /// - `--no-watch` - Disable file watching
     pub fn with_cli_args(mut self) -> Self {
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1; // Skip program name
@@ -220,10 +231,29 @@ impl MapEditor2DApp {
                     self.config.asset_backend = AssetBackend::InMemory;
                     i += 1;
                 }
+                "--watch-dir" => {
+                    if i + 1 < args.len() {
+                        self.config.watch_dir = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        eprintln!("Warning: --watch-dir requires a path argument");
+                        i += 1;
+                    }
+                }
+                "--no-watch" => {
+                    // Explicitly disable watching by setting to empty
+                    self.config.watch_dir = None;
+                    i += 1;
+                }
                 _ => {
                     i += 1; // Skip unknown args
                 }
             }
+        }
+
+        // Default watch directory if not explicitly disabled
+        if self.config.watch_dir.is_none() && self.config.asset_backend == AssetBackend::Database {
+            self.config.watch_dir = Some(DEFAULT_WATCH_DIR.to_string());
         }
 
         self
@@ -238,6 +268,18 @@ impl MapEditor2DApp {
     /// Use in-memory asset storage (no persistence).
     pub fn with_no_persist(mut self) -> Self {
         self.config.asset_backend = AssetBackend::InMemory;
+        self
+    }
+
+    /// Set the watch directory for auto-import.
+    pub fn with_watch_dir(mut self, path: impl Into<String>) -> Self {
+        self.config.watch_dir = Some(path.into());
+        self
+    }
+
+    /// Disable file watching.
+    pub fn with_no_watch(mut self) -> Self {
+        self.config.watch_dir = None;
         self
     }
 
@@ -324,6 +366,10 @@ impl MapEditor2DApp {
         });
 
         // Asset store - switchable backend via config
+        // We need Arc<dyn BlobStore> for sharing with file watcher
+        let store_arc: Arc<dyn BlobStore>;
+        let embedding_service: Option<Arc<EmbeddingService>>;
+
         match asset_backend {
             AssetBackend::Database => {
                 let db_path = std::path::Path::new(&asset_db_path);
@@ -331,25 +377,52 @@ impl MapEditor2DApp {
                     Ok(store) => {
                         info!("Opened asset database at {:?}", db_path);
                         let store = Arc::new(store);
-                        // Create embedding service with shared store reference
-                        let embedding_service = EmbeddingService::new(Arc::clone(&store));
-                        app.insert_resource(AssetStoreResource::from_arc(store));
-                        app.insert_resource(embedding_service);
+                        // EmbeddingService needs Arc<DatabaseStore> for set_embedding
+                        let service = Arc::new(EmbeddingService::new(Arc::clone(&store)));
+                        embedding_service = Some(service);
+                        store_arc = store;
                     }
                     Err(e) => {
                         error!(
                             "Failed to open asset database: {}. Using in-memory fallback.",
                             e
                         );
-                        app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
-                        // No embedding service for in-memory fallback
+                        store_arc = Arc::new(InMemoryBlobStore::new());
+                        embedding_service = None;
                     }
                 }
             }
             AssetBackend::InMemory => {
                 info!("Using in-memory asset store (no persistence)");
-                app.insert_resource(AssetStoreResource::new(InMemoryBlobStore::new()));
-                // No embedding service for in-memory backend
+                store_arc = Arc::new(InMemoryBlobStore::new());
+                embedding_service = None;
+            }
+        }
+
+        // Insert asset store resource
+        app.insert_resource(AssetStoreResource::from_dyn(Arc::clone(&store_arc)));
+
+        // Insert embedding service if available
+        if let Some(ref service) = embedding_service {
+            app.insert_resource((**service).clone());
+        }
+
+        // File watcher for auto-import (M14)
+        if let Some(ref watch_dir) = self.config.watch_dir {
+            let watch_path = std::path::Path::new(watch_dir);
+            match AssetFileWatcher::new(
+                watch_path,
+                Arc::clone(&store_arc),
+                embedding_service.clone(),
+            ) {
+                Ok(watcher) => {
+                    info!("Asset file watcher started on {}", watch_dir);
+                    app.insert_non_send_resource(watcher);
+                    app.add_systems(Update, process_file_watcher_events);
+                }
+                Err(e) => {
+                    error!("Failed to start file watcher: {}. Auto-import disabled.", e);
+                }
             }
         }
 
@@ -974,5 +1047,22 @@ fn render_ui_system(
                 }
             });
         browser_state.is_open = opened;
+    }
+}
+
+/// System to process file watcher events (M14: File Watcher Auto-Import).
+///
+/// Checks for pending file events and imports/removes assets accordingly.
+/// The watcher is NonSend because notify uses threads internally.
+fn process_file_watcher_events(
+    watcher: Option<NonSend<AssetFileWatcher>>,
+    mut browser_state: ResMut<AssetBrowserState>,
+) {
+    let Some(watcher) = watcher else { return };
+
+    let count = watcher.process_events();
+    if count > 0 {
+        // Mark browser dirty so it refreshes the tree
+        browser_state.browser.mark_dirty();
     }
 }
