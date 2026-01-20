@@ -6,6 +6,9 @@ Cargo.lock
 # Test output
 /screenshots/
 
+# Asset database (created by map editor)
+assets.db
+
 # IDE
 .idea/
 .vscode/
