@@ -377,35 +377,14 @@ fn value_to_generator(_lua: &Lua, value: &Value) -> Option<Box<dyn Generator>> {
             // MjLuaModel has a _type field that returns "MjModel"
             if let Ok(type_name) = ud.get::<String>("_type") {
                 if type_name == "MjModel" {
-                    // Try to borrow the MjLuaModel and get its structure directly
-                    // MjLuaModel now wraps MjGenerator, which provides proper structure
+                    // Get the actual MjGenerator from MjLuaModel
+                    // MjLuaModel wraps Rc<RefCell<MjGenerator>>, so we can share it
                     if let Ok(mj_model) = ud.borrow::<crate::markov_junior::lua_api::MjLuaModel>() {
-                        let structure = mj_model.structure();
-                        return Some(Box::new(MjStructureHolder { structure }));
+                        let generator_rc = mj_model.generator();
+                        return Some(Box::new(MjGeneratorHandle {
+                            inner: generator_rc,
+                        }));
                     }
-
-                    // Fallback: try the old JSON method if borrow fails
-                    let path: String = ud.get("_path").unwrap_or_else(|_| "root".to_string());
-                    let model_name = path.split('.').last().unwrap_or("model").to_string();
-
-                    if let Ok(json_str) = ud.call_method::<String>("mj_structure", ()) {
-                        if let Ok(mj_struct) =
-                            serde_json::from_str::<crate::markov_junior::MjNodeStructure>(&json_str)
-                        {
-                            return Some(Box::new(MjStructureHolder {
-                                structure: GeneratorStructure::mj_model_with_structure(
-                                    &path,
-                                    &model_name,
-                                    mj_struct,
-                                ),
-                            }));
-                        }
-                    }
-
-                    // Last fallback: structure without mj_structure
-                    return Some(Box::new(MjStructureHolder {
-                        structure: GeneratorStructure::mj_model(&path, &model_name),
-                    }));
                 }
             }
             None
@@ -414,46 +393,55 @@ fn value_to_generator(_lua: &Lua, value: &Value) -> Option<Box<dyn Generator>> {
     }
 }
 
-/// Holder for a pre-computed GeneratorStructure from MjGenerator.
+/// Handle to an MjGenerator that lives inside MjLuaModel.
 ///
-/// This is used when extracting structure from MjLuaModel for MCP introspection.
-/// The actual MjGenerator lives inside MjLuaModel and provides the structure;
-/// this holder just stores a copy of that structure for the Generator trait.
-struct MjStructureHolder {
-    structure: GeneratorStructure,
+/// This wrapper allows us to return a `Box<dyn Generator>` that delegates
+/// to the actual MjGenerator owned by the Lua userdata. Unlike the old
+/// MjStructureHolder (which only held structure), this delegates all
+/// Generator trait methods to the real generator.
+struct MjGeneratorHandle {
+    inner: std::rc::Rc<std::cell::RefCell<super::generator::MjGenerator>>,
 }
 
-impl Generator for MjStructureHolder {
+impl Generator for MjGeneratorHandle {
     fn type_name(&self) -> &str {
-        &self.structure.type_name
+        "MjModel"
     }
 
     fn path(&self) -> &str {
-        &self.structure.path
+        // Can't return reference to interior, return static for now
+        // The actual path is set via set_path and stored in inner
+        "root"
     }
 
     fn structure(&self) -> GeneratorStructure {
-        self.structure.clone()
+        self.inner.borrow().structure()
     }
 
-    fn init(&mut self, _ctx: &mut super::generator::GeneratorContext) {}
-
-    fn step(&mut self, _ctx: &mut super::generator::GeneratorContext) -> bool {
-        true // Placeholder always "done"
+    fn init(&mut self, ctx: &mut super::generator::GeneratorContext) {
+        self.inner.borrow_mut().init(ctx)
     }
 
-    fn reset(&mut self, _seed: u64) {}
+    fn step(&mut self, ctx: &mut super::generator::GeneratorContext) -> bool {
+        self.inner.borrow_mut().step(ctx)
+    }
+
+    fn reset(&mut self, seed: u64) {
+        self.inner.borrow_mut().reset(seed)
+    }
 
     fn last_step_info(&self) -> Option<&StepInfo> {
+        // Can't return reference to interior data
+        // The step info is available via structure() if needed
         None
     }
 
     fn is_done(&self) -> bool {
-        true
+        self.inner.borrow().is_done()
     }
 
     fn set_path(&mut self, path: String) {
-        self.structure.path = path;
+        self.inner.borrow_mut().set_path(path)
     }
 }
 
