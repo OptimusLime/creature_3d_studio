@@ -13,6 +13,7 @@
 | **3. Advanced Generation** | I can load Markov Jr. models, chain generators together, and save/load generation checkpoints—all in 2D. |
 | **3.5. Markov Jr. Introspection** | I can see inside Markov Jr. models—their node structure, which rules are firing, with fine-grained step control and dedicated visualization. |
 | **4. Unified Asset Store (Database-Backed)** | All my Lua assets (materials, generators, renderers, visualizers) live in a database with unified search. I can browse, search semantically, and AI can write assets that appear automatically. |
+| **4.5. iOS App Build** | I can run the map editor on my iPad with touch panning. One command deploys to device. |
 | **5. 3D Upgrade** | I can generate and render 3D terrain with PBR materials. Wet stone looks different from dry stone. |
 | **6. Polish** | When my Lua script has an error, I see the message and can fix it without losing state. |
 
@@ -279,6 +280,62 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 
 ---
 
+## Phase 4.5: iOS App Build
+
+*Get the map editor running on iPad.*
+
+### M14.5: iOS Build Infrastructure
+**Functionality:** I can build a minimal Bevy app and run it on the iOS simulator.
+
+- `mobile/` directory with Xcode project and build scripts
+- `mobile/Makefile` with `make run` for simulator
+- Environment-based code signing via `.env` file
+- Implements: Xcode project, `build_rust_deps.sh`, iOS-specific Cargo.toml
+
+---
+
+### M14.6: Feature Flags for Mobile
+**Functionality:** I can compile `studio_core` for iOS without desktop-only dependencies.
+
+- Feature flags: `embedding`, `mcp-server`, `file-watcher`, `desktop`, `mobile`
+- Conditional compilation with `#[cfg(feature = "...")]`
+- Desktop builds unchanged (default features)
+- Mobile builds exclude ML deps, server, file watcher
+- Implements: Cargo feature flags, conditional module compilation
+
+---
+
+### M14.7: Map Editor on iOS Simulator
+**Functionality:** I can see the 2D map editor rendering on the iOS simulator with touch panning.
+
+- `mobile/src/lib.rs` initializes `MapEditor2DApp`
+- iOS window config (fullscreen, hidden status bar)
+- Touch-to-pan input mapping
+- imgui panels (if Metal works)
+- Implements: iOS app entry point, touch input system
+
+---
+
+### M14.8: iPad Device Deployment
+**Functionality:** I can deploy the map editor to my physical iPad.
+
+- `make ios-device` target in Makefile
+- Code signing via `DEVELOPMENT_TEAM` env var
+- Automatic provisioning
+- Implements: Device build target, signing configuration
+
+---
+
+### M14.9: One-Command Build Script
+**Functionality:** I can build and deploy with `./scripts/build-ios.sh --device` from project root.
+
+- `scripts/build-ios.sh` with `--simulator`, `--device`, `--release` flags
+- Rust target installation check
+- Help text and error reporting
+- Implements: Build automation script
+
+---
+
 ## Phase 5: 3D Upgrade
 
 ### M15: 3D Voxel Buffer
@@ -408,6 +465,11 @@ Visualizer:render(ctx)         -- called each frame to draw overlay
 | 12 | Semantic search across all assets | Unified Store |
 | 13 | Browse all assets in one panel | Unified Store |
 | 14 | File watcher auto-imports to database | Unified Store |
+| 14.5 | iOS build infrastructure (simulator) | iOS Build |
+| 14.6 | Feature flags for mobile compilation | iOS Build |
+| 14.7 | Map editor renders on iOS simulator | iOS Build |
+| 14.8 | Deploy to physical iPad | iOS Build |
+| 14.9 | One-command build script | iOS Build |
 | 15 | Generate 3D terrain | 3D Upgrade |
 | 16 | Render 3D with deferred pipeline | 3D Upgrade |
 | 17 | PBR materials (wet vs dry) in 3D | 3D Upgrade |
@@ -434,12 +496,19 @@ The minimum path to "AI-assisted 2D world creation with persistent storage":
 
 **Total 2D critical path: 14 milestones**
 
+For iOS demo, add:
+
+**→ M14.5 → M14.6 → M14.7 → M14.8 → M14.9** (iOS Build: 5 milestones)
+- Build infrastructure, feature flags, simulator, device, automation
+
+**Total iOS critical path: 19 milestones**
+
 For 3D demo, add:
 
 **→ M15 → M16 → M17 → M18** (3D: 4 milestones)
 - 3D voxels, rendering, PBR, preview
 
-**Total 3D critical path: 18 milestones**
+**Total 3D critical path: 23 milestones**
 
 ---
 

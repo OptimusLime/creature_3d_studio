@@ -24,3 +24,4 @@ assets.db
 /bevy_mod_physx/
 /bevy/
 /bonsai/
+mobile/.env
