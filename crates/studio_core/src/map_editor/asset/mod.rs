@@ -4,12 +4,11 @@
 //!
 //! Two distinct storage patterns serve different needs:
 //!
-//! ## 1. Typed Runtime Storage (`AssetStore<T>`)
+//! ## 1. Typed Runtime Storage (`InMemoryStore<T>`)
 //!
 //! For in-memory collections of typed Rust objects with search:
-//! - `Asset` trait: Implemented by typed things (Material, LuaLayerDef)
-//! - `AssetStore<T>` trait: Generic storage with get/list/set/search
-//! - `InMemoryStore<T>`: Simple in-memory implementation
+//! - `Searchable` trait: Implemented by typed things (Material, LuaLayerDef)
+//! - `InMemoryStore<T>`: Simple Vec-based storage with search
 //!
 //! Used by `MaterialPalette` and `LuaLayerRegistry` for runtime registries.
 //!
@@ -28,7 +27,7 @@
 //! # Example (Typed Storage)
 //!
 //! ```ignore
-//! use studio_core::map_editor::asset::{Asset, AssetStore, InMemoryStore};
+//! use studio_core::map_editor::asset::{InMemoryStore, Searchable};
 //!
 //! let mut store: InMemoryStore<Material> = InMemoryStore::new();
 //! store.set(material);
@@ -69,85 +68,23 @@ pub use database::{AssetError, AssetKey, AssetMetadata, AssetRef, DatabaseStore}
 pub use store::{InMemoryBlobStore, InMemoryStore};
 // Note: AssetStoreResource is defined in this file and automatically exported
 
-/// Trait for anything that can be stored in an AssetStore.
+/// Trait for anything that can be stored in an `InMemoryStore`.
 ///
-/// All storable things implement this trait, enabling unified search and management.
-pub trait Asset: Send + Sync + 'static {
-    /// Human-readable name of this asset.
+/// Provides name and tags for search functionality.
+pub trait Searchable: Send + Sync + 'static {
+    /// Human-readable name of this item.
     fn name(&self) -> &str;
 
-    /// Type identifier for this asset category (e.g., "material", "generator").
-    fn asset_type() -> &'static str
-    where
-        Self: Sized;
-
     /// Tags for categorization and search (e.g., ["natural", "terrain"]).
-    /// Default implementation returns empty slice for assets without tags.
+    /// Default implementation returns empty slice.
     fn tags(&self) -> &[String] {
         &[]
     }
 }
 
-/// Generic storage interface for assets.
-///
-/// Provides CRUD operations plus search. Implementations can be in-memory,
-/// file-backed, or network-based.
-pub trait AssetStore<T: Asset>: Send + Sync {
-    /// Get an asset by its store index.
-    fn get(&self, index: usize) -> Option<&T>;
-
-    /// Get a mutable reference to an asset by its store index.
-    fn get_mut(&mut self, index: usize) -> Option<&mut T>;
-
-    /// List all assets in the store.
-    fn list(&self) -> &[T];
-
-    /// Add or update an asset, returning its store index.
-    fn set(&mut self, asset: T) -> usize;
-
-    /// Search assets by name (case-insensitive substring match).
-    fn search(&self, query: &str) -> Vec<&T>;
-
-    /// Find the first asset matching a predicate.
-    fn find<F>(&self, predicate: F) -> Option<&T>
-    where
-        F: Fn(&T) -> bool,
-    {
-        self.list().iter().find(|a| predicate(a))
-    }
-
-    /// Find the first asset matching a predicate (mutable).
-    fn find_mut<F>(&mut self, predicate: F) -> Option<&mut T>
-    where
-        F: Fn(&T) -> bool;
-
-    /// Check if any asset matches a predicate.
-    fn any<F>(&self, predicate: F) -> bool
-    where
-        F: Fn(&T) -> bool,
-    {
-        self.list().iter().any(|a| predicate(a))
-    }
-
-    /// Get the number of assets in the store.
-    fn len(&self) -> usize {
-        self.list().len()
-    }
-
-    /// Check if the store is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Iterate over all assets.
-    fn iter(&self) -> std::slice::Iter<'_, T> {
-        self.list().iter()
-    }
-}
-
 /// Storage interface for blob assets with metadata.
 ///
-/// Unlike `AssetStore<T>` which stores typed Rust objects, `BlobStore` stores
+/// Unlike `InMemoryStore<T>` which stores typed Rust objects, `BlobStore` stores
 /// raw bytes with associated metadata. This is used for database-backed storage
 /// where assets are serialized (e.g., Lua source code).
 ///

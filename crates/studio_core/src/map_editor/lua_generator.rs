@@ -18,7 +18,6 @@
 //! - `ctx:set_voxel(x, y, material_id)` - Write to buffer
 //! - `ctx:get_voxel(x, y) -> material_id` - Read from buffer
 
-use super::asset::AssetStore;
 use super::generator::{
     ActiveGenerator, CurrentStepInfo, FillCondition, FillGenerator, Generator, GeneratorListeners,
     GeneratorStructure, ParallelGenerator, ScatterGenerator, SequentialGenerator, StepInfo,

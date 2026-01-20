@@ -1,7 +1,6 @@
 //! Registry for Lua-defined render layers and visualizers.
 //!
-//! Provides multi-instance support using `AssetStore<LuaLayerDef>` for storage.
-//! This aligns with Phase 4's database-backed store - just swap the backend.
+//! Provides multi-instance support using `InMemoryStore<LuaLayerDef>` for storage.
 //!
 //! # Architecture
 //!
@@ -21,7 +20,7 @@
 //! });
 //! ```
 
-use super::asset::{Asset, AssetStore, InMemoryStore};
+use super::asset::{InMemoryStore, Searchable};
 use super::generator::GeneratorListeners;
 use super::render::{LuaRenderLayer, LuaVisualizer, RenderSurfaceManager, SharedVisualizer};
 use bevy::prelude::*;
@@ -92,13 +91,9 @@ impl LuaLayerDef {
     }
 }
 
-impl Asset for LuaLayerDef {
+impl Searchable for LuaLayerDef {
     fn name(&self) -> &str {
         &self.name
-    }
-
-    fn asset_type() -> &'static str {
-        "lua_layer"
     }
 
     fn tags(&self) -> &[String] {
@@ -114,7 +109,7 @@ enum LuaLayerInstance {
     Visualizer(SharedVisualizer),
 }
 
-/// Registry for Lua layers, using AssetStore for definitions.
+/// Registry for Lua layers, using InMemoryStore for definitions.
 #[derive(Resource)]
 pub struct LuaLayerRegistry {
     /// Layer definitions (what layers exist).
@@ -496,10 +491,10 @@ mod tests {
     }
 
     #[test]
-    fn test_layer_def_asset_impl() {
+    fn test_layer_def_searchable_impl() {
         let def = LuaLayerDef::renderer("test", "test.lua", "grid");
         assert_eq!(def.name(), "test");
-        assert_eq!(LuaLayerDef::asset_type(), "lua_layer");
+        assert!(def.tags().is_empty());
     }
 
     #[test]

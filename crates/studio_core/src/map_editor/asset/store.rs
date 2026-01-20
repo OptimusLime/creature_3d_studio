@@ -1,72 +1,69 @@
-//! In-memory asset storage implementations.
+//! In-memory storage implementations.
 //!
 //! Two storage types:
-//! - `InMemoryStore<T>` - Typed storage for runtime Rust objects (implements `AssetStore<T>`)
+//! - `InMemoryStore<T>` - Typed storage for runtime Rust objects with search
 //! - `InMemoryBlobStore` - Blob storage for serialized content (implements `BlobStore`)
 
-use super::{Asset, AssetError, AssetKey, AssetMetadata, AssetRef, AssetStore, BlobStore};
+use super::{AssetError, AssetKey, AssetMetadata, AssetRef, BlobStore, Searchable};
 use bevy::prelude::Resource;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-/// Simple in-memory asset store.
+/// Simple in-memory store for searchable items.
 ///
-/// Assets are stored in a Vec and accessed by index. Search performs
-/// case-insensitive substring matching on asset names.
+/// Items are stored in a Vec. Search performs case-insensitive
+/// substring matching on names and tags.
 #[derive(Debug)]
-pub struct InMemoryStore<T: Asset> {
+pub struct InMemoryStore<T: Searchable> {
     assets: Vec<T>,
 }
 
-impl<T: Asset> InMemoryStore<T> {
+impl<T: Searchable> InMemoryStore<T> {
     /// Create a new empty store.
     pub fn new() -> Self {
         Self { assets: Vec::new() }
     }
 
-    /// Create a store with initial assets.
+    /// Create a store with initial items.
     pub fn with_assets(assets: Vec<T>) -> Self {
         Self { assets }
     }
 
-    /// Replace all assets in the store.
+    /// Replace all items in the store.
     pub fn set_all(&mut self, assets: Vec<T>) {
         self.assets = assets;
     }
 
-    /// Clear all assets from the store.
+    /// Clear all items from the store.
     pub fn clear(&mut self) {
         self.assets.clear();
     }
-}
 
-impl<T: Asset> Default for InMemoryStore<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T: Asset> AssetStore<T> for InMemoryStore<T> {
-    fn get(&self, index: usize) -> Option<&T> {
+    /// Get an item by index.
+    pub fn get(&self, index: usize) -> Option<&T> {
         self.assets.get(index)
     }
 
-    fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+    /// Get a mutable item by index.
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         self.assets.get_mut(index)
     }
 
-    fn list(&self) -> &[T] {
+    /// Get all items as a slice.
+    pub fn list(&self) -> &[T] {
         &self.assets
     }
 
-    fn set(&mut self, asset: T) -> usize {
+    /// Add an item, returning its index.
+    pub fn set(&mut self, asset: T) -> usize {
         let index = self.assets.len();
         self.assets.push(asset);
         index
     }
 
-    fn search(&self, query: &str) -> Vec<&T> {
+    /// Search items by name or tag (case-insensitive).
+    pub fn search(&self, query: &str) -> Vec<&T> {
         let query_lower = query.to_lowercase();
         self.assets
             .iter()
@@ -84,11 +81,49 @@ impl<T: Asset> AssetStore<T> for InMemoryStore<T> {
             .collect()
     }
 
-    fn find_mut<F>(&mut self, predicate: F) -> Option<&mut T>
+    /// Find the first item matching a predicate.
+    pub fn find<F>(&self, predicate: F) -> Option<&T>
+    where
+        F: Fn(&T) -> bool,
+    {
+        self.assets.iter().find(|a| predicate(a))
+    }
+
+    /// Find the first item matching a predicate (mutable).
+    pub fn find_mut<F>(&mut self, predicate: F) -> Option<&mut T>
     where
         F: Fn(&T) -> bool,
     {
         self.assets.iter_mut().find(|a| predicate(a))
+    }
+
+    /// Check if any item matches a predicate.
+    pub fn any<F>(&self, predicate: F) -> bool
+    where
+        F: Fn(&T) -> bool,
+    {
+        self.assets.iter().any(|a| predicate(a))
+    }
+
+    /// Get the number of items.
+    pub fn len(&self) -> usize {
+        self.assets.len()
+    }
+
+    /// Check if the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.assets.is_empty()
+    }
+
+    /// Iterate over all items.
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.assets.iter()
+    }
+}
+
+impl<T: Searchable> Default for InMemoryStore<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -350,13 +385,9 @@ mod tests {
         }
     }
 
-    impl Asset for TestAsset {
+    impl Searchable for TestAsset {
         fn name(&self) -> &str {
             &self.name
-        }
-
-        fn asset_type() -> &'static str {
-            "test"
         }
 
         fn tags(&self) -> &[String] {

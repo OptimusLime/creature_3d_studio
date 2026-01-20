@@ -9,7 +9,7 @@
 //!
 //! The generator receives the active palette and can use materials by index.
 //!
-//! `Material` implements the `Asset` trait, enabling unified search and storage via `AssetStore`.
+//! `Material` implements the `Searchable` trait, enabling unified search and storage via `InMemoryStore`.
 //!
 //! # MarkovJunior Integration
 //!
@@ -24,7 +24,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::asset::{Asset, AssetStore, InMemoryStore};
+use super::asset::{InMemoryStore, Searchable};
 
 /// Path to the MJ palette.xml file.
 const MJ_PALETTE_PATH: &str = "MarkovJunior/resources/palette.xml";
@@ -162,13 +162,9 @@ impl Material {
     }
 }
 
-impl Asset for Material {
+impl Searchable for Material {
     fn name(&self) -> &str {
         &self.name
-    }
-
-    fn asset_type() -> &'static str {
-        "material"
     }
 
     fn tags(&self) -> &[String] {
@@ -179,7 +175,7 @@ impl Asset for Material {
 /// Collection of available and active materials for terrain generation.
 #[derive(Resource)]
 pub struct MaterialPalette {
-    /// All available materials (loaded from Lua), stored via `AssetStore`.
+    /// All available materials (loaded from Lua), stored via `InMemoryStore`.
     pub available: InMemoryStore<Material>,
     /// Active palette - material IDs in order, passed to generator.
     /// Generator uses palette[0], palette[1], etc.
@@ -289,7 +285,7 @@ impl MaterialPalette {
         self.changed = true;
     }
 
-    /// Search materials by name using the `AssetStore::search` method.
+    /// Search materials by name using the `InMemoryStore::search` method.
     pub fn search(&self, query: &str) -> Vec<&Material> {
         self.available.search(query)
     }

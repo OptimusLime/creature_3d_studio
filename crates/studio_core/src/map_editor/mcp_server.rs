@@ -51,7 +51,7 @@
 //! ## Health
 //! - `GET /health` - Health check
 
-use super::asset::{AssetKey, AssetMetadata, AssetStore, AssetStoreResource};
+use super::asset::{AssetKey, AssetMetadata, AssetStoreResource, BlobStore};
 use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};

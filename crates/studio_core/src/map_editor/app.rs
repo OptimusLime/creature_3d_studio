@@ -23,7 +23,7 @@
 //! ```
 
 use super::{
-    asset::{Asset, AssetStore, AssetStoreResource, DatabaseStore, InMemoryBlobStore},
+    asset::{AssetStoreResource, DatabaseStore, InMemoryBlobStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
@@ -716,13 +716,13 @@ fn render_ui_system(
                 if query.is_empty() {
                     search_state.results.clear();
                 } else {
-                    // Search materials using AssetStore::search (searches name + tags)
+                    // Search materials using InMemoryStore::search (searches name + tags)
                     search_state.results = palette
                         .search(&query)
-                        .iter()
+                        .into_iter()
                         .map(|mat| SearchResult {
-                            asset_type: Material::asset_type().to_string(),
-                            name: mat.name().to_string(),
+                            asset_type: "material".to_string(),
+                            name: mat.name.clone(),
                             id: mat.id,
                             tags: mat.tags.clone(),
                         })

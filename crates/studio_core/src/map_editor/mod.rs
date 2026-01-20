@@ -5,7 +5,7 @@
 //!
 //! # Architecture
 //!
-//! - `Asset` / `AssetStore<T>`: Generic asset storage with search (Phase 2)
+//! - `Searchable` / `InMemoryStore<T>`: Typed storage with search
 //! - `VoxelBuffer`: Unified voxel storage with interior mutability (supports 2D and 3D)
 //! - `Material` / `MaterialPalette`: Material definitions and selection
 //! - `PlaybackState`: Step-by-step generation playback controls
@@ -42,8 +42,8 @@ pub mod voxel_buffer;
 
 pub use app::MapEditor2DApp;
 pub use asset::{
-    Asset, AssetError, AssetKey, AssetMetadata, AssetRef, AssetStore, AssetStoreResource,
-    BlobStore, DatabaseStore, InMemoryBlobStore, InMemoryStore,
+    AssetError, AssetKey, AssetMetadata, AssetRef, AssetStoreResource, BlobStore, DatabaseStore,
+    InMemoryBlobStore, InMemoryStore, Searchable,
 };
 pub use checkerboard::CheckerboardState;
 pub use generator::{CurrentStepInfo, GeneratorListener, GeneratorListeners, StepInfo};
