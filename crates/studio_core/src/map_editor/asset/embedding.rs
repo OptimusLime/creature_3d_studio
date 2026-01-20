@@ -263,7 +263,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 
-use super::{AssetKey, AssetMetadata, DatabaseStore};
+use super::{AssetKey, AssetMetadata, BlobStore};
 
 /// Request to embed an asset.
 #[derive(Debug)]
@@ -381,7 +381,8 @@ impl EmbeddingService {
     /// Create a new embedding service with background worker.
     ///
     /// The worker thread loads the model on first request (lazy loading).
-    pub fn new(store: Arc<DatabaseStore>) -> Self {
+    /// Accepts any `BlobStore` implementation that supports embeddings.
+    pub fn new(store: Arc<dyn BlobStore>) -> Self {
         let (tx, rx) = mpsc::channel::<EmbedRequest>();
         let model = Arc::new(LazyEmbedding::new());
         let worker_model = Arc::clone(&model);
@@ -426,14 +427,14 @@ impl EmbeddingService {
     /// Background worker loop.
     fn worker_loop(
         rx: Receiver<EmbedRequest>,
-        store: Arc<DatabaseStore>,
+        store: Arc<dyn BlobStore>,
         model: Arc<LazyEmbedding>,
     ) {
         for request in rx {
             // Generate embedding
             match model.embed(&request.text) {
                 Ok(vec) => {
-                    // Store in database
+                    // Store in database (via BlobStore trait)
                     if let Err(e) = store.set_embedding(&request.key, &vec) {
                         bevy::log::error!("Failed to store embedding for {}: {}", request.key, e);
                     } else {

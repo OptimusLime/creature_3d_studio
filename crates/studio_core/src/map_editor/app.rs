@@ -376,11 +376,10 @@ impl MapEditor2DApp {
                 match DatabaseStore::open(db_path) {
                     Ok(store) => {
                         info!("Opened asset database at {:?}", db_path);
-                        let store = Arc::new(store);
-                        // EmbeddingService needs Arc<DatabaseStore> for set_embedding
-                        let service = Arc::new(EmbeddingService::new(Arc::clone(&store)));
+                        store_arc = Arc::new(store);
+                        // EmbeddingService now accepts Arc<dyn BlobStore>
+                        let service = Arc::new(EmbeddingService::new(Arc::clone(&store_arc)));
                         embedding_service = Some(service);
-                        store_arc = store;
                     }
                     Err(e) => {
                         error!(

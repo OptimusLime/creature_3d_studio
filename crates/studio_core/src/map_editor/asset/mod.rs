@@ -149,6 +149,18 @@ pub trait BlobStore: Send + Sync {
     /// List all namespaces that contain assets.
     /// Used by AssetBrowser to discover available namespaces.
     fn list_namespaces(&self) -> Result<Vec<String>, AssetError>;
+
+    /// Store embedding vector for an asset.
+    /// Default implementation does nothing (embeddings not supported).
+    fn set_embedding(&self, _key: &AssetKey, _embedding: &[f32]) -> Result<(), AssetError> {
+        Ok(()) // Silently succeed - embeddings optional
+    }
+
+    /// Get embedding vector for an asset.
+    /// Default implementation returns None (embeddings not supported).
+    fn get_embedding(&self, _key: &AssetKey) -> Result<Option<Vec<f32>>, AssetError> {
+        Ok(None)
+    }
 }
 
 use bevy::prelude::Resource;

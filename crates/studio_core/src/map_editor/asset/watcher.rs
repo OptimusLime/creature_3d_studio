@@ -283,8 +283,12 @@ impl AssetFileWatcher {
     /// - path: "assets/incoming/paul/materials/crystal.lua"
     /// - returns: ("paul", "materials/crystal")
     fn parse_asset_path(&self, path: &Path) -> Option<(String, String)> {
+        // Try to canonicalize input path to match watch_dir (handles symlinks like /tmp -> /private/tmp)
+        // Fall back to original path if canonicalization fails (file doesn't exist yet)
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
         // Get path relative to watch directory
-        let relative = path.strip_prefix(&self.watch_dir).ok()?;
+        let relative = canonical_path.strip_prefix(&self.watch_dir).ok()?;
 
         // First component is namespace
         let mut components = relative.components();
@@ -323,8 +327,11 @@ mod tests {
         let store = Arc::new(InMemoryBlobStore::new());
         let watcher = AssetFileWatcher::new(&watch_dir, store, None).unwrap();
 
+        // Use watcher.watch_dir() which is canonicalized (handles /tmp -> /private/tmp on macOS)
+        let canonical_watch_dir = watcher.watch_dir();
+
         // Test basic path
-        let path = watch_dir.join("paul/materials/crystal.lua");
+        let path = canonical_watch_dir.join("paul/materials/crystal.lua");
         let result = watcher.parse_asset_path(&path);
         assert_eq!(
             result,
@@ -332,7 +339,7 @@ mod tests {
         );
 
         // Test nested path
-        let path = watch_dir.join("shared/generators/dungeon/maze.lua");
+        let path = canonical_watch_dir.join("shared/generators/dungeon/maze.lua");
         let result = watcher.parse_asset_path(&path);
         assert_eq!(
             result,
@@ -340,7 +347,7 @@ mod tests {
         );
 
         // Test root level file (no asset path)
-        let path = watch_dir.join("readme.txt");
+        let path = canonical_watch_dir.join("readme.txt");
         let result = watcher.parse_asset_path(&path);
         assert_eq!(result, None);
     }

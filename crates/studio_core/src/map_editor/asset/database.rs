@@ -829,6 +829,14 @@ impl BlobStore for DatabaseStore {
     fn list_namespaces(&self) -> Result<Vec<String>, AssetError> {
         DatabaseStore::list_namespaces(self)
     }
+
+    fn set_embedding(&self, key: &AssetKey, embedding: &[f32]) -> Result<(), AssetError> {
+        DatabaseStore::set_embedding(self, key, embedding)
+    }
+
+    fn get_embedding(&self, key: &AssetKey) -> Result<Option<Vec<f32>>, AssetError> {
+        DatabaseStore::get_embedding(self, key)
+    }
 }
 
 /// Convert glob pattern to SQL LIKE pattern.
