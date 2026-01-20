@@ -34,7 +34,7 @@
 //! - `POST /mcp/stop_recording` - Stop recording frames
 //! - `POST /mcp/export_video` - Export recorded frames to video
 
-use super::asset::{Asset, AssetStore};
+use super::asset::{Asset, AssetKey, AssetMetadata, AssetStore, DatabaseStore};
 use super::generator::StepInfoRegistry;
 use super::lua_generator::GENERATOR_LUA_PATH;
 use super::lua_layer_registry::{LuaLayerDef, LuaLayerRegistry, LuaLayerType};
@@ -123,6 +123,10 @@ enum McpRequest {
     StartRecording,
     StopRecording,
     ExportVideo(VideoExportRequest),
+    // Asset store operations (Phase 4)
+    ListAssets(AssetListRequest),
+    CreateAsset(AssetCreateRequest),
+    SearchAssets(AssetSearchRequest),
 }
 
 /// Request parameters for get_output.
@@ -159,6 +163,42 @@ struct SearchRequest {
     asset_type: Option<String>,
 }
 
+/// Request parameters for asset list.
+#[derive(Debug)]
+struct AssetListRequest {
+    namespace: String,
+    pattern: Option<String>,
+    asset_type: Option<String>,
+}
+
+/// Request body for creating an asset.
+#[derive(Debug, Deserialize)]
+struct AssetCreateRequest {
+    namespace: String,
+    path: String,
+    asset_type: String,
+    content: String,
+    #[serde(default)]
+    metadata: AssetCreateMetadata,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AssetCreateMetadata {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+/// Request parameters for asset search.
+#[derive(Debug)]
+struct AssetSearchRequest {
+    query: String,
+    asset_type: Option<String>,
+}
+
 /// Response types from Bevy to HTTP server.
 enum McpResponse {
     Materials(Vec<MaterialJson>),
@@ -174,6 +214,22 @@ enum McpResponse {
     RecordingStarted { success: bool },
     RecordingStopped { success: bool, frame_count: usize },
     VideoExported { success: bool, path: String },
+    // Asset store responses
+    Assets(Vec<AssetRefJson>),
+    AssetCreated { ok: bool, key: String },
+    AssetSearchResults(Vec<AssetRefJson>),
+}
+
+/// JSON representation of an asset reference.
+#[derive(Serialize)]
+struct AssetRefJson {
+    key: String,
+    name: String,
+    asset_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 /// JSON representation of generator state.
@@ -820,6 +876,133 @@ fn handle_http_request(
             }
         }
 
+        // Asset store endpoints (Phase 4)
+        (Method::Get, "/mcp/assets") => {
+            let params = parse_query_string(&url);
+
+            let namespace = match params.get("namespace") {
+                Some(ns) => ns.clone(),
+                None => {
+                    let _ = request.respond(error_response("Missing 'namespace' parameter"));
+                    return;
+                }
+            };
+
+            let pattern = params.get("pattern").cloned();
+            let asset_type = params.get("type").cloned();
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::ListAssets(AssetListRequest {
+                    namespace,
+                    pattern,
+                    asset_type,
+                }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::Assets(assets)) => {
+                    let json = serde_json::to_string(&assets).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Post, "/mcp/assets") => {
+            // Read JSON from request body
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().read_to_string(&mut body) {
+                let _ = request.respond(error_response(&format!("Failed to read body: {}", e)));
+                return;
+            }
+
+            // Parse JSON
+            let create_req: AssetCreateRequest = match serde_json::from_str(&body) {
+                Ok(req) => req,
+                Err(e) => {
+                    let _ = request.respond(error_response(&format!("Invalid JSON: {}", e)));
+                    return;
+                }
+            };
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::CreateAsset(create_req))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::AssetCreated { ok, key }) => {
+                    let json = format!(r#"{{"ok":{},"key":"{}"}}"#, ok, key);
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
+        (Method::Get, "/mcp/assets/search") => {
+            let params = parse_query_string(&url);
+
+            let query = match params.get("q") {
+                Some(q) => q.clone(),
+                None => {
+                    let _ = request.respond(error_response("Missing 'q' parameter"));
+                    return;
+                }
+            };
+
+            let asset_type = params.get("type").cloned();
+
+            // Send request to Bevy
+            if request_tx
+                .send(McpRequest::SearchAssets(AssetSearchRequest {
+                    query,
+                    asset_type,
+                }))
+                .is_err()
+            {
+                let _ = request.respond(error_response("Server shutting down"));
+                return;
+            }
+
+            // Wait for response
+            match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(McpResponse::AssetSearchResults(results)) => {
+                    let json = serde_json::to_string(&results).unwrap_or_default();
+                    let response = Response::from_string(json).with_header(content_type_json());
+                    let _ = request.respond(response);
+                }
+                Ok(McpResponse::Error(e)) => {
+                    let _ = request.respond(error_response(&e));
+                }
+                _ => {
+                    let _ = request.respond(error_response("Unexpected response"));
+                }
+            }
+        }
+
         _ => {
             let response = Response::from_string(r#"{"error":"Not found"}"#)
                 .with_status_code(404)
@@ -852,6 +1035,7 @@ fn handle_mcp_requests(
     step_registry: Option<Res<StepInfoRegistry>>,
     active_generator: Option<NonSend<super::generator::ActiveGenerator>>,
     mut reload_flag: Option<ResMut<super::lua_generator::GeneratorReloadFlag>>,
+    asset_store: Option<Res<DatabaseStore>>,
 ) {
     // Process all pending requests
     loop {
@@ -1243,6 +1427,102 @@ fn handle_mcp_requests(
                     let _ = channels.response_tx.send(McpResponse::Error(
                         "Frame capture not available".to_string(),
                     ));
+                }
+            }
+
+            Ok(McpRequest::ListAssets(req)) => {
+                if let Some(ref store) = asset_store {
+                    let pattern = req.pattern.as_deref().unwrap_or("%");
+                    match store.list(&req.namespace, pattern, req.asset_type.as_deref()) {
+                        Ok(assets) => {
+                            let json_assets: Vec<AssetRefJson> = assets
+                                .into_iter()
+                                .map(|a| AssetRefJson {
+                                    key: a.key.to_key_string(),
+                                    name: a.metadata.name,
+                                    asset_type: a.metadata.asset_type,
+                                    description: a.metadata.description,
+                                    tags: a.metadata.tags,
+                                })
+                                .collect();
+                            let _ = channels.response_tx.send(McpResponse::Assets(json_assets));
+                        }
+                        Err(e) => {
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            Ok(McpRequest::CreateAsset(req)) => {
+                if let Some(ref store) = asset_store {
+                    let key = AssetKey::new(&req.namespace, &req.path);
+                    let name = req.metadata.name.unwrap_or_else(|| {
+                        // Use last path segment as name if not provided
+                        req.path.rsplit('/').next().unwrap_or(&req.path).to_string()
+                    });
+                    let mut metadata = AssetMetadata::new(name, &req.asset_type);
+                    if let Some(desc) = req.metadata.description {
+                        metadata = metadata.with_description(desc);
+                    }
+                    if !req.metadata.tags.is_empty() {
+                        metadata = metadata.with_tags(req.metadata.tags.clone());
+                    }
+                    match store.set(&key, req.content.as_bytes(), metadata) {
+                        Ok(_) => {
+                            info!("MCP: Created asset {}", key);
+                            let _ = channels.response_tx.send(McpResponse::AssetCreated {
+                                ok: true,
+                                key: key.to_key_string(),
+                            });
+                        }
+                        Err(e) => {
+                            error!("MCP: Failed to create asset: {}", e);
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
+                }
+            }
+
+            Ok(McpRequest::SearchAssets(req)) => {
+                if let Some(ref store) = asset_store {
+                    // Try FTS search first, fall back to simple search
+                    let results = store
+                        .search(&req.query, req.asset_type.as_deref())
+                        .or_else(|_| store.search_simple(&req.query, req.asset_type.as_deref()));
+
+                    match results {
+                        Ok(assets) => {
+                            let json_assets: Vec<AssetRefJson> = assets
+                                .into_iter()
+                                .map(|a| AssetRefJson {
+                                    key: a.key.to_key_string(),
+                                    name: a.metadata.name,
+                                    asset_type: a.metadata.asset_type,
+                                    description: a.metadata.description,
+                                    tags: a.metadata.tags,
+                                })
+                                .collect();
+                            let _ = channels
+                                .response_tx
+                                .send(McpResponse::AssetSearchResults(json_assets));
+                        }
+                        Err(e) => {
+                            let _ = channels.response_tx.send(McpResponse::Error(e.to_string()));
+                        }
+                    }
+                } else {
+                    let _ = channels
+                        .response_tx
+                        .send(McpResponse::Error("Asset store not available".to_string()));
                 }
             }
 

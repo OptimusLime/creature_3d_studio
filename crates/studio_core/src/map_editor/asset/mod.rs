@@ -5,11 +5,14 @@
 //!
 //! # Architecture
 //!
-//! - `Asset` trait: Implemented by anything that can be stored and searched
-//! - `AssetStore<T>` trait: Generic storage with get/list/set/search operations
+//! - `Asset` trait: Implemented by anything that can be stored and searched (in-memory)
+//! - `AssetStore<T>` trait: Generic storage with get/list/set/search operations (in-memory)
 //! - `InMemoryStore<T>`: Simple in-memory implementation of AssetStore
+//! - `DatabaseStore`: SQLite-backed storage with FTS5 search (Phase 4)
+//! - `AssetKey`: Namespace/path key for database-backed assets
+//! - `AssetMetadata`: Metadata for database-backed assets (name, description, tags)
 //!
-//! # Example
+//! # Example (In-Memory)
 //!
 //! ```ignore
 //! use studio_core::map_editor::asset::{Asset, AssetStore, InMemoryStore};
@@ -19,9 +22,23 @@
 //! store.set(material);
 //! let results = store.search("stone");
 //! ```
+//!
+//! # Example (Database)
+//!
+//! ```ignore
+//! use studio_core::map_editor::asset::{DatabaseStore, AssetKey, AssetMetadata};
+//!
+//! let store = DatabaseStore::open(Path::new("assets.db"))?;
+//! let key = AssetKey::new("paul", "materials/crystal");
+//! let metadata = AssetMetadata::new("Crystal", "material")
+//!     .with_description("A glowing blue gemstone");
+//! store.set(&key, b"return { name = 'Crystal' }", metadata)?;
+//! ```
 
+mod database;
 mod store;
 
+pub use database::{AssetError, AssetKey, AssetMetadata, AssetRef, DatabaseStore};
 pub use store::InMemoryStore;
 
 /// Trait for anything that can be stored in an AssetStore.

@@ -23,7 +23,7 @@
 //! ```
 
 use super::{
-    asset::{Asset, AssetStore},
+    asset::{Asset, AssetStore, DatabaseStore},
     checkerboard::{fill_checkerboard, step_checkerboard, CheckerboardState},
     imgui_screenshot::AutoExitConfig,
     lua_generator::LuaGeneratorPlugin,
@@ -271,6 +271,22 @@ impl MapEditor2DApp {
             export_path: "generation.mp4".to_string(),
             last_result: String::new(),
         });
+
+        // Database-backed asset store (SQLite)
+        // Path relative to working directory; creates if not exists
+        let asset_db_path = std::path::Path::new("assets.db");
+        match DatabaseStore::open(asset_db_path) {
+            Ok(store) => {
+                info!("Opened asset database at {:?}", asset_db_path);
+                app.insert_resource(store);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to open asset database: {}. Asset endpoints will be unavailable.",
+                    e
+                );
+            }
+        }
 
         // Lua layer plugin (manages all render layers and visualizers with hot-reload)
         // Replaces LuaRendererPlugin and LuaVisualizerPlugin

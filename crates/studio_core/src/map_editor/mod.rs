@@ -41,7 +41,9 @@ pub mod render;
 pub mod voxel_buffer;
 
 pub use app::MapEditor2DApp;
-pub use asset::{Asset, AssetStore, InMemoryStore};
+pub use asset::{
+    Asset, AssetError, AssetKey, AssetMetadata, AssetRef, AssetStore, DatabaseStore, InMemoryStore,
+};
 pub use checkerboard::CheckerboardState;
 pub use generator::{CurrentStepInfo, GeneratorListener, GeneratorListeners, StepInfo};
 pub use imgui_screenshot::{AutoExitConfig, ImguiScreenshotConfig, ImguiScreenshotPlugin};

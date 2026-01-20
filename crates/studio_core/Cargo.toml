@@ -24,6 +24,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 notify = "6"
 tiny_http = "0.12"
 urlencoding = "2.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+glob = "0.3"
 
 [dev-dependencies]
 tempfile = "3.10"
